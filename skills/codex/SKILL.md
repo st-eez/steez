@@ -12,6 +12,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<!-- BEGIN MANAGED PREAMBLE -->
 ## Preamble (run first)
 
 ```bash
@@ -34,7 +35,7 @@ echo "REPO_MODE: $REPO_MODE"
 _TEL_START=$(date +%s)
 _SESSION_ID="$$-$(date +%s)"
 mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"steez-codex","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}' >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+echo '{"skill":"steez-codex","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
 ```
 
 ## Beads Context
@@ -46,14 +47,9 @@ echo '{"skill":"steez-codex","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-qa, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /steez-codex, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
-
-
-
-
-
 
 ## Voice
 
@@ -124,22 +120,23 @@ AI makes completeness near-free. Always recommend the complete option over short
 
 Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3=shortcut).
 
-
 ## Search Before Building
 
 Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
+**User sovereignty.** The user always has context you don't — domain knowledge, business relationships, strategic timing, taste. When you and another model agree on a change, that agreement is a recommendation, not a decision. Present it. The user decides. Never say "the outside voice is right" and act. Say "the outside voice recommends X — do you want to proceed?"
+
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
 ```bash
-jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "SKILL_NAME" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
+jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-codex" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
 ```
 
 ## Skill Self-Report
 
 At the end of each major workflow step, rate your /steez-codex experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
-**File only:** steez tooling bugs where the input was reasonable but the tool failed. **Skip:** user app bugs, network errors, auth failures on user's site.
+**File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
 **To file:** write `~/.steez/skill-reports/{slug}.md`:
 ```
@@ -210,7 +207,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read"
+"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -236,6 +233,7 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
+<!-- END MANAGED PREAMBLE -->
 
 ## Step 0: Detect platform and base branch
 

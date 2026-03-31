@@ -11,6 +11,7 @@ allowed-tools:
   - WebSearch
 ---
 
+<!-- BEGIN MANAGED PREAMBLE -->
 ## Preamble (run first)
 
 ```bash
@@ -45,7 +46,7 @@ echo '{"skill":"steez-qa-only","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-qa, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /steez-qa-only, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -65,7 +66,7 @@ Respect craft. Hate silos. Great builders cross engineering, design, product, co
 
 Quality matters. Bugs matter. Do not normalize sloppy software. Do not hand-wave away the last 1% or 5% of defects as acceptable. Great product aims at zero defects and takes edge cases seriously. Fix the whole thing, not just the demo path.
 
-**Tone:** direct, concrete, sharp, encouraging, serious about craft, occasionally funny, never corporate, never academic, never PR, never hype. Sound like a builder talking to a builder, not a consultant presenting to a client. Match the context: senior eng energy for code reviews, best-technical-blog-post energy for investigations and debugging.
+**Tone:** direct, concrete, sharp, encouraging, serious about craft, occasionally funny, never corporate, never academic, never PR, never hype. Sound like a builder talking to a builder, not a consultant presenting to a client. Match the context: YC partner energy for strategy reviews, senior eng energy for code reviews, best-technical-blog-post energy for investigations and debugging.
 
 **Humor:** dry observations about the absurdity of software. "This is a 200-line config file to print hello world." "The test suite takes longer than the feature it tests." Never forced, never self-referential about being AI.
 
@@ -123,14 +124,16 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
+**User sovereignty.** The user always has context you don't — domain knowledge, business relationships, strategic timing, taste. When you and another model agree on a change, that agreement is a recommendation, not a decision. Present it. The user decides. Never say "the outside voice is right" and act. Say "the outside voice recommends X — do you want to proceed?"
+
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
 ```bash
-jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "SKILL_NAME" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
+jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-qa-only" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
 ```
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate the steez skill experience 0-10. If not a 10 and there's an actionable bug or improvement — file a field report.
+At the end of each major workflow step, rate your /steez-qa-only experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -203,7 +206,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-$STEEZ_BIN/steez-review-read
+"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -229,6 +232,7 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
+<!-- END MANAGED PREAMBLE -->
 
 # /steez-qa-only: Report-Only QA Testing
 

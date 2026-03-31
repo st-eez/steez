@@ -1,0 +1,6 @@
+{
+  "1": ["preamble-bash", "beads-context", "proactive", "writing-rules", "completion-status"],
+  "2": ["preamble-bash", "beads-context", "proactive", "voice", "askuser", "completeness", "self-report", "completion-status", "telemetry", "plan-status-footer"],
+  "3": ["preamble-bash", "beads-context", "proactive", "voice", "askuser", "completeness", "search", "self-report", "completion-status", "telemetry", "plan-status-footer"],
+  "4": ["preamble-bash", "beads-context", "proactive", "voice", "askuser", "completeness", "search", "self-report", "completion-status", "telemetry", "plan-status-footer"]
+}

@@ -13,6 +13,7 @@ allowed-tools:
   - AskUserQuestion
 ---
 
+<!-- BEGIN MANAGED PREAMBLE -->
 ## Preamble (run first)
 
 ```bash
@@ -47,7 +48,7 @@ echo '{"skill":"steez-document-release","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'",
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-qa, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /steez-document-release, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -122,7 +123,7 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate the steez skill experience 0-10. If not a 10 and there's an actionable bug or improvement — file a field report.
+At the end of each major workflow step, rate your /steez-document-release experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -195,7 +196,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-$STEEZ_BIN/steez-review-read
+"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -221,6 +222,7 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
+<!-- END MANAGED PREAMBLE -->
 
 ## Step 0: Detect platform and base branch
 

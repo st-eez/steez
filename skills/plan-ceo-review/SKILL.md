@@ -12,6 +12,8 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
 ---
+
+<!-- BEGIN MANAGED PREAMBLE -->
 ## Preamble (run first)
 
 ```bash
@@ -128,12 +130,12 @@ Before building anything unfamiliar, **search first.** See `~/.claude/skills/ste
 
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
 ```bash
-jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "SKILL_NAME" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
+jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-plan-ceo-review" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
 ```
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate the steez skill experience 0-10. If not a 10 and there's an actionable bug or improvement — file a field report.
+At the end of each major workflow step, rate your /steez-plan-ceo-review experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -177,9 +179,13 @@ RECOMMENDATION: [what the user should do next]
 ## Telemetry (run last)
 
 After the skill workflow completes (success, error, or abort), log the telemetry event.
+Determine the outcome from the workflow result (success if completed normally, error
+if it failed, abort if the user interrupted).
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This command writes telemetry to
-`~/.steez/analytics/` (user config directory, not project files).
+`~/.steez/analytics/` (user config directory, not project files). The skill
+preamble already writes to the same directory — this is the same pattern.
+Skipping this command loses session duration and outcome data.
 
 Run this bash:
 
@@ -190,7 +196,8 @@ _TEL_DUR=$(( _TEL_END - _TEL_START ))
 echo '{"skill":"steez-plan-ceo-review","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"USED_BROWSE","session":"'"$_SESSION_ID"'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> ~/.steez/analytics/skill-usage.jsonl 2>/dev/null || echo "[steez] WARNING: telemetry write failed" >&2
 ```
 
-Replace `OUTCOME` with success/error/abort, and `USED_BROWSE` with true/false.
+Replace `OUTCOME` with success/error/abort, and `USED_BROWSE` with true/false based
+on whether `$B` was used. If you cannot determine the outcome, use "unknown".
 
 ## Plan Status Footer
 
@@ -221,12 +228,13 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 | Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
 | Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
+<!-- END MANAGED PREAMBLE -->
 
 ## Step 0: Detect platform and base branch
 

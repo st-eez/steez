@@ -14,20 +14,26 @@ allowed-tools:
   - WebSearch
 ---
 
+<!-- BEGIN MANAGED PREAMBLE -->
 ## Preamble (run first)
 
 ```bash
 STEEZ_HOME="$HOME/.steez"
 STEEZ_BIN="$HOME/.claude/skills/steez/bin"
+# Session tracking
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
 find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
+# Branch detection
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
+# Config
 _PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
+# Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
+# Local usage logging (no remote telemetry)
 _TEL_START=$(date +%s)
 _SESSION_ID="$$-$(date +%s)"
 mkdir -p "$STEEZ_HOME/analytics"
@@ -43,7 +49,7 @@ echo '{"skill":"steez-plan-eng-review","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-qa, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /steez-plan-eng-review, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -125,14 +131,14 @@ Before building anything unfamiliar, **search first.** See `~/.claude/skills/ste
 
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
 ```bash
-jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "SKILL_NAME" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
+jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-plan-eng-review" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
 ```
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate the `/steez-plan-eng-review` experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /steez-plan-eng-review experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
-**File only:** steez tooling bugs where the input was reasonable but steez failed. **Skip:** user app bugs, network errors, auth failures on user's site.
+**File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
 **To file:** write `~/.steez/skill-reports/{slug}.md`:
 ```
@@ -187,11 +193,12 @@ Run this bash:
 ```bash
 _TEL_END=$(date +%s)
 _TEL_DUR=$(( _TEL_END - _TEL_START ))
-echo '{"skill":"steez-plan-eng-review","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"USED_BROWSE","session":"'"$_SESSION_ID"'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Local analytics only (no remote telemetry)
+echo '{"skill":"steez-plan-eng-review","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"USED_BROWSE","session":"'"$_SESSION_ID"'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> ~/.steez/analytics/skill-usage.jsonl 2>/dev/null || echo "[steez] WARNING: telemetry write failed" >&2
 ```
 
-Replace `OUTCOME` with success/error/abort, and `USED_BROWSE` with true/false based on
-whether `$B` was used. If you cannot determine the outcome, use "unknown".
+Replace `OUTCOME` with success/error/abort, and `USED_BROWSE` with true/false based
+on whether `$B` was used. If you cannot determine the outcome, use "unknown".
 
 ## Plan Status Footer
 
@@ -202,7 +209,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-$STEEZ_BIN/steez-review-read
+"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -228,6 +235,7 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
+<!-- END MANAGED PREAMBLE -->
 
 # Plan Review Mode
 

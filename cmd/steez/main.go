@@ -35,6 +35,8 @@ func main() {
 		os.Exit(cmdInfo(args))
 	case "doctor":
 		os.Exit(cmdDoctor(args))
+	case "sync":
+		os.Exit(cmdSync(args))
 	case "update":
 		cmdUpdate(args)
 	case "version":
@@ -65,6 +67,7 @@ Commands:
   list        Show installed skills
   info        Show skill details from manifest
   doctor      Validate install health
+  sync        Sync managed preambles in SKILL.md files
   update      Update steez (git pull + re-link)
   version     Print version info
   help        Show this help (or help <command>)
@@ -120,6 +123,19 @@ Supports fuzzy matching: if no exact match, suggests close names.
 
 Usage:
   steez list   Show all skills from installed.json with status
+`)
+	case "sync":
+		fmt.Print(`steez sync — sync managed preambles
+
+Usage:
+  steez sync                Sync all SKILL.md files with managed preambles
+  steez sync qa ship        Sync specific skills only
+  steez sync --check        Check freshness without writing (exit 1 if stale)
+  steez sync --verbose      Show all files including current/skipped
+
+Reads preamble-tier from each SKILL.md frontmatter, assembles section
+templates from preamble/sections/ per preamble/tiers.json, and writes
+the result between <!-- BEGIN/END MANAGED PREAMBLE --> markers.
 `)
 	case "setup":
 		fmt.Print(`steez setup — interactive TUI setup

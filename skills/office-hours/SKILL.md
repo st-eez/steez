@@ -13,6 +13,8 @@ allowed-tools:
   - AskUserQuestion
   - WebSearch
 ---
+
+<!-- BEGIN MANAGED PREAMBLE -->
 ## Preamble (run first)
 
 ```bash
@@ -125,14 +127,16 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
+**User sovereignty.** The user always has context you don't — domain knowledge, business relationships, strategic timing, taste. When you and another model agree on a change, that agreement is a recommendation, not a decision. Present it. The user decides. Never say "the outside voice is right" and act. Say "the outside voice recommends X — do you want to proceed?"
+
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
 ```bash
-jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "SKILL_NAME" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
+jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-office-hours" --arg branch "$(git branch --show-current 2>/dev/null)" --arg insight "ONE_LINE_SUMMARY" '{ts:$ts,skill:$skill,branch:$branch,insight:$insight}' >> ~/.steez/analytics/eureka.jsonl 2>/dev/null || true
 ```
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate the steez skill experience 0-10. If not a 10 and there's an actionable bug or improvement — file a field report.
+At the end of each major workflow step, rate your /steez-office-hours experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -221,14 +225,17 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
 | Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
 file you are allowed to edit in plan mode. The plan file review report is part of the
 plan's living status.
+<!-- END MANAGED PREAMBLE -->
 
 ## SETUP (run this check BEFORE any browse command)
 

@@ -16,6 +16,21 @@
 - `internal/config/` — Config loading (`~/.steez/installed.json`)
 - `skills/` — Skill directories (each contains SKILL.md + skill files)
 - `skills.json` — Manifest of all skills, categories, and profiles
+- `preamble/` — Managed preamble system (section templates + tier config)
+
+## Preamble System
+
+Skills declare `preamble-tier: N` in SKILL.md frontmatter. `steez sync` assembles
+section templates from `preamble/sections/` per `preamble/tiers.json` into managed
+blocks delimited by `<!-- BEGIN/END MANAGED PREAMBLE -->` markers.
+
+- T1: minimal (session tracking, analytics, writing rules, completion status)
+- T2: T1 + voice, AskUserQuestion format, completeness, self-report, telemetry
+- T3: T2 + search-before-building
+- T4: T3 (reserved for future differentiation)
+
+Run `steez sync --check` in CI to detect drift. Edit templates in `preamble/sections/`,
+never hand-edit content inside the managed block markers.
 
 ## Install Model
 
