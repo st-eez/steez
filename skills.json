@@ -1,0 +1,132 @@
+{
+  "version": "1.0.0",
+  "skills": {
+    "office-hours": {
+      "description": "Brainstorm ideas with forcing questions and design thinking sessions"
+    },
+    "plan-ceo-review": {
+      "description": "CEO/founder-mode plan review — rethink scope, find the 10-star product"
+    },
+    "plan-eng-review": {
+      "description": "Eng manager review — lock architecture, data flow, edge cases, tests"
+    },
+    "plan-design-review": {
+      "description": "Designer's eye plan review — rate each dimension and fix to 10/10"
+    },
+    "review": {
+      "description": "Pre-landing PR review for SQL safety, trust boundaries, structural issues"
+    },
+    "ship": {
+      "description": "Ship: merge base, run tests, review diff, bump version, create PR, push"
+    },
+    "browse": {
+      "description": "Fast headless browser — navigate, interact, screenshot, verify state",
+      "requires": ["browse-binary"]
+    },
+    "qa": {
+      "description": "Systematically QA test a web app and iteratively fix bugs found",
+      "requires": ["browse-binary"]
+    },
+    "qa-only": {
+      "description": "Report-only QA — structured report with screenshots, no code changes",
+      "requires": ["browse-binary"]
+    },
+    "design-review": {
+      "description": "Visual QA — find spacing, hierarchy, inconsistency issues, then fix them",
+      "requires": ["browse-binary"]
+    },
+    "canary": {
+      "description": "Post-deploy canary monitoring — watch for errors and regressions",
+      "requires": ["browse-binary"]
+    },
+    "benchmark": {
+      "description": "Performance regression detection — baselines, Core Web Vitals, bundles",
+      "requires": ["browse-binary"]
+    },
+    "investigate": {
+      "description": "Systematic debugging with root cause investigation — no fix without cause"
+    },
+    "cso": {
+      "description": "Security audit — secrets, supply chain, CI/CD, OWASP, STRIDE modeling"
+    },
+    "connect-chrome": {
+      "description": "Launch real Chrome controlled by Claude with Side Panel activity feed",
+      "requires": ["browse-binary"]
+    },
+    "setup-browser-cookies": {
+      "description": "Import cookies from your real browser into headless browse sessions",
+      "requires": ["browse-binary"]
+    },
+    "design-consultation": {
+      "description": "Create a complete design system — typography, color, layout, motion"
+    },
+    "design-shotgun": {
+      "description": "Generate multiple AI design variants and collect structured feedback"
+    },
+    "design-html": {
+      "description": "Turn approved mockups into production-quality HTML/CSS with zero deps"
+    },
+    "codex": {
+      "description": "OpenAI Codex wrapper — code review, adversarial challenge, or consult"
+    },
+    "autoplan": {
+      "description": "Auto-review pipeline — run CEO, design, and eng reviews sequentially"
+    },
+    "document-release": {
+      "description": "Post-ship documentation update — sync README, ARCHITECTURE, CHANGELOG"
+    },
+    "land-and-deploy": {
+      "description": "Merge PR, wait for CI, deploy, verify production health via canary"
+    },
+    "setup-deploy": {
+      "description": "Configure deployment platform, URL, health checks for land-and-deploy"
+    },
+    "retro": {
+      "description": "Weekly engineering retrospective with commit analysis and trend tracking"
+    }
+  },
+  "categories": {
+    "workflow": {
+      "label": "Workflow",
+      "description": "Sprint pipeline: Think \u2192 Plan \u2192 Build \u2192 Review \u2192 Ship",
+      "skills": ["office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "review", "ship"]
+    },
+    "qa": {
+      "label": "QA & Testing",
+      "description": "Browser-based testing, visual QA, canary monitoring, and benchmarks",
+      "skills": ["browse", "qa", "qa-only", "design-review", "canary", "benchmark"]
+    },
+    "infrastructure": {
+      "label": "Infrastructure",
+      "description": "Debugging, security, and browser connectivity tools",
+      "skills": ["investigate", "cso", "connect-chrome", "setup-browser-cookies"]
+    },
+    "design": {
+      "label": "Design",
+      "description": "Design system creation, variant exploration, and HTML generation",
+      "skills": ["design-consultation", "design-shotgun", "design-html"]
+    },
+    "meta": {
+      "label": "Meta",
+      "description": "Automation, documentation, deployment, and retrospectives",
+      "skills": ["codex", "autoplan", "document-release", "land-and-deploy", "setup-deploy", "retro"]
+    }
+  },
+  "profiles": {
+    "starter": {
+      "label": "Starter Kit (recommended)",
+      "description": "6 workflow skills \u2014 the sprint pipeline spine",
+      "categories": ["workflow"]
+    },
+    "all": {
+      "label": "All Skills",
+      "description": "Everything available",
+      "exclude_categories": []
+    }
+  },
+  "shared_infra": {
+    "bin": ["steez-bd", "steez-config", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-slug"],
+    "runtime_dir": "~/.steez",
+    "browse_binary": "skills/browse/dist/browse"
+  }
+}
