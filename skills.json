@@ -83,13 +83,37 @@
     },
     "retro": {
       "description": "Weekly engineering retrospective with commit analysis and trend tracking"
+    },
+    "agenda": {
+      "description": "Structured morning planning — overdue triage, inbox, and daily slate"
+    },
+    "jira": {
+      "description": "Manage Jira tickets — search, create, update, transition, log time"
+    },
+    "tmux": {
+      "description": "Tmux safety rules and patterns — prevents sending to wrong pane"
+    },
+    "claude-spawn": {
+      "description": "Spawn and orchestrate Claude Code agents across tmux panes"
+    },
+    "reminders": {
+      "description": "Manage Apple Reminders via remindctl — create, complete, reschedule"
+    },
+    "loop-prompt": {
+      "description": "Generate Ralph-style loop prompts for automated coding sessions"
+    },
+    "audit": {
+      "description": "Deep codebase audit — security, quality, architecture, error handling"
+    },
+    "sharpen-skill": {
+      "description": "Evaluate and improve skills via multi-agent research and critique"
     }
   },
   "categories": {
     "workflow": {
       "label": "Workflow",
       "description": "Sprint pipeline: Think \u2192 Plan \u2192 Build \u2192 Review \u2192 Ship",
-      "skills": ["office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "review", "ship"]
+      "skills": ["office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "review", "ship", "agenda", "jira"]
     },
     "qa": {
       "label": "QA & Testing",
@@ -99,7 +123,7 @@
     "infrastructure": {
       "label": "Infrastructure",
       "description": "Debugging, security, and browser connectivity tools",
-      "skills": ["investigate", "cso", "connect-chrome", "setup-browser-cookies"]
+      "skills": ["investigate", "cso", "connect-chrome", "setup-browser-cookies", "tmux", "claude-spawn", "audit"]
     },
     "design": {
       "label": "Design",
@@ -109,7 +133,7 @@
     "meta": {
       "label": "Meta",
       "description": "Automation, documentation, deployment, and retrospectives",
-      "skills": ["codex", "autoplan", "document-release", "land-and-deploy", "setup-deploy", "retro"]
+      "skills": ["codex", "autoplan", "document-release", "land-and-deploy", "setup-deploy", "retro", "reminders", "loop-prompt", "sharpen-skill"]
     }
   },
   "profiles": {
