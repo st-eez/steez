@@ -375,7 +375,7 @@ func (m setupModel) viewPreflight() string {
 		}
 	}
 	if hasBrowseDep {
-		browseBin := filepath.Join(m.repoPath, "skills", "browse", "dist", "browse")
+		browseBin := filepath.Join(m.repoPath, "shared", "steez", "browse", "dist", "browse")
 		if _, err := os.Stat(browseBin); os.IsNotExist(err) {
 			b.WriteString("\n")
 			b.WriteString(m.styles.Warning.Render("  Note: Some skills require the browse binary (not built)."))
@@ -406,14 +406,38 @@ func (m *setupModel) runInstall() {
 
 	reg, _ := config.LoadRegistry()
 
-	// Shared home.
-	sharedSource := filepath.Join(m.repoPath, "skills", "steez")
-	sharedTarget := filepath.Join(skillsTarget, "steez")
-	if err := installer.CreateSymlink(sharedSource, sharedTarget, false, true); err != nil {
-		m.results = append(m.results, installResult{"steez (shared home)", false, err.Error()})
+	// Create ~/.steez/repo symlink pointing to checkout.
+	steezHome := filepath.Join(home, ".steez")
+	os.MkdirAll(steezHome, 0o755)
+
+	repoSymlink := filepath.Join(steezHome, "repo")
+	if err := installer.CreateSymlink(m.repoPath, repoSymlink, false, true); err != nil {
+		m.results = append(m.results, installResult{"repo symlink", false, err.Error()})
 	} else {
-		config.AddToRegistry(reg, "steez", sharedSource, sharedTarget)
-		m.results = append(m.results, installResult{"steez (shared home)", true, ""})
+		m.results = append(m.results, installResult{"repo symlink", true, ""})
+	}
+
+	// Create ~/.steez/bin/ directory with symlinks to shared runtime.
+	binDir := filepath.Join(steezHome, "bin")
+	os.MkdirAll(binDir, 0o755)
+
+	binSymlinks := []struct{ name, relPath string }{
+		{"steez-config", "shared/steez/bin/steez-config"},
+		{"steez-slug", "shared/steez/bin/steez-slug"},
+		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
+		{"steez-review-log", "shared/steez/bin/steez-review-log"},
+		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"browse", "shared/steez/browse/dist/browse"},
+	}
+	for _, bs := range binSymlinks {
+		source := filepath.Join(repoSymlink, bs.relPath)
+		target := filepath.Join(binDir, bs.name)
+		if err := installer.CreateSymlink(source, target, false, true); err != nil {
+			m.results = append(m.results, installResult{"bin/" + bs.name, false, err.Error()})
+		} else {
+			m.results = append(m.results, installResult{"bin/" + bs.name, true, ""})
+		}
 	}
 
 	// Each skill.

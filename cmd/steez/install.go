@@ -91,21 +91,53 @@ func cmdInstall(args []string) int {
 		reg = &config.Registry{}
 	}
 
-	// Always install shared home first.
-	sharedSource := filepath.Join(repoPath, "skills", "steez")
-	sharedTarget := filepath.Join(skillsTarget, "steez")
-
 	installed := 0
 	failed := 0
 
-	if err := installer.CreateSymlink(sharedSource, sharedTarget, *dryRun, *force); err != nil {
-		fmt.Fprintf(os.Stderr, "  error: shared home: %v\n", err)
+	// Create ~/.steez/repo symlink pointing to checkout.
+	steezHome := filepath.Join(home, ".steez")
+	if !*dryRun {
+		if err := os.MkdirAll(steezHome, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating ~/.steez/: %v\n", err)
+			return 1
+		}
+	}
+
+	repoSymlink := filepath.Join(steezHome, "repo")
+	if err := installer.CreateSymlink(repoPath, repoSymlink, *dryRun, *force); err != nil {
+		fmt.Fprintf(os.Stderr, "  error: repo symlink: %v\n", err)
 		failed++
 	} else {
-		if !*dryRun {
-			config.AddToRegistry(reg, "steez", sharedSource, sharedTarget)
-		}
 		installed++
+	}
+
+	// Create ~/.steez/bin/ directory with symlinks to shared runtime.
+	binDir := filepath.Join(steezHome, "bin")
+	if !*dryRun {
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating ~/.steez/bin/: %v\n", err)
+			return 1
+		}
+	}
+
+	binSymlinks := []struct{ name, relPath string }{
+		{"steez-config", "shared/steez/bin/steez-config"},
+		{"steez-slug", "shared/steez/bin/steez-slug"},
+		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
+		{"steez-review-log", "shared/steez/bin/steez-review-log"},
+		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"browse", "shared/steez/browse/dist/browse"},
+	}
+	for _, bs := range binSymlinks {
+		source := filepath.Join(repoSymlink, bs.relPath)
+		target := filepath.Join(binDir, bs.name)
+		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
+			fmt.Fprintf(os.Stderr, "  error: bin/%s: %v\n", bs.name, err)
+			failed++
+		} else {
+			installed++
+		}
 	}
 
 	// Install each skill.

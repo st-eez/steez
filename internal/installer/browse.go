@@ -10,7 +10,7 @@ import (
 
 // BuildBrowse compiles the browse binary from TypeScript source using Bun.
 func BuildBrowse(repoPath string) error {
-	browseDir := filepath.Join(repoPath, "skills", "browse")
+	browseDir := filepath.Join(repoPath, "shared", "steez", "browse")
 
 	// Verify source exists.
 	if _, err := os.Stat(filepath.Join(browseDir, "src")); err != nil {

@@ -17,15 +17,29 @@ func setupDoctorHome(t *testing.T, repoPath string) string {
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	os.MkdirAll(skillsDir, 0o755)
 
-	// Create shared home symlink.
-	steezSource := filepath.Join(repoPath, "skills", "steez")
-	os.MkdirAll(steezSource, 0o755)
-	os.Symlink(steezSource, filepath.Join(skillsDir, "steez"))
-
-	// Create ~/.steez/ with empty registry.
+	// Create ~/.steez/ with repo symlink, bin symlinks, and analytics.
 	steezDir := filepath.Join(home, ".steez")
 	os.MkdirAll(steezDir, 0o755)
 	os.MkdirAll(filepath.Join(steezDir, "analytics"), 0o755)
+
+	// Repo symlink.
+	os.Symlink(repoPath, filepath.Join(steezDir, "repo"))
+
+	// Bin symlinks (chained through repo symlink).
+	binDir := filepath.Join(steezDir, "bin")
+	os.MkdirAll(binDir, 0o755)
+	repoSymlink := filepath.Join(steezDir, "repo")
+	for _, bs := range []struct{ name, relPath string }{
+		{"steez-config", "shared/steez/bin/steez-config"},
+		{"steez-slug", "shared/steez/bin/steez-slug"},
+		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
+		{"steez-review-log", "shared/steez/bin/steez-review-log"},
+		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"browse", "shared/steez/browse/dist/browse"},
+	} {
+		os.Symlink(filepath.Join(repoSymlink, bs.relPath), filepath.Join(binDir, bs.name))
+	}
 
 	return home
 }
@@ -39,7 +53,14 @@ func writeRegistry(t *testing.T, home string, reg *config.Registry) {
 func TestDoctor_AllPass(t *testing.T) {
 	tmp := t.TempDir()
 	repoPath := filepath.Join(tmp, "repo")
-	os.MkdirAll(filepath.Join(repoPath, "skills", "steez"), 0o755)
+	// Create shared runtime structure so bin symlinks resolve.
+	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
+	for _, name := range []string{"steez-config", "steez-slug", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-bd"} {
+		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
+	}
+	// Create browse binary so that symlink resolves.
+	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)
+	os.WriteFile(filepath.Join(repoPath, "shared", "steez", "browse", "dist", "browse"), []byte("fake"), 0o755)
 
 	home := setupDoctorHome(t, repoPath)
 
@@ -51,7 +72,6 @@ func TestDoctor_AllPass(t *testing.T) {
 
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "steez", Source: filepath.Join(repoPath, "skills", "steez"), Target: filepath.Join(home, ".claude", "skills", "steez")},
 			{Name: "steez-alpha", Source: skillSource, Target: skillTarget},
 		},
 	}
@@ -72,7 +92,7 @@ func TestDoctor_AllPass(t *testing.T) {
 func TestDoctor_DanglingSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	repoPath := filepath.Join(tmp, "repo")
-	os.MkdirAll(filepath.Join(repoPath, "skills", "steez"), 0o755)
+	createSharedRuntime(t, repoPath)
 
 	home := setupDoctorHome(t, repoPath)
 
@@ -82,7 +102,6 @@ func TestDoctor_DanglingSymlink(t *testing.T) {
 
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "steez", Source: filepath.Join(repoPath, "skills", "steez"), Target: filepath.Join(home, ".claude", "skills", "steez")},
 			{Name: "steez-missing", Source: filepath.Join(repoPath, "skills", "nonexistent"), Target: skillTarget},
 		},
 	}
@@ -104,13 +123,14 @@ func TestDoctor_DanglingSymlink(t *testing.T) {
 	}
 }
 
-func TestDoctor_MissingSharedHome(t *testing.T) {
+func TestDoctor_MissingRepoSymlink(t *testing.T) {
 	tmp := t.TempDir()
 	repoPath := filepath.Join(tmp, "repo")
 	os.MkdirAll(repoPath, 0o755)
 
 	home := setupTestHome(t)
 	os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0o755)
+	os.MkdirAll(filepath.Join(home, ".steez"), 0o755)
 
 	results, err := RunDoctor(repoPath, false)
 	if err != nil {
@@ -122,14 +142,14 @@ func TestDoctor_MissingSharedHome(t *testing.T) {
 		t.Errorf("expected 1 result (fail-fast), got %d", len(results))
 	}
 	if results[0].Status != "fail" {
-		t.Errorf("shared home check status = %s, want fail", results[0].Status)
+		t.Errorf("repo symlink check status = %s, want fail", results[0].Status)
 	}
 }
 
 func TestDoctor_FixMode(t *testing.T) {
 	tmp := t.TempDir()
 	repoPath := filepath.Join(tmp, "repo")
-	os.MkdirAll(filepath.Join(repoPath, "skills", "steez"), 0o755)
+	createSharedRuntime(t, repoPath)
 
 	home := setupDoctorHome(t, repoPath)
 
@@ -139,7 +159,6 @@ func TestDoctor_FixMode(t *testing.T) {
 
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "steez", Source: filepath.Join(repoPath, "skills", "steez"), Target: filepath.Join(home, ".claude", "skills", "steez")},
 			{Name: "steez-broken", Source: filepath.Join(repoPath, "skills", "nonexistent"), Target: skillTarget},
 		},
 	}
@@ -165,4 +184,15 @@ func TestDoctor_FixMode(t *testing.T) {
 	if !found {
 		t.Error("expected steez-broken to be reported as fixed")
 	}
+}
+
+// createSharedRuntime creates the shared runtime directory structure in a test repo.
+func createSharedRuntime(t *testing.T, repoPath string) {
+	t.Helper()
+	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
+	for _, name := range []string{"steez-config", "steez-slug", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-bd"} {
+		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
+	}
+	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)
+	os.WriteFile(filepath.Join(repoPath, "shared", "steez", "browse", "dist", "browse"), []byte("fake"), 0o755)
 }

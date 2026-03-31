@@ -31,7 +31,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	// Create empty .claude/skills/.
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	os.MkdirAll(skillsDir, 0o755)
-	os.MkdirAll(filepath.Join(home, ".steez"), 0o755)
+	steezHome := filepath.Join(home, ".steez")
+	os.MkdirAll(steezHome, 0o755)
 
 	// Load real manifest.
 	manifest, err := LoadManifest(filepath.Join(repoPath, "skills.json"))
@@ -49,16 +50,31 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		t.Fatalf("starter profile has %d skills, want 8", len(skills))
 	}
 
-	// Install shared home.
-	reg := &config.Registry{}
-	sharedSource := filepath.Join(repoPath, "skills", "steez")
-	sharedTarget := filepath.Join(skillsDir, "steez")
-	if err := CreateSymlink(sharedSource, sharedTarget, false, false); err != nil {
-		t.Fatalf("shared home symlink: %v", err)
+	// Create repo symlink.
+	repoSymlink := filepath.Join(steezHome, "repo")
+	if err := CreateSymlink(repoPath, repoSymlink, false, false); err != nil {
+		t.Fatalf("repo symlink: %v", err)
 	}
-	config.AddToRegistry(reg, "steez", sharedSource, sharedTarget)
+
+	// Create bin symlinks.
+	binDir := filepath.Join(steezHome, "bin")
+	os.MkdirAll(binDir, 0o755)
+	for _, bs := range []struct{ name, relPath string }{
+		{"steez-config", "shared/steez/bin/steez-config"},
+		{"steez-slug", "shared/steez/bin/steez-slug"},
+		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
+		{"steez-review-log", "shared/steez/bin/steez-review-log"},
+		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"browse", "shared/steez/browse/dist/browse"},
+	} {
+		source := filepath.Join(repoSymlink, bs.relPath)
+		target := filepath.Join(binDir, bs.name)
+		CreateSymlink(source, target, false, false)
+	}
 
 	// Install each skill.
+	reg := &config.Registry{}
 	for _, name := range skills {
 		source := filepath.Join(repoPath, "skills", name)
 		target := filepath.Join(skillsDir, "steez-"+name)
@@ -68,9 +84,9 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		config.AddToRegistry(reg, "steez-"+name, source, target)
 	}
 
-	// Verify 9 entries (8 skills + shared home).
-	if len(reg.Symlinks) != 9 {
-		t.Errorf("registry has %d entries, want 9", len(reg.Symlinks))
+	// Verify 8 entries (8 skills, repo/bin symlinks not in registry).
+	if len(reg.Symlinks) != 8 {
+		t.Errorf("registry has %d entries, want 8", len(reg.Symlinks))
 	}
 
 	// Save and reload registry to verify persistence.
@@ -79,8 +95,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading registry: %v", err)
 	}
-	if len(loaded.Symlinks) != 9 {
-		t.Errorf("loaded registry has %d entries, want 9", len(loaded.Symlinks))
+	if len(loaded.Symlinks) != 8 {
+		t.Errorf("loaded registry has %d entries, want 8", len(loaded.Symlinks))
 	}
 
 	// Verify all symlinks resolve.
@@ -97,17 +113,16 @@ func TestIntegration_CaseBUpgrade(t *testing.T) {
 
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	os.MkdirAll(skillsDir, 0o755)
-	os.MkdirAll(filepath.Join(home, ".steez"), 0o755)
+	steezHome := filepath.Join(home, ".steez")
+	os.MkdirAll(steezHome, 0o755)
 
 	// Create a non-steez skill.
 	nonSteez := filepath.Join(skillsDir, "my-custom-skill")
 	os.MkdirAll(nonSteez, 0o755)
 	os.WriteFile(filepath.Join(nonSteez, "SKILL.md"), []byte("custom"), 0o644)
 
-	// Install steez shared home.
-	sharedSource := filepath.Join(repoPath, "skills", "steez")
-	sharedTarget := filepath.Join(skillsDir, "steez")
-	CreateSymlink(sharedSource, sharedTarget, false, false)
+	// Create repo symlink.
+	CreateSymlink(repoPath, filepath.Join(steezHome, "repo"), false, false)
 
 	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "office-hours")
@@ -132,13 +147,31 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	os.MkdirAll(skillsDir, 0o755)
-	os.MkdirAll(filepath.Join(home, ".steez", "analytics"), 0o755)
+	steezHome := filepath.Join(home, ".steez")
+	os.MkdirAll(filepath.Join(steezHome, "analytics"), 0o755)
 
-	// Install shared home + one skill.
-	sharedSource := filepath.Join(repoPath, "skills", "steez")
-	sharedTarget := filepath.Join(skillsDir, "steez")
-	CreateSymlink(sharedSource, sharedTarget, false, false)
+	// Create repo symlink.
+	repoSymlink := filepath.Join(steezHome, "repo")
+	CreateSymlink(repoPath, repoSymlink, false, false)
 
+	// Create bin symlinks.
+	binDir := filepath.Join(steezHome, "bin")
+	os.MkdirAll(binDir, 0o755)
+	for _, bs := range []struct{ name, relPath string }{
+		{"steez-config", "shared/steez/bin/steez-config"},
+		{"steez-slug", "shared/steez/bin/steez-slug"},
+		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
+		{"steez-review-log", "shared/steez/bin/steez-review-log"},
+		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"browse", "shared/steez/browse/dist/browse"},
+	} {
+		source := filepath.Join(repoSymlink, bs.relPath)
+		target := filepath.Join(binDir, bs.name)
+		CreateSymlink(source, target, false, false)
+	}
+
+	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "review")
 	target := filepath.Join(skillsDir, "steez-review")
 	CreateSymlink(source, target, false, false)
@@ -146,17 +179,16 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	// Write registry.
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "steez", Source: sharedSource, Target: sharedTarget},
 			{Name: "steez-review", Source: source, Target: target},
 		},
 	}
 	data, _ := json.MarshalIndent(reg, "", "  ")
-	os.WriteFile(filepath.Join(home, ".steez", "installed.json"), data, 0o644)
+	os.WriteFile(filepath.Join(steezHome, "installed.json"), data, 0o644)
 
 	// Write config.
 	cfg := &config.Config{RepoPath: repoPath}
 	cfgData, _ := json.MarshalIndent(cfg, "", "  ")
-	os.WriteFile(filepath.Join(home, ".steez", "config.json"), cfgData, 0o644)
+	os.WriteFile(filepath.Join(steezHome, "config.json"), cfgData, 0o644)
 
 	// Run doctor.
 	results, err := RunDoctor(repoPath, false)

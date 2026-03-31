@@ -27,14 +27,18 @@ func RunDoctor(repoPath string, fix bool) ([]CheckResult, error) {
 
 	var results []CheckResult
 
-	// 1. Shared home symlink (fail-fast).
-	sharedHome := filepath.Join(home, ".claude", "skills", "steez")
-	r := checkSharedHome(sharedHome, repoPath)
+	// 1. Repo symlink (fail-fast).
+	steezHome := filepath.Join(home, ".steez")
+	repoSymlink := filepath.Join(steezHome, "repo")
+	r := checkRepoSymlink(repoSymlink, repoPath)
 	results = append(results, r)
 	if r.Status == "fail" {
-		// Everything else depends on shared home.
+		// Everything else depends on repo symlink.
 		return results, nil
 	}
+
+	// 1b. Bin symlinks.
+	results = append(results, checkBinSymlinks(steezHome)...)
 
 	// 2. Runtime directory.
 	results = append(results, checkRuntimeDirs(home, fix)...)
@@ -83,48 +87,106 @@ func ExitCode(results []CheckResult) int {
 	return 0
 }
 
-func checkSharedHome(sharedHome, repoPath string) CheckResult {
-	isSym, resolved, err := IsSymlink(sharedHome)
+func checkRepoSymlink(repoSymlink, repoPath string) CheckResult {
+	isSym, resolved, err := IsSymlink(repoSymlink)
 	if err != nil {
 		return CheckResult{
-			Name:    "Shared home symlink",
+			Name:    "Repo symlink",
 			Status:  "fail",
-			Message: fmt.Sprintf("Error checking %s: %v", sharedHome, err),
+			Message: fmt.Sprintf("Error checking %s: %v", repoSymlink, err),
 			FixCmd:  "steez install",
 		}
 	}
 	if !isSym {
-		if _, err := os.Stat(sharedHome); os.IsNotExist(err) {
+		if _, err := os.Stat(repoSymlink); os.IsNotExist(err) {
 			return CheckResult{
-				Name:    "Shared home symlink",
+				Name:    "Repo symlink",
 				Status:  "fail",
-				Message: "Missing: ~/.claude/skills/steez/ — all skills depend on this",
+				Message: "Missing: ~/.steez/repo — all bin symlinks depend on this",
 				FixCmd:  "steez install",
 			}
 		}
-		// It exists but is a real directory, not a symlink — unusual but functional.
 		return CheckResult{
-			Name:    "Shared home symlink",
+			Name:    "Repo symlink",
 			Status:  "warn",
-			Message: "~/.claude/skills/steez/ is a real directory, not a symlink — updates won't propagate",
+			Message: "~/.steez/repo is a real directory, not a symlink — re-pointing won't work",
 		}
 	}
 
-	// It's a symlink — verify the target exists.
-	if err := ValidateSymlink(sharedHome); err != nil {
+	if err := ValidateSymlink(repoSymlink); err != nil {
 		return CheckResult{
-			Name:    "Shared home symlink",
+			Name:    "Repo symlink",
 			Status:  "fail",
-			Message: fmt.Sprintf("Dangling symlink: %s → %s", sharedHome, resolved),
+			Message: fmt.Sprintf("Dangling symlink: %s → %s", repoSymlink, resolved),
 			FixCmd:  "steez install",
 		}
 	}
 
 	return CheckResult{
-		Name:    "Shared home symlink",
+		Name:    "Repo symlink",
 		Status:  "pass",
-		Message: fmt.Sprintf("~/.claude/skills/steez/ → %s", resolved),
+		Message: fmt.Sprintf("~/.steez/repo → %s", resolved),
 	}
+}
+
+func checkBinSymlinks(steezHome string) []CheckResult {
+	binDir := filepath.Join(steezHome, "bin")
+	expected := []string{
+		"steez-config", "steez-slug", "steez-diff-scope",
+		"steez-review-log", "steez-review-read", "steez-bd", "browse",
+	}
+
+	var results []CheckResult
+
+	if _, err := os.Stat(binDir); os.IsNotExist(err) {
+		results = append(results, CheckResult{
+			Name:    "Bin directory",
+			Status:  "fail",
+			Message: "Missing: ~/.steez/bin/ — run steez install",
+			FixCmd:  "steez install",
+		})
+		return results
+	}
+
+	for _, name := range expected {
+		path := filepath.Join(binDir, name)
+		isSym, resolved, err := IsSymlink(path)
+		if err != nil || !isSym {
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				results = append(results, CheckResult{
+					Name:    fmt.Sprintf("bin/%s", name),
+					Status:  "warn",
+					Message: fmt.Sprintf("Missing: ~/.steez/bin/%s", name),
+					FixCmd:  "steez install",
+				})
+			} else {
+				results = append(results, CheckResult{
+					Name:    fmt.Sprintf("bin/%s", name),
+					Status:  "warn",
+					Message: fmt.Sprintf("~/.steez/bin/%s is not a symlink", name),
+				})
+			}
+			continue
+		}
+
+		if err := ValidateSymlink(path); err != nil {
+			results = append(results, CheckResult{
+				Name:    fmt.Sprintf("bin/%s", name),
+				Status:  "fail",
+				Message: fmt.Sprintf("Dangling: ~/.steez/bin/%s → %s", name, resolved),
+				FixCmd:  "steez install",
+			})
+			continue
+		}
+
+		results = append(results, CheckResult{
+			Name:    fmt.Sprintf("bin/%s", name),
+			Status:  "pass",
+			Message: fmt.Sprintf("~/.steez/bin/%s → %s", name, resolved),
+		})
+	}
+
+	return results
 }
 
 func checkRuntimeDirs(home string, fix bool) []CheckResult {
@@ -343,7 +405,7 @@ func checkBrowseBinary(repoPath string, reg *config.Registry) []CheckResult {
 		return nil
 	}
 
-	browseBin := filepath.Join(repoPath, "skills", "browse", "dist", "browse")
+	browseBin := filepath.Join(repoPath, "shared", "steez", "browse", "dist", "browse")
 	info, err := os.Stat(browseBin)
 	if os.IsNotExist(err) {
 		return []CheckResult{{
