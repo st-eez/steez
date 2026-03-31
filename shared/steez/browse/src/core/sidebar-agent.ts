@@ -17,7 +17,7 @@ const QUEUE = process.env.SIDEBAR_QUEUE_PATH || path.join(process.env.HOME || '/
 const SERVER_PORT = parseInt(process.env.BROWSE_SERVER_PORT || '34567', 10);
 const SERVER_URL = `http://127.0.0.1:${SERVER_PORT}`;
 const POLL_MS = 500;  // Fast polling — server already did the user-facing response
-const B = process.env.BROWSE_BIN || path.resolve(__dirname, '../../.claude/skills/steez/browse/dist/browse');
+const B = process.env.BROWSE_BIN || path.join(process.env.HOME || '', '.steez', 'bin', 'browse');
 
 let lastLine = 0;
 let authToken: string | null = null;

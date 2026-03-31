@@ -136,8 +136,7 @@ let chatNextId = 0;
 function findBrowseBin(): string {
   const candidates = [
     path.resolve(__dirname, '..', 'dist', 'browse'),
-    path.resolve(__dirname, '..', '..', '.claude', 'skills', 'steez', 'browse', 'dist', 'browse'),
-    path.join(process.env.HOME || '', '.claude', 'skills', 'steez', 'browse', 'dist', 'browse'),
+    path.join(process.env.HOME || '', '.steez', 'bin', 'browse'),
   ];
   for (const c of candidates) {
     try { if (fs.existsSync(c)) return c; } catch {}
