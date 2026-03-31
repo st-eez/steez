@@ -8,8 +8,9 @@
  *   ns set entity 42 --no-source  → force suppress cascading
  *
  * Cascading strategy:
- *   Fire cascading:    nlapiSetFieldValue(id, val, false, false)
- *   Suppress cascading: nlapiSetFieldValue(id, val, true, true)
+ *   nlapiSetFieldValue(id, val, firefieldchanged=true, synchronous=true)
+ *   Always fires fieldChanged (sourcing is a no-op for non-entity-ref fields).
+ *   --no-source suppresses fieldChanged for fields where sourcing causes issues.
  *
  * When cascading is fired, polls all non-disabled fields for convergence
  * (dependent fields may be asynchronously updated by NetSuite sourcing).
@@ -105,29 +106,35 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
       }
 
       // ── Decide cascading strategy ────────────────────────────
-      let fireCascading: boolean;
+      // nlapiSetFieldValue(fld, val, firefieldchanged, synchronous)
+      //   firefieldchanged=true  → fires fieldChanged event (triggers sourcing)
+      //   firefieldchanged=false → suppresses fieldChanged event
+      //
+      // Always fire by default: sourcing is a no-op for fields without
+      // handlers, but required for entity-ref fields (entity→subsidiary→
+      // location cascade chain). Only suppress when --no-source is explicit.
+      const fireFieldChanged = forceSource !== false;
+      const synchronous = true;
+
+      // Convergence tracking: snapshot + poll dependent fields after set.
+      // Only worth the cost for entity-ref fields (which have sourcing
+      // handlers) or when --source is explicitly requested.
+      let trackConvergence: boolean;
       if (forceSource === true) {
-        fireCascading = true;
+        trackConvergence = true;
       } else if (forceSource === false) {
-        fireCascading = false;
+        trackConvergence = false;
       } else {
-        // Auto-detect: entity-ref fields fire cascading
-        fireCascading = fieldMeta.isEntityRef;
+        trackConvergence = fieldMeta.isEntityRef;
       }
 
-      const cascadingLabel: 'fired' | 'suppressed' = fireCascading ? 'fired' : 'suppressed';
-
-      // fireSlavingWhenever and fireFieldChanged flags:
-      //   Fire cascading:    (false, false) — don't suppress
-      //   Suppress cascading: (true, true)  — suppress
-      const fireSlavingWhenever = !fireCascading;
-      const fireFieldChanged = !fireCascading;
+      const cascadingLabel: 'fired' | 'suppressed' = fireFieldChanged ? 'fired' : 'suppressed';
 
       // ── Snapshot field values before set (for diff) ──────────
       let watchFieldIds: string[] = [];
       let beforeValues: Record<string, string | null> = {};
 
-      if (fireCascading) {
+      if (trackConvergence) {
         // Read all non-disabled fields for convergence tracking
         const allFields = await introspectAllFields(target);
         watchFieldIds = allFields
@@ -146,10 +153,10 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
 
           // Set the value
           await page.evaluate(
-            ({ fid, val, fsw, ffc }: { fid: string; val: string; fsw: boolean; ffc: boolean }) => {
-              (window as any).nlapiSetFieldValue(fid, val, fsw, ffc);
+            ({ fid, val, ffc, sync }: { fid: string; val: string; ffc: boolean; sync: boolean }) => {
+              (window as any).nlapiSetFieldValue(fid, val, ffc, sync);
             },
-            { fid: fieldId, val: value, fsw: fireSlavingWhenever, ffc: fireFieldChanged },
+            { fid: fieldId, val: value, ffc: fireFieldChanged, sync: synchronous },
           );
 
           // Verify value was set — custom forms with indexed widgets (hddn_{field}_{N})
@@ -191,7 +198,7 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
 
           // If cascading was fired, wait for convergence
           let settled = true;
-          if (fireCascading && watchFieldIds.length > 0) {
+          if (trackConvergence && watchFieldIds.length > 0) {
             const convergence = await waitForFieldConvergence(target, watchFieldIds, {
               stablePolls: 3,
               initialIntervalMs: 50,
@@ -208,7 +215,7 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
 
       // ── Compute diff ─────────────────────────────────────────
       const changed: FieldChange[] = [];
-      if (fireCascading && watchFieldIds.length > 0) {
+      if (trackConvergence && watchFieldIds.length > 0) {
         const getter = createPageGetter(target);
         const afterValues = await getter(watchFieldIds);
 

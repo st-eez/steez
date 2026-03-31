@@ -7,11 +7,10 @@
  *
  * Lifecycle:
  *   1. nlapiSelectNewLineItem(sublistId) — open a new blank row
- *   2. For each key=value pair, set the column value:
- *      - Detect entity-ref columns via _display companion
- *      - Entity-ref: nlapiSetCurrentLineItemValue(sub, col, val, false, false)
- *      - Other: nlapiSetCurrentLineItemValue(sub, col, val, true, true)
- *      - After entity-ref set, poll for convergence on other columns
+ *   2. For each key=value pair: nlapiSetCurrentLineItemValue(sub, col, val, true, true)
+ *      - firefieldchanged=true fires sourcing for entity-ref columns (item → rate/taxcode/units)
+ *      - No-op for scalar columns (quantity, rate, memo, etc.)
+ *      - After each set, poll other columns for convergence
  *   3. nlapiCommitLineItem(sublistId) — commit the row
  *   4. Return line number, final values, convergence result
  */
@@ -125,22 +124,18 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
           let overallSettled = true;
 
           for (const { column, value } of fieldValues) {
-            // Always fire cascading (false, false) for sublist columns.
-            // Entity-ref detection via _display companions is unreliable on the
-            // current edit line — the companion may not exist until a value is
-            // selected. Suppressing cascading prevents sourcing, leaving dependent
-            // fields empty and causing nlapiCommitLineItem to fail with
-            // "Field Not Found". The convergence polling cost (~100ms) is worth
-            // the correctness.
+            // Set column value with firefieldchanged=true, synchronous=true.
+            // This fires the sourcing chain for entity-ref columns (item →
+            // rate/taxcode/units) and is a no-op for scalar columns.
             await target.evaluate(
               ({ sub, col, val }: { sub: string; col: string; val: string }) => {
-                (window as any).nlapiSetCurrentLineItemValue?.(sub, col, val, false, false);
+                (window as any).nlapiSetCurrentLineItemValue?.(sub, col, val, true, true);
               },
               { sub: sublistId, col: column, val: value },
             );
 
-            // Poll other columns for convergence after each set — sourcing may
-            // update dependent columns asynchronously
+            // Poll other columns for convergence — sourcing may update
+            // dependent columns asynchronously
             const otherColumns = allColumns.filter(c => c !== column);
             if (otherColumns.length > 0) {
               const getter = createLineItemGetter(target, sublistId);
