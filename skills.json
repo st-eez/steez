@@ -139,7 +139,7 @@
   "profiles": {
     "starter": {
       "label": "Starter Kit (recommended)",
-      "description": "6 workflow skills \u2014 the sprint pipeline spine",
+      "description": "8 workflow skills \u2014 the sprint pipeline spine",
       "categories": ["workflow"]
     },
     "all": {

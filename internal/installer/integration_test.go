@@ -45,8 +45,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		t.Fatalf("resolving profile: %v", err)
 	}
 
-	if len(skills) != 6 {
-		t.Fatalf("starter profile has %d skills, want 6", len(skills))
+	if len(skills) != 8 {
+		t.Fatalf("starter profile has %d skills, want 8", len(skills))
 	}
 
 	// Install shared home.
@@ -68,9 +68,9 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		config.AddToRegistry(reg, "steez-"+name, source, target)
 	}
 
-	// Verify 7 entries (6 skills + shared home).
-	if len(reg.Symlinks) != 7 {
-		t.Errorf("registry has %d entries, want 7", len(reg.Symlinks))
+	// Verify 9 entries (8 skills + shared home).
+	if len(reg.Symlinks) != 9 {
+		t.Errorf("registry has %d entries, want 9", len(reg.Symlinks))
 	}
 
 	// Save and reload registry to verify persistence.
@@ -79,8 +79,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading registry: %v", err)
 	}
-	if len(loaded.Symlinks) != 7 {
-		t.Errorf("loaded registry has %d entries, want 7", len(loaded.Symlinks))
+	if len(loaded.Symlinks) != 9 {
+		t.Errorf("loaded registry has %d entries, want 9", len(loaded.Symlinks))
 	}
 
 	// Verify all symlinks resolve.
