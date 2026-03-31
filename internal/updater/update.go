@@ -117,7 +117,7 @@ func checkClean(repoPath string) error {
 		return fmt.Errorf("checking repo status: %w", err)
 	}
 	if strings.TrimSpace(out) != "" {
-		return fmt.Errorf("you have local modifications to skill files.\nStash or commit them first: git -C %s stash", repoPath)
+		return fmt.Errorf("working tree is dirty (uncommitted or untracked files).\nStash or commit them first: git -C %s stash", repoPath)
 	}
 	return nil
 }
