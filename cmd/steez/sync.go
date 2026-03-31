@@ -151,11 +151,61 @@ func cmdSync(args []string) int {
 		}
 	}
 
+	// Old-path guardrail: scan skill files for stale ~/.claude/skills/steez/ references.
+	oldPathHits := 0
+	if checkMode {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			dirName := entry.Name()
+			skillDir := filepath.Join(skillsDir, dirName)
+			files, err := os.ReadDir(skillDir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f.IsDir() {
+					continue
+				}
+				fpath := filepath.Join(skillDir, f.Name())
+				data, err := os.ReadFile(fpath)
+				if err != nil {
+					continue
+				}
+				content := string(data)
+				// Check for old paths outside managed preamble blocks.
+				toScan := content
+				if hasManagedBlock(content) {
+					// Remove managed block before scanning.
+					before := strings.SplitN(toScan, beginMarker, 2)
+					after := strings.SplitN(toScan, endMarker, 2)
+					toScan = before[0]
+					if len(after) > 1 {
+						toScan += after[1]
+					}
+				}
+				if strings.Contains(toScan, "/.claude/skills/steez/") {
+					fmt.Printf("  OLD   %s/%s — contains ~/.claude/skills/steez/ reference\n", dirName, f.Name())
+					oldPathHits++
+				}
+			}
+		}
+	}
+
 	fmt.Println()
 	if checkMode {
 		fmt.Printf("%d stale, %d current, %d skipped\n", stale, current, skipped)
-		if stale > 0 {
-			fmt.Println("Run `steez sync` to update.")
+		if oldPathHits > 0 {
+			fmt.Printf("%d files contain old ~/.claude/skills/steez/ paths\n", oldPathHits)
+		}
+		if stale > 0 || oldPathHits > 0 {
+			if stale > 0 {
+				fmt.Println("Run `steez sync` to update preambles.")
+			}
+			if oldPathHits > 0 {
+				fmt.Println("Update old paths manually (see steez-z78).")
+			}
 			return 1
 		}
 		return 0
