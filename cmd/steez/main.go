@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/st-eez/steez/internal/config"
+	"github.com/st-eez/steez/internal/tui"
 	"github.com/st-eez/steez/internal/updater"
 )
 
@@ -152,8 +153,15 @@ func cmdVersion() {
 }
 
 func cmdSetup(_ []string) {
-	// Stub — wired in bead 7 (TUI).
-	fmt.Println("steez setup: TUI not yet implemented. Use steez install <profile> instead.")
+	repoPath, err := resolveRepoPath("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := tui.RunSetup(repoPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func cmdUpdate(_ []string) {

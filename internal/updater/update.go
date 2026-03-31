@@ -43,8 +43,7 @@ func RunUpdate() error {
 	// 3. Pull --ff-only.
 	fmt.Println("Pulling latest changes...")
 	if err := gitRun(repoPath, "pull", "--ff-only"); err != nil {
-		return fmt.Errorf("pull failed — local and remote may have diverged.\n" +
-			"Resolve manually: git -C " + repoPath + " pull --rebase")
+		return fmt.Errorf("pull failed — local and remote may have diverged.\nResolve manually: git -C %s pull --rebase", repoPath)
 	}
 
 	// 4. Compare HEAD.
@@ -118,8 +117,7 @@ func checkClean(repoPath string) error {
 		return fmt.Errorf("checking repo status: %w", err)
 	}
 	if strings.TrimSpace(out) != "" {
-		return fmt.Errorf("you have local modifications to skill files.\n" +
-			"Stash or commit them first: git -C " + repoPath + " stash")
+		return fmt.Errorf("you have local modifications to skill files.\nStash or commit them first: git -C %s stash", repoPath)
 	}
 	return nil
 }
