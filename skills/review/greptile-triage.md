@@ -34,7 +34,7 @@ The `position != null` filter on line-level comments automatically skips outdate
 
 Derive the project-specific history path:
 ```bash
-REMOTE_SLUG=$($STEEZ_BIN/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+REMOTE_SLUG=$(~/.steez/bin/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 PROJECT_HISTORY="$HOME/.steez/projects/$REMOTE_SLUG/greptile-history.md"
 ```
 
@@ -183,7 +183,7 @@ When classifying comments, also assess whether Greptile's implied severity match
 
 Before writing, ensure both directories exist:
 ```bash
-REMOTE_SLUG=$($STEEZ_BIN/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+REMOTE_SLUG=$(~/.steez/bin/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 mkdir -p "$HOME/.steez/projects/$REMOTE_SLUG"
 mkdir -p ~/.steez
 ```

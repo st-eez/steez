@@ -208,7 +208,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -239,10 +239,7 @@ plan's living status.
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -252,7 +249,7 @@ fi
 
 If `NEEDS_SETUP`:
 1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
-2. Run: `cd ~/.claude/skills/steez/browse && ./setup`
+2. Run: `cd ~/.steez/repo/shared/steez/browse && bun install && bun run build`
 3. If `bun` is not installed:
    ```bash
    if ! command -v bun >/dev/null 2>&1; then
@@ -291,7 +288,7 @@ Look for office-hours output:
 
 ```bash
 setopt +o nomatch 2>/dev/null || true  # zsh compat
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 ls ~/.steez/projects/$SLUG/*office-hours* 2>/dev/null | head -5
 ls .context/*office-hours* .context/attachments/*office-hours* 2>/dev/null | head -5
 ```
@@ -309,18 +306,12 @@ If browse is not available, that's fine — visual research is optional. The ski
 ## DESIGN SETUP (run this check BEFORE any design mockup command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
-[ -z "$D" ] && D=~/.claude/skills/steez/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
 else
   echo "DESIGN_NOT_AVAILABLE"
 fi
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
 else
@@ -479,7 +470,7 @@ Present subagent output under a `CLAUDE SUBAGENT (design direction):` header.
 
 **Log the result:**
 ```bash
-"$STEEZ_BIN/steez-review-log" '{"skill":"design-outside-voices","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/steez-review-log '{"skill":"design-outside-voices","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 Replace STATUS with "clean" or "issues_found", SOURCE with "codex+subagent", "codex-only", "subagent-only", or "unavailable".
 
@@ -594,7 +585,7 @@ This phase generates visual previews of the proposed design system. Two paths de
 Generate AI-rendered mockups showing the proposed design system applied to realistic screens for this product. This is far more powerful than an HTML preview — the user sees what their product could actually look like.
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 _DESIGN_DIR=~/.steez/projects/$SLUG/designs/design-system-$(date +%Y%m%d)
 mkdir -p "$_DESIGN_DIR"
 echo "DESIGN_DIR: $_DESIGN_DIR"

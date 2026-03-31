@@ -13,7 +13,6 @@ allowed-tools:
 
 ```bash
 STEEZ_HOME="$HOME/.steez"
-STEEZ_BIN="$HOME/.claude/skills/steez/bin"
 # Session tracking
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
@@ -22,7 +21,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || echo "true")
+_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || echo "true")
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -38,7 +37,7 @@ _SESSION_ID="$$-$(date +%s)"
 
 ```bash
 # Beads context — shows current bead, suggested skill, ready work (non-blocking)
-"$HOME/.claude/skills/steez/bin/steez-bd" resume 2>/dev/null || true
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -119,7 +118,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 ```bash
-"$STEEZ_BIN/steez-review-read"
+~/.steez/bin/steez-review-read
 ```
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -149,10 +148,7 @@ State persists between calls (cookies, tabs, login sessions).
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -162,7 +158,7 @@ fi
 
 If `NEEDS_SETUP`:
 1. Tell the user: "steez-browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
-2. Run: `cd ~/.claude/skills/steez/browse && ./setup`
+2. Run: `cd ~/.steez/repo/shared/steez/browse && bun install && bun run build`
 3. If `bun` is not installed:
    ```bash
    if ! command -v bun >/dev/null 2>&1; then

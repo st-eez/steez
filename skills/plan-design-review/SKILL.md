@@ -15,13 +15,12 @@ allowed-tools:
 
 ```bash
 STEEZ_HOME="$HOME/.steez"
-STEEZ_BIN="$HOME/.claude/skills/steez/bin"
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
 find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
-_PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
@@ -35,7 +34,7 @@ echo '{"skill":"steez-plan-design-review","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 ```bash
 # Beads context — shows current bead, suggested skill, ready work (non-blocking)
-"$HOME/.claude/skills/steez/bin/steez-bd" resume 2>/dev/null || true
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -117,7 +116,7 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 
 ## Search Before Building
 
-Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
+Before building anything unfamiliar, **search first.** See `~/.steez/repo/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
@@ -197,7 +196,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -372,18 +371,12 @@ Report findings before proceeding to Step 0.
 ## DESIGN SETUP (run this check BEFORE any design mockup command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
-[ -z "$D" ] && D=~/.claude/skills/steez/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
 else
   echo "DESIGN_NOT_AVAILABLE"
 fi
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
 else
@@ -462,7 +455,7 @@ Allowed commands under this exception:
 First, set up the output directory. Name it after the screen/feature being designed and today's date:
 
 ```bash
-eval "$(~/.claude/skills/steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 _DESIGN_DIR=~/.steez/projects/$SLUG/designs/<screen-name>-$(date +%Y%m%d)
 mkdir -p "$_DESIGN_DIR"
 echo "DESIGN_DIR: $_DESIGN_DIR"
@@ -692,7 +685,7 @@ Fill in each cell from the Codex and subagent outputs. CONFIRMED = both agree. D
 
 **Log the result:**
 ```bash
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"design-outside-voices","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/steez-review-log '{"skill":"design-outside-voices","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 Replace STATUS with "clean" or "issues_found", SOURCE with "codex+subagent", "codex-only", "subagent-only", or "unavailable".
 
@@ -952,7 +945,7 @@ the same pattern. The review dashboard depends on this data. Skipping this
 command breaks the review readiness dashboard in /steez-ship.
 
 ```bash
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"plan-design-review","timestamp":"TIMESTAMP","status":"STATUS","initial_score":N,"overall_score":N,"unresolved":N,"decisions_made":N,"commit":"COMMIT"}'
+~/.steez/bin/steez-review-log '{"skill":"plan-design-review","timestamp":"TIMESTAMP","status":"STATUS","initial_score":N,"overall_score":N,"unresolved":N,"decisions_made":N,"commit":"COMMIT"}'
 ```
 
 Substitute values from the Completion Summary:
@@ -969,7 +962,7 @@ Substitute values from the Completion Summary:
 After completing the review, read the review log and config to display the dashboard.
 
 ```bash
-~/.claude/skills/steez/bin/steez-review-read
+~/.steez/bin/steez-review-read
 ```
 
 Parse the output. Find the most recent entry for each skill (plan-ceo-review, plan-eng-review, review, plan-design-review, design-review-lite, adversarial-review, codex-review, codex-plan-review). Ignore entries with timestamps older than 7 days. For the Eng Review row, show whichever is more recent between `review` (diff-scoped pre-landing review) and `plan-eng-review` (plan-stage architecture review). Append "(DIFF)" or "(PLAN)" to the status to distinguish. For the Adversarial row, show whichever is more recent between `adversarial-review` (new auto-scaled) and `codex-review` (legacy). For Design Review, show whichever is more recent between `plan-design-review` (full visual audit) and `design-review-lite` (code-level check). Append "(FULL)" or "(LITE)" to the status to distinguish. For the Outside Voice row, show the most recent `codex-plan-review` entry — this captures outside voices from both /steez-plan-ceo-review and /steez-plan-eng-review.

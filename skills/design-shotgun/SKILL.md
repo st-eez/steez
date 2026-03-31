@@ -194,7 +194,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -231,18 +231,12 @@ visual brainstorming, not a review process.
 ## DESIGN SETUP (run this check BEFORE any design mockup command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
-[ -z "$D" ] && D=~/.claude/skills/steez/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
 else
   echo "DESIGN_NOT_AVAILABLE"
 fi
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
 else
@@ -276,7 +270,7 @@ data, not project files. They persist across branches, conversations, and worksp
 Check for prior design exploration sessions for this project:
 
 ```bash
-eval "$(~/.claude/skills/steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 setopt +o nomatch 2>/dev/null || true
 _PREV=$(find ~/.steez/projects/$SLUG/designs/ -name "approved.json" -maxdepth 2 2>/dev/null | sort -r | head -5)
 [ -n "$_PREV" ] && echo "PREVIOUS_SESSIONS_FOUND" || echo "NO_PREVIOUS_SESSIONS"
@@ -380,7 +374,7 @@ Limit to last 10 sessions. Try/catch JSON parse on each (skip corrupted files).
 Set up the output directory:
 
 ```bash
-eval "$(~/.claude/skills/steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 _DESIGN_DIR=~/.steez/projects/$SLUG/designs/<screen-name>-$(date +%Y%m%d)
 mkdir -p "$_DESIGN_DIR"
 echo "DESIGN_DIR: $_DESIGN_DIR"

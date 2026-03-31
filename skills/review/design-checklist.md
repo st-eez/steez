@@ -9,7 +9,7 @@ This checklist applies to **source code in the diff** — not rendered output. R
 **Trigger:** Only run this checklist if the diff touches frontend files. Use `steez-diff-scope` to detect:
 
 ```bash
-source <($STEEZ_BIN/steez-diff-scope <base> 2>/dev/null)
+source <(~/.steez/bin/steez-diff-scope <base> 2>/dev/null)
 ```
 
 If `SCOPE_FRONTEND=false`, skip the entire design review silently.

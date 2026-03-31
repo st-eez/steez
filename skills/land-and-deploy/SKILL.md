@@ -205,7 +205,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -236,10 +236,7 @@ plan's living status.
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -380,7 +377,7 @@ Check whether this project has been through a successful `/steez-land-and-deploy
 and whether the deploy configuration has changed since then:
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 if [ ! -f ~/.steez/projects/$SLUG/land-deploy-confirmed ]; then
   echo "FIRST_RUN"
 else
@@ -551,7 +548,7 @@ Tell the user: "Before I merge any PR, I run a series of readiness checks — co
 Preview the readiness checks that will run at Step 3.5 (without re-running tests):
 
 ```bash
-$STEEZ_BIN/steez-review-read 2>/dev/null
+~/.steez/bin/steez-review-read 2>/dev/null
 ```
 
 Show a summary of review status: which reviews have been run, how stale they are.
@@ -644,7 +641,7 @@ Collect evidence for each check below. Track warnings (yellow) and blockers (red
 ### 3.5a: Review staleness check
 
 ```bash
-$STEEZ_BIN/steez-review-read 2>/dev/null
+~/.steez/bin/steez-review-read 2>/dev/null
 ```
 
 Parse the output. For each review skill (plan-eng-review, plan-ceo-review,
@@ -690,7 +687,7 @@ Use AskUserQuestion:
 
 Read the review checklist:
 ```bash
-cat ~/.claude/skills/steez/review/checklist.md 2>/dev/null || echo "Checklist not found"
+cat ~/.claude/skills/steez-review/checklist.md 2>/dev/null || echo "Checklist not found"
 ```
 Apply each checklist item to the current diff. This is the same quick review that `/steez-ship`
 runs in its Step 3.5. Auto-fix trivial issues (whitespace, imports). For critical findings
@@ -961,7 +958,7 @@ If you want to persist deploy settings for future runs, suggest the user run `/s
 Then run `steez-diff-scope` to classify the changes:
 
 ```bash
-eval $($STEEZ_BIN/steez-diff-scope $(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo main) 2>/dev/null)
+eval $(~/.steez/bin/steez-diff-scope $(gh pr view --json baseRefName -q .baseRefName 2>/dev/null || echo main) 2>/dev/null)
 echo "FRONTEND=$SCOPE_FRONTEND BACKEND=$SCOPE_BACKEND DOCS=$SCOPE_DOCS CONFIG=$SCOPE_CONFIG"
 ```
 
@@ -1215,7 +1212,7 @@ Save report to `.steez/deploy-reports/{date}-pr{number}-deploy.md`.
 Log to the review dashboard:
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 mkdir -p ~/.steez/projects/$SLUG
 ```
 

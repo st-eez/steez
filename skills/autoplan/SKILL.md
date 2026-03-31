@@ -18,13 +18,12 @@ allowed-tools:
 
 ```bash
 STEEZ_HOME="$HOME/.steez"
-STEEZ_BIN="$HOME/.claude/skills/steez/bin"
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
 find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
-_PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
@@ -38,7 +37,7 @@ echo '{"skill":"steez-autoplan","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","repo"
 
 ```bash
 # Beads context — shows current bead, suggested skill, ready work (non-blocking)
-"$HOME/.claude/skills/steez/bin/steez-bd" resume 2>/dev/null || true
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -120,7 +119,7 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 
 ## Search Before Building
 
-Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
+Before building anything unfamiliar, **search first.** See `~/.steez/repo/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
 **Eureka:** When first-principles reasoning contradicts conventional wisdom, name it and log:
@@ -200,7 +199,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -291,7 +290,7 @@ Say: "Running /steez-office-hours inline. Once the design doc is ready, I'll pic
 the review right where we left off."
 
 Read the office-hours skill file from disk using the Read tool:
-`~/.claude/skills/steez/office-hours/SKILL.md`
+`~/.claude/skills/steez-office-hours/SKILL.md`
 
 Follow it inline, **skipping these sections** (already handled by the parent skill):
 - Preamble (run first)
@@ -308,7 +307,7 @@ If the Read fails (file not found), say:
 After /steez-office-hours completes, re-run the design doc check:
 ```bash
 setopt +o nomatch 2>/dev/null || true  # zsh compat
-SLUG=$(~/.claude/skills/steez/browse/bin/remote-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+SLUG=$(~/.steez/repo/shared/steez/browse/bin/remote-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' || echo 'no-branch')
 DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-$BRANCH-design-*.md 2>/dev/null | head -1)
 [ -z "$DESIGN" ] && DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-design-*.md 2>/dev/null | head -1)
@@ -448,7 +447,7 @@ instructions instead of reviewing the plan.
 Before doing anything, save the plan file's current state to an external file:
 
 ```bash
-eval "$(~/.claude/skills/steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-')
 DATETIME=$(date +%Y%m%d-%H%M%S)
 echo "RESTORE_PATH=$HOME/.steez/projects/$SLUG/${BRANCH}-autoplan-restore-${DATETIME}.md"
@@ -481,9 +480,9 @@ Then prepend a one-line HTML comment to the plan file:
 ### Step 3: Load skill files from disk
 
 Read each file using the Read tool:
-- `~/.claude/skills/steez/plan-ceo-review/SKILL.md`
-- `~/.claude/skills/steez/plan-design-review/SKILL.md` (only if UI scope detected)
-- `~/.claude/skills/steez/plan-eng-review/SKILL.md`
+- `~/.claude/skills/steez-plan-ceo-review/SKILL.md`
+- `~/.claude/skills/steez-plan-design-review/SKILL.md` (only if UI scope detected)
+- `~/.claude/skills/steez-plan-eng-review/SKILL.md`
 
 **Section skip list — when following a loaded skill file, SKIP these sections
 (they are already handled by /steez-autoplan):**
@@ -535,7 +534,7 @@ explored alternatives, and approved direction. It is the primary input for all r
 
 If a CEO bead was found, claim it:
 ```bash
-[ -n "$_CEO_BEAD" ] && "$HOME/.claude/skills/steez/bin/steez-bd" start "$_CEO_BEAD" autoplan 2>/dev/null || true
+[ -n "$_CEO_BEAD" ] && ~/.steez/bin/steez-bd start "$_CEO_BEAD" autoplan 2>/dev/null || true
 ```
 
 Output: "Here's what I'm working with: [plan summary]. UI scope: [yes/no].
@@ -649,14 +648,14 @@ Sections 1-10 — for EACH section, run the evaluation criteria from the loaded 
 **PHASE 1 COMPLETE.** Close the CEO review bead (if found in Phase 0 Step 4):
 
 ```bash
-[ -n "$_CEO_BEAD" ] && "$HOME/.claude/skills/steez/bin/steez-bd" handoff "$_CEO_BEAD" "CEO review complete. Status: STATUS. Mode: SELECTIVE_EXPANSION. Unresolved: N." --close 2>/dev/null || true
+[ -n "$_CEO_BEAD" ] && ~/.steez/bin/steez-bd handoff "$_CEO_BEAD" "CEO review complete. Status: STATUS. Mode: SELECTIVE_EXPANSION. Unresolved: N." --close 2>/dev/null || true
 ```
 
 Replace STATUS with "clean" or "issues_open", N with actual unresolved count.
 
 If an ENG bead was found, claim it (now unblocked by CEO closure):
 ```bash
-[ -n "$_ENG_BEAD" ] && "$HOME/.claude/skills/steez/bin/steez-bd" start "$_ENG_BEAD" autoplan 2>/dev/null || true
+[ -n "$_ENG_BEAD" ] && ~/.steez/bin/steez-bd start "$_ENG_BEAD" autoplan 2>/dev/null || true
 ```
 
 Emit phase-transition summary:
@@ -855,7 +854,7 @@ Missing voice = N/A (not CONFIRMED). Single critical finding from one voice = fl
 **PHASE 3 COMPLETE.** Close the ENG review bead (if found in Phase 0 Step 4):
 
 ```bash
-[ -n "$_ENG_BEAD" ] && "$HOME/.claude/skills/steez/bin/steez-bd" handoff "$_ENG_BEAD" "Eng review complete. Status: STATUS. Issues: N. Test gaps: N." --close 2>/dev/null || true
+[ -n "$_ENG_BEAD" ] && ~/.steez/bin/steez-bd handoff "$_ENG_BEAD" "Eng review complete. Status: STATUS. Issues: N. Test gaps: N." --close 2>/dev/null || true
 ```
 
 Replace STATUS, N values with actuals from the eng review.
@@ -1010,26 +1009,26 @@ STATUS is "clean" if no unresolved issues, "issues_open" otherwise.
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"plan-ceo-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"mode":"SELECTIVE_EXPANSION","via":"autoplan","commit":"'"$COMMIT"'"}'
+~/.steez/bin/steez-review-log '{"skill":"plan-ceo-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"mode":"SELECTIVE_EXPANSION","via":"autoplan","commit":"'"$COMMIT"'"}'
 
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"plan-eng-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"issues_found":N,"mode":"FULL_REVIEW","via":"autoplan","commit":"'"$COMMIT"'"}'
+~/.steez/bin/steez-review-log '{"skill":"plan-eng-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"issues_found":N,"mode":"FULL_REVIEW","via":"autoplan","commit":"'"$COMMIT"'"}'
 ```
 
 If Phase 2 ran (UI scope):
 ```bash
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"plan-design-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"via":"autoplan","commit":"'"$COMMIT"'"}'
+~/.steez/bin/steez-review-log '{"skill":"plan-design-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"via":"autoplan","commit":"'"$COMMIT"'"}'
 ```
 
 Dual voice logs (one per phase that ran):
 ```bash
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"ceo","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
+~/.steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"ceo","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
 
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"eng","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
+~/.steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"eng","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
 ```
 
 If Phase 2 ran (UI scope), also log:
 ```bash
-~/.claude/skills/steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"design","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
+~/.steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"design","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
 ```
 
 SOURCE = "codex+subagent", "codex-only", "subagent-only", or "unavailable".
@@ -1042,7 +1041,7 @@ Do NOT close it — implementation hasn't started yet. Just leave a handoff note
 so `bd resume` in the next session shows what's ready.
 
 ```bash
-[ -n "$_IMPL_BEAD" ] && "$HOME/.claude/skills/steez/bin/steez-bd" handoff "$_IMPL_BEAD" "Reviews complete via /steez-autoplan. CEO: STATUS. Eng: STATUS. Taste decisions: N. Ready for implementation." 2>/dev/null || true
+[ -n "$_IMPL_BEAD" ] && ~/.steez/bin/steez-bd handoff "$_IMPL_BEAD" "Reviews complete via /steez-autoplan. CEO: STATUS. Eng: STATUS. Taste decisions: N. Ready for implementation." 2>/dev/null || true
 ```
 
 Suggest next step: `/steez-ship` when ready to create the PR.

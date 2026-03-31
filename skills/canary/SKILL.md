@@ -193,7 +193,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -224,10 +224,7 @@ plan's living status.
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -305,7 +302,7 @@ When the user types `/steez-canary`, run this skill.
 ### Phase 1: Setup
 
 ```bash
-eval "$(~/.claude/skills/steez/bin/steez-slug 2>/dev/null || echo "SLUG=unknown")"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null || echo "SLUG=unknown")"
 mkdir -p .steez/canary-reports
 mkdir -p .steez/canary-reports/baselines
 mkdir -p .steez/canary-reports/screenshots
@@ -455,7 +452,7 @@ Save report to `.steez/canary-reports/{date}-canary.md` and `.steez/canary-repor
 Log the result for the review dashboard:
 
 ```bash
-eval "$(~/.claude/skills/steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 mkdir -p ~/.steez/projects/$SLUG
 ```
 

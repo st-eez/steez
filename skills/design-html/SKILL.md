@@ -24,7 +24,6 @@ allowed-tools:
 
 ```bash
 STEEZ_HOME="$HOME/.steez"
-STEEZ_BIN="$HOME/.claude/skills/steez/bin"
 # Session tracking
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
@@ -33,7 +32,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || echo "true")
+_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || echo "true")
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -49,7 +48,7 @@ _SESSION_ID="$$-$(date +%s)"
 
 ```bash
 # Beads context — shows current bead, suggested skill, ready work (non-blocking)
-"$HOME/.claude/skills/steez/bin/steez-bd" resume 2>/dev/null || true
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -86,18 +85,12 @@ around obstacles.
 ## DESIGN SETUP (run this check BEFORE any design mockup command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
-[ -z "$D" ] && D=~/.claude/skills/steez/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
 else
   echo "DESIGN_NOT_AVAILABLE"
 fi
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
 else
@@ -129,10 +122,7 @@ data, not project files. They persist across branches, conversations, and worksp
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -167,7 +157,7 @@ If `NEEDS_SETUP`:
 ## Step 0: Input Detection
 
 ```bash
-eval "$("$HOME/.claude/skills/steez/bin/steez-slug" 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 ```
 
 1. Find the most recent `approved.json`:
@@ -270,15 +260,9 @@ If no framework detected: default to vanilla HTML, no question needed.
 For **vanilla HTML output**, check for the vendored Pretext bundle:
 ```bash
 _PRETEXT_VENDOR=""
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/steez/design-html/vendor/pretext.js" ] && _PRETEXT_VENDOR="$_ROOT/.claude/skills/steez/design-html/vendor/pretext.js"
-[ -z "$_PRETEXT_VENDOR" ] && [ -f ~/.claude/skills/steez/design-html/vendor/pretext.js ] && _PRETEXT_VENDOR=~/.claude/skills/steez/design-html/vendor/pretext.js
-[ -n "$_PRETEXT_VENDOR" ] && echo "VENDOR: $_PRETEXT_VENDOR" || echo "VENDOR_MISSING"
 ```
 
-- If `VENDOR` found: read the file and inline it in a `<script>` tag. The HTML file
-  is fully self-contained with zero network dependencies.
-- If `VENDOR_MISSING`: use CDN import as fallback:
+Use CDN import for Pretext:
   `<script type="module">import { prepare, layout, prepareWithSegments, walkLineRanges, layoutNextLine, layoutWithLines } from 'https://esm.sh/@chenglou/pretext'</script>`
   Add a comment: `<!-- FALLBACK: vendor/pretext.js missing, using CDN -->`
 

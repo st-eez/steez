@@ -208,7 +208,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -299,7 +299,7 @@ If a bead was found with a design doc path, use that path directly. If not, fall
 to filesystem discovery:
 ```bash
 setopt +o nomatch 2>/dev/null || true  # zsh compat
-SLUG=$($STEEZ_BIN/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+SLUG=$(~/.steez/bin/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' || echo 'no-branch')
 DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-$BRANCH-design-*.md 2>/dev/null | head -1)
 [ -z "$DESIGN" ] && DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-design-*.md 2>/dev/null | head -1)
@@ -311,7 +311,7 @@ If a design doc exists (from `/steez-office-hours`), read it. Use it as the sour
 
 If an ENG bead was found, claim it:
 ```bash
-[ -n "$_ENG_BEAD" ] && "$HOME/.claude/skills/steez/bin/steez-bd" start "$_ENG_BEAD" eng-review 2>/dev/null || true
+[ -n "$_ENG_BEAD" ] && ~/.steez/bin/steez-bd start "$_ENG_BEAD" eng-review 2>/dev/null || true
 ```
 
 ## Prerequisite Skill Offer
@@ -356,7 +356,7 @@ If the Read fails (file not found), say:
 After /steez-office-hours completes, re-run the design doc check:
 ```bash
 setopt +o nomatch 2>/dev/null || true  # zsh compat
-SLUG=$($STEEZ_BIN/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+SLUG=$(~/.steez/bin/steez-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-' || echo 'no-branch')
 DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-$BRANCH-design-*.md 2>/dev/null | head -1)
 [ -z "$DESIGN" ] && DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-design-*.md 2>/dev/null | head -1)
@@ -593,7 +593,7 @@ The plan should be complete enough that when implementation begins, every test i
 After producing the coverage diagram, write a test plan artifact to the project directory so `/steez-qa` and `/steez-qa-only` can consume it as primary test input:
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 ```
@@ -764,7 +764,7 @@ such — but the user makes the decision.
 
 **Persist the result:**
 ```bash
-$STEEZ_BIN/steez-review-log '{"skill":"codex-plan-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/steez-review-log '{"skill":"codex-plan-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 
 Substitute: STATUS = "clean" if no findings, "issues_found" if findings exist.
@@ -853,7 +853,7 @@ If the Beads Context preamble showed a bead with label `skill:eng-review`, hand 
 # Hand off eng review results to the bead (non-blocking)
 _ENG_BEAD_ID="BEAD_ID_FROM_PREAMBLE"
 if [ -n "$_ENG_BEAD_ID" ] && [ "$_ENG_BEAD_ID" != "none" ]; then
-  "$HOME/.claude/skills/steez/bin/steez-bd" handoff "$_ENG_BEAD_ID" "Eng review complete. Status: STATUS. Issues: N. Test gaps: N." --close 2>/dev/null || true
+  ~/.steez/bin/steez-bd handoff "$_ENG_BEAD_ID" "Eng review complete. Status: STATUS. Issues: N. Test gaps: N." --close 2>/dev/null || true
 fi
 ```
 
@@ -898,7 +898,7 @@ the same pattern. The review dashboard depends on this data. Skipping this
 command breaks the review readiness dashboard in /steez-ship.
 
 ```bash
-$STEEZ_BIN/steez-review-log '{"skill":"plan-eng-review","timestamp":"TIMESTAMP","status":"STATUS","unresolved":N,"critical_gaps":N,"issues_found":N,"mode":"MODE","commit":"COMMIT"}'
+~/.steez/bin/steez-review-log '{"skill":"plan-eng-review","timestamp":"TIMESTAMP","status":"STATUS","unresolved":N,"critical_gaps":N,"issues_found":N,"mode":"MODE","commit":"COMMIT"}'
 ```
 
 Substitute values from the Completion Summary:
@@ -915,7 +915,7 @@ Substitute values from the Completion Summary:
 After completing the review, read the review log and config to display the dashboard.
 
 ```bash
-$STEEZ_BIN/steez-review-read
+~/.steez/bin/steez-review-read
 ```
 
 Parse the output. Find the most recent entry for each skill (plan-ceo-review, plan-eng-review, review, plan-design-review, design-review-lite, adversarial-review, codex-review, codex-plan-review). Ignore entries with timestamps older than 7 days. For the Eng Review row, show whichever is more recent between `review` (diff-scoped pre-landing review) and `plan-eng-review` (plan-stage architecture review). Append "(DIFF)" or "(PLAN)" to the status to distinguish. For the Adversarial row, show whichever is more recent between `adversarial-review` (new auto-scaled) and `codex-review` (legacy). For Design Review, show whichever is more recent between `plan-design-review` (full visual audit) and `design-review-lite` (code-level check). Append "(FULL)" or "(LITE)" to the status to distinguish. For the Outside Voice row, show the most recent `codex-plan-review` entry — this captures outside voices from both /steez-plan-ceo-review and /steez-plan-eng-review.

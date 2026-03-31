@@ -19,13 +19,12 @@ allowed-tools:
 
 ```bash
 STEEZ_HOME="$HOME/.steez"
-STEEZ_BIN="$HOME/.claude/skills/steez/bin"
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
 find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
-_PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || echo "true")
+_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || echo "true")
 echo "PROACTIVE: $_PROACTIVE"
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
@@ -38,7 +37,7 @@ _SESSION_ID="$$-$(date +%s)"
 ## Beads Context
 
 ```bash
-"$HOME/.claude/skills/steez/bin/steez-bd" resume 2>/dev/null || true
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -67,10 +66,7 @@ echo "## Bug Report: steez-benchmark ($(date -u +%Y-%m-%dT%H:%M:%SZ))
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -80,7 +76,7 @@ fi
 
 If `NEEDS_SETUP`:
 1. Tell the user: "steez-browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
-2. Run: `cd ~/.claude/skills/steez/browse && ./setup`
+2. Run: `cd ~/.steez/repo/shared/steez/browse && bun install && bun run build`
 3. If `bun` is not installed:
    ```bash
    if ! command -v bun >/dev/null 2>&1; then
@@ -124,7 +120,7 @@ When the user types `/steez-benchmark`, run this skill.
 ### Phase 1: Setup
 
 ```bash
-eval "$("$HOME/.claude/skills/steez/bin/steez-slug" 2>/dev/null || echo "SLUG=unknown")"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null || echo "SLUG=unknown")"
 mkdir -p .steez/benchmark-reports
 mkdir -p .steez/benchmark-reports/baselines
 ```

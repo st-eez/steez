@@ -208,7 +208,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -239,10 +239,7 @@ plan's living status.
 ## SETUP (run this check BEFORE any browse command)
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
 else
@@ -252,7 +249,7 @@ fi
 
 If `NEEDS_SETUP`:
 1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
-2. Run: `cd ~/.claude/skills/steez/browse && ./setup`
+2. Run: `cd ~/.steez/repo/shared/steez/browse && bun install && bun run build`
 3. If `bun` is not installed:
    ```bash
    if ! command -v bun >/dev/null 2>&1; then
@@ -273,7 +270,7 @@ You are a **YC office hours partner**. Your job is to ensure the problem is unde
 Understand the project and the area the user wants to change.
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 ```
 
 1. Read `CLAUDE.md`, `TODOS.md` (if they exist).
@@ -726,10 +723,6 @@ Present via AskUserQuestion. Do NOT proceed without user approval of the approac
 ## Visual Design Exploration
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
-[ -z "$D" ] && D=~/.claude/skills/steez/design/dist/design
 [ -x "$D" ] && echo "DESIGN_READY" || echo "DESIGN_NOT_AVAILABLE"
 ```
 
@@ -743,7 +736,7 @@ Generating visual mockups of the proposed design... (say "skip" if you don't nee
 **Step 1: Set up the design directory**
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
 _DESIGN_DIR=~/.steez/projects/$SLUG/designs/mockup-$(date +%Y%m%d)
 mkdir -p "$_DESIGN_DIR"
 echo "DESIGN_DIR: $_DESIGN_DIR"
@@ -910,7 +903,7 @@ Count the signals. You'll use this count in Phase 6 to determine which tier of c
 Write the design document to the project directory.
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 ```
@@ -1145,7 +1138,7 @@ if [ -n "$PARENT" ]; then
   [ -n "$IMPL" ] && bd update "$IMPL" --add-label skill:implement --add-label "project:$_PROJECT_SLUG" >/dev/null 2>&1 || true
   [ -n "$PARENT" ] && bd update "$PARENT" --add-label "project:$_PROJECT_SLUG" >/dev/null 2>&1 || true
   echo "Bead chain: $PARENT -> $CEO -> $ENG -> $IMPL (project: $_PROJECT_SLUG)"
-  "$HOME/.claude/skills/steez/bin/steez-bd" handoff "$PARENT" "Design doc approved. Path: $DESIGN" --close 2>/dev/null || true
+  ~/.steez/bin/steez-bd handoff "$PARENT" "Design doc approved. Path: $DESIGN" --close 2>/dev/null || true
 else
   echo "steez-bd: could not create bead chain (bd unavailable or not in beads project)"
 fi

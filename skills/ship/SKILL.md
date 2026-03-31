@@ -209,7 +209,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-"$STEEZ_BIN/steez-review-read" 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -320,7 +320,7 @@ You are running the `/steez-ship` workflow. This is a **non-interactive, fully a
 After completing the review, read the review log and config to display the dashboard.
 
 ```bash
-$STEEZ_BIN/steez-review-read
+~/.steez/bin/steez-review-read
 ```
 
 Parse the output. Find the most recent entry for each skill (plan-ceo-review, plan-eng-review, review, plan-design-review, design-review-lite, adversarial-review, codex-review, codex-plan-review). Ignore entries with timestamps older than 7 days. For the Eng Review row, show whichever is more recent between `review` (diff-scoped pre-landing review) and `plan-eng-review` (plan-stage architecture review). Append "(DIFF)" or "(PLAN)" to the status to distinguish. For the Adversarial row, show whichever is more recent between `adversarial-review` (new auto-scaled) and `codex-review` (legacy). For Design Review, show whichever is more recent between `plan-design-review` (full visual audit) and `design-review-lite` (code-level check). Append "(FULL)" or "(LITE)" to the status to distinguish. For the Outside Voice row, show the most recent `codex-plan-review` entry — this captures outside voices from both /steez-plan-ceo-review and /steez-plan-eng-review.
@@ -374,7 +374,7 @@ Check diff size: `git diff <base>...HEAD --stat | tail -1`. If the diff is >200 
 
 If CEO Review is missing, mention as informational ("CEO Review not run — recommended for product changes") but do NOT block.
 
-For Design Review: run `source <($STEEZ_BIN/steez-diff-scope <base> 2>/dev/null)`. If `SCOPE_FRONTEND=true` and no design review (plan-design-review or design-review-lite) exists in the dashboard, mention: "Design Review not run — this PR changes frontend code. The lite design check will run automatically in Step 3.5, but consider running /steez-design-review for a full visual audit post-implementation." Still never block.
+For Design Review: run `source <(~/.steez/bin/steez-diff-scope <base> 2>/dev/null)`. If `SCOPE_FRONTEND=true` and no design review (plan-design-review or design-review-lite) exists in the dashboard, mention: "Design Review not run — this PR changes frontend code. The lite design check will run automatically in Step 3.5, but consider running /steez-design-review for a full visual audit post-implementation." Still never block.
 
 Continue to Step 1.5 — do NOT block or ask. Ship runs its own review in Step 3.5.
 
@@ -1004,7 +1004,7 @@ Using the coverage percentage from the diagram in substep 4 (the `COVERAGE: X/Y 
 After producing the coverage diagram, write a test plan artifact so `/steez-qa` and `/steez-qa-only` can consume it:
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 ```
@@ -1252,7 +1252,7 @@ Review the diff for structural issues that tests don't catch.
 Check if the diff touches frontend files using `steez-diff-scope`:
 
 ```bash
-source <($STEEZ_BIN/steez-diff-scope <base> 2>/dev/null)
+source <(~/.steez/bin/steez-diff-scope <base> 2>/dev/null)
 ```
 
 **If `SCOPE_FRONTEND=false`:** Skip design review silently. No output.
@@ -1275,7 +1275,7 @@ source <($STEEZ_BIN/steez-diff-scope <base> 2>/dev/null)
 6. **Log the result** for the Review Readiness Dashboard:
 
 ```bash
-$STEEZ_BIN/steez-review-log '{"skill":"design-review-lite","timestamp":"TIMESTAMP","status":"STATUS","findings":N,"auto_fixed":M,"commit":"COMMIT"}'
+~/.steez/bin/steez-review-log '{"skill":"design-review-lite","timestamp":"TIMESTAMP","status":"STATUS","findings":N,"auto_fixed":M,"commit":"COMMIT"}'
 ```
 
 Substitute: TIMESTAMP = ISO 8601 datetime, STATUS = "clean" if 0 findings or "issues_found", N = total findings, M = auto-fixed count, COMMIT = output of `git rev-parse --short HEAD`.
@@ -1327,7 +1327,7 @@ Present Codex output under a `CODEX (design):` header, merged with the checklist
 
 9. Persist the review result to the review log:
 ```bash
-$STEEZ_BIN/steez-review-log '{"skill":"review","timestamp":"TIMESTAMP","status":"STATUS","issues_found":N,"critical":N,"informational":N,"commit":"'"$(git rev-parse --short HEAD)"'","via":"ship"}'
+~/.steez/bin/steez-review-log '{"skill":"review","timestamp":"TIMESTAMP","status":"STATUS","issues_found":N,"critical":N,"informational":N,"commit":"'"$(git rev-parse --short HEAD)"'","via":"ship"}'
 ```
 Substitute TIMESTAMP (ISO 8601), STATUS ("clean" if no issues, "issues_found" otherwise),
 and N values from the summary counts above. The `via:"ship"` distinguishes from standalone `/steez-review` runs.
@@ -1387,7 +1387,7 @@ DIFF_DEL=$(git diff origin/<base> --stat | tail -1 | grep -oE '[0-9]+ deletion' 
 DIFF_TOTAL=$((DIFF_INS + DIFF_DEL))
 which codex 2>/dev/null && echo "CODEX_AVAILABLE" || echo "CODEX_NOT_AVAILABLE"
 # Respect old opt-out
-OLD_CFG=$($STEEZ_BIN/steez-config get codex_reviews 2>/dev/null || true)
+OLD_CFG=$(~/.steez/bin/steez-config get codex_reviews 2>/dev/null || true)
 echo "DIFF_SIZE: $DIFF_TOTAL"
 echo "OLD_CFG: ${OLD_CFG:-not_set}"
 ```
@@ -1444,7 +1444,7 @@ If the subagent fails or times out: "Claude adversarial subagent unavailable. Co
 
 **Persist the review result:**
 ```bash
-$STEEZ_BIN/steez-review-log '{"skill":"adversarial-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","tier":"medium","commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/steez-review-log '{"skill":"adversarial-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","tier":"medium","commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 Substitute STATUS: "clean" if no findings, "issues_found" if findings exist. SOURCE: "codex" if Codex ran, "claude" if subagent ran. If both failed, do NOT persist.
 
@@ -1489,7 +1489,7 @@ If Codex is not available for steps 1 and 3, note to the user: "Codex CLI not fo
 
 **Persist the review result AFTER all passes complete** (not after each sub-step):
 ```bash
-$STEEZ_BIN/steez-review-log '{"skill":"adversarial-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","tier":"large","gate":"GATE","commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/steez-review-log '{"skill":"adversarial-review","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","tier":"large","gate":"GATE","commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 Substitute: STATUS = "clean" if no findings across ALL passes, "issues_found" if any pass found issues. SOURCE = "both" if Codex ran, "claude" if only Claude subagent ran. GATE = the Codex structured review gate result ("pass"/"fail"), or "informational" if Codex was unavailable. If all passes failed, do NOT persist.
 
@@ -1792,7 +1792,7 @@ If the Beads Context preamble showed a bead with label `skill:implement`, hand o
 # Hand off ship results to the implement bead (non-blocking)
 _IMPL_BEAD_ID="BEAD_ID_FROM_PREAMBLE"
 if [ -n "$_IMPL_BEAD_ID" ] && [ "$_IMPL_BEAD_ID" != "none" ]; then
-  "$HOME/.claude/skills/steez/bin/steez-bd" handoff "$_IMPL_BEAD_ID" "Shipped. PR: PR_URL. Branch: BRANCH." --close 2>/dev/null || true
+  ~/.steez/bin/steez-bd handoff "$_IMPL_BEAD_ID" "Shipped. PR: PR_URL. Branch: BRANCH." --close 2>/dev/null || true
 fi
 ```
 
@@ -1803,7 +1803,7 @@ Closing the implement bead completes the full pipeline (design -> CEO -> eng -> 
 Use `steez-bd emit-finding` for any issues discovered during ship that need follow-up:
 ```bash
 # Example: test failure that was skipped needs follow-up
-"$HOME/.claude/skills/steez/bin/steez-bd" emit-finding "$_IMPL_BEAD_ID" "Flaky test in auth.test.ts needs investigation" --type task --priority 2 2>/dev/null || true
+~/.steez/bin/steez-bd emit-finding "$_IMPL_BEAD_ID" "Flaky test in auth.test.ts needs investigation" --type task --priority 2 2>/dev/null || true
 ```
 
 If no bead was shown in the preamble, skip this step.
@@ -1834,7 +1834,7 @@ doc updates — the user runs `/steez-ship` and documentation stays current with
 Log coverage and plan completion data so `/steez-retro` can track trends:
 
 ```bash
-eval "$($STEEZ_BIN/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 ```
 
 Append to `~/.steez/projects/$SLUG/$BRANCH-reviews.jsonl`:
