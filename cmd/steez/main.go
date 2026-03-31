@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/st-eez/steez/internal/config"
+	"github.com/st-eez/steez/internal/updater"
 )
 
 const version = "1.0.0"
@@ -156,8 +157,10 @@ func cmdSetup(_ []string) {
 }
 
 func cmdUpdate(_ []string) {
-	// Stub — wired in bead 8 (updater).
-	fmt.Println("steez update: updater not yet implemented.")
+	if err := updater.RunUpdate(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // resolveRepoPath finds the steez repo using the flag value, config, or default.
