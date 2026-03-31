@@ -8,8 +8,7 @@ description: Evaluate and improve skills via multi-agent research, independent c
 ## Preamble (run first)
 
 ```bash
-STEEZ_HOME="$HOME/.steez"
-STEEZ_BIN="$HOME/.claude/skills/steez/bin"
+STEEZ_HOME="${STEEZ_HOME:-$HOME/.steez}"
 # Session tracking
 mkdir -p "$STEEZ_HOME/sessions"
 touch "$STEEZ_HOME/sessions/$PPID"
@@ -18,7 +17,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$("$STEEZ_BIN/steez-config" get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -34,7 +33,7 @@ echo '{"skill":"sharpen-skill","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'
 
 ```bash
 # Beads context — shows current bead, suggested skill, ready work (non-blocking)
-"$HOME/.claude/skills/steez/bin/steez-bd" resume 2>/dev/null || true
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -114,7 +113,7 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 
 ## Search Before Building
 
-Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
+Before building anything unfamiliar, **search first.** See `~/.steez/repo/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
 **User sovereignty.** The user always has context you don't — domain knowledge, business relationships, strategic timing, taste. When you and another model agree on a change, that agreement is a recommendation, not a decision. Present it. The user decides. Never say "the outside voice is right" and act. Say "the outside voice recommends X — do you want to proceed?"

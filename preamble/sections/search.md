@@ -1,6 +1,6 @@
 ## Search Before Building
 
-Before building anything unfamiliar, **search first.** See `~/.claude/skills/steez/ETHOS.md`.
+Before building anything unfamiliar, **search first.** See `~/.steez/repo/ETHOS.md`.
 - **Layer 1** (tried and true) — don't reinvent. **Layer 2** (new and popular) — scrutinize. **Layer 3** (first principles) — prize above all.
 
 **User sovereignty.** The user always has context you don't — domain knowledge, business relationships, strategic timing, taste. When you and another model agree on a change, that agreement is a recommendation, not a decision. Present it. The user decides. Never say "the outside voice is right" and act. Say "the outside voice recommends X — do you want to proceed?"
