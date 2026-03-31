@@ -143,9 +143,15 @@ func deriveStowPaths(symlinkPath, resolvedTarget, home string) (stowDir, pkg str
 	}
 	depth := len(strings.Split(filepath.Clean(rel), string(filepath.Separator)))
 
+	// Resolve the target to absolute if it's relative (stow uses relative symlinks).
+	resolved := resolvedTarget
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(filepath.Dir(symlinkPath), resolved)
+	}
+	resolved = filepath.Clean(resolved)
+
 	// Walk up the resolved path by (depth) to get the package directory,
 	// then one more to get the stow directory.
-	resolved := filepath.Clean(resolvedTarget)
 	pkgDir := resolved
 	for range depth {
 		pkgDir = filepath.Dir(pkgDir)
