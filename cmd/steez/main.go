@@ -41,7 +41,9 @@ func main() {
 		cmdVersion()
 	case "help":
 		if len(args) > 0 {
-			printCommandHelp(args[0])
+			if !printCommandHelp(args[0]) {
+				os.Exit(1)
+			}
 		} else {
 			printHelp()
 		}
@@ -71,7 +73,7 @@ Run steez help <command> for detailed usage.
 `)
 }
 
-func printCommandHelp(cmd string) {
+func printCommandHelp(cmd string) bool {
 	switch cmd {
 	case "install":
 		fmt.Print(`steez install — install skills
@@ -138,7 +140,9 @@ Shows steez version, Go version, OS/arch, and repo path.
 `)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command %q. Run steez help for usage.\n", cmd)
+		return false
 	}
+	return true
 }
 
 func cmdVersion() {
