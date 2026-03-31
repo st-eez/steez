@@ -17,6 +17,104 @@
 - `skills/` — Skill directories (each contains SKILL.md + skill files)
 - `skills.json` — Manifest of all skills, categories, and profiles
 - `preamble/` — Managed preamble system (section templates + tier config)
+- `shared/steez/` — Shared runtime (bin scripts, browse binary)
+
+## Commands
+
+```bash
+# Browse binary
+cd shared/steez/browse
+bun install                # install dependencies (playwright, diff)
+bun run build              # compile browse binary + node server
+bun test                   # run all tests except e2e (<5s, free)
+bun test:core              # run core browser tests only
+bun test:ns                # run NetSuite automation tests only
+bun run dev <cmd>          # run CLI in dev mode (no compile step)
+
+# Go CLI
+make build                 # build binary locally
+make install               # install to ~/go/bin/steez
+make clean                 # remove local binary
+
+# Helper scripts (shared/steez/bin/)
+steez-config get <key>           # read config value
+steez-config set <key> <value>   # write config value
+steez-slug                       # git remote → owner-repo slug
+steez-diff-scope                 # categorize diff as frontend/backend/prompts/tests/docs/config
+steez-review-log                 # append JSON review entry to project log
+steez-review-read                # read review log + config for Review Readiness Dashboard
+steez-bd resume                  # session brief: current bead, suggested skill, ready work
+steez-bd start <id> [skill]      # claim bead + optional skill tag
+steez-bd emit-finding <id> "t"   # create linked finding bead
+steez-bd handoff <id> "s" [--close]  # append note + optional close
+```
+
+`bun test` runs before every commit to browse source. Both core and NS tests
+start local HTTP servers with fixture HTML — no external dependencies, no
+network calls, no credentials.
+
+## Project Structure
+
+```
+steez/                                    # repo root
+├── shared/steez/                         # shared runtime
+│   ├── bin/                              # 6 bash helper scripts
+│   │   ├── steez-config                  # read/write ~/.steez/config
+│   │   ├── steez-slug                    # git remote → owner-repo slug
+│   │   ├── steez-diff-scope              # categorize diff scopes
+│   │   ├── steez-review-log              # append review entries
+│   │   ├── steez-review-read             # read review log + config
+│   │   └── steez-bd                      # beads integration
+│   ├── browse/                           # headless browser (Playwright + Chromium)
+│   │   ├── src/
+│   │   │   ├── core/                     # CLI + server + commands (~3,800 lines)
+│   │   │   ├── ns/                       # NetSuite ERP automation (~2,100 lines)
+│   │   │   └── playwright/               # extensions (routing, tracing, video)
+│   │   ├── bin/                          # remote-slug helper
+│   │   ├── scripts/                      # build-node-server.sh (Windows compat layer)
+│   │   ├── dist/                         # compiled binaries (gitignored)
+│   │   └── package.json                  # scripts: build, test, dev
+│   └── package.json                      # ecosystem tests
+├── skills/                               # skill directories
+│   ├── browse/SKILL.md                   # browse skill definition
+│   └── {name}/SKILL.md                   # 22 workflow skills
+├── preamble/                             # managed preamble system
+│   ├── sections/                         # section templates
+│   └── tiers.json                        # tier → sections mapping
+├── cmd/steez/                            # Go CLI entrypoint
+├── internal/                             # Go packages
+├── ETHOS.md                              # builder philosophy
+├── ARCHITECTURE.md                       # design decisions + data flow
+├── FORK_MANIFEST.md                      # upstream gstack provenance
+└── CLAUDE.md                             # this file
+```
+
+### Runtime (`~/.steez/`)
+
+```
+~/.steez/
+├── repo -> <user's checkout>             # installer-managed symlink
+├── bin/                                  # installer-managed symlinks
+│   ├── steez-config -> ~/.steez/repo/shared/steez/bin/steez-config
+│   ├── steez-slug -> ~/.steez/repo/shared/steez/bin/steez-slug
+│   ├── steez-diff-scope -> ~/.steez/repo/shared/steez/bin/steez-diff-scope
+│   ├── steez-review-log -> ~/.steez/repo/shared/steez/bin/steez-review-log
+│   ├── steez-review-read -> ~/.steez/repo/shared/steez/bin/steez-review-read
+│   ├── steez-bd -> ~/.steez/repo/shared/steez/bin/steez-bd
+│   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
+├── config                                # key-value config (proactive: true)
+├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
+├── analytics/
+│   ├── skill-usage.jsonl                 # every skill invocation (start + end events)
+│   └── spec-review.jsonl                 # spec/review analytics
+├── skill-reports/                        # Skill Self-Report bug reports ({slug}.md)
+├── projects/{slug}/
+│   ├── {branch}-reviews.jsonl            # review logs per branch
+│   └── *-design-*.md                     # design docs from /steez-office-hours
+└── browse/
+    ├── chromium-profile/                 # persistent Chromium state (login sessions, cache)
+    └── sidebar-sessions/                 # sidebar daemon sessions
+```
 
 ## Preamble System
 
@@ -35,8 +133,101 @@ never hand-edit content inside the managed block markers.
 ## Install Model
 
 Skills are installed as symlinks: `~/.claude/skills/steez-{name}` -> `repo/skills/{name}/`
+Shared runtime is accessed via installer-managed symlinks under `~/.steez/bin/` and `~/.steez/repo`.
 Install registry lives at `~/.steez/installed.json`.
 Updates are live mutation: `git pull` in-place, symlinks already point at checkout.
+
+## SKILL.md Workflow
+
+Each bash code block in a SKILL.md runs in a separate shell — variables don't
+persist between blocks. Use prose to carry state ("the base branch detected
+in Step 0"), not shell variables. Express conditionals as numbered English
+steps, not nested `if/elif/else`. Don't hardcode branch names — detect
+dynamically via `gh pr view` or `gh repo view`.
+
+### Preamble pattern
+
+Every skill preamble sets these variables:
+
+| Variable | Source | Purpose |
+|----------|--------|---------|
+| `STEEZ_HOME` | `${STEEZ_HOME:-$HOME/.steez}` | Runtime state directory |
+| `_BRANCH` | `git branch --show-current` | Current branch |
+| `_PROACTIVE` | `~/.steez/bin/steez-config get proactive` | Auto-suggest skills |
+| `REPO_MODE` | Hardcoded `solo` | Always solo |
+| `_TEL_START` | `date +%s` | Session start time |
+| `_SESSION_ID` | `$$-$(date +%s)` | Unique session identifier |
+
+Executables use hardcoded paths: `~/.steez/bin/steez-config`, `~/.steez/bin/browse`.
+Documents use repo symlink: `~/.steez/repo/ETHOS.md`.
+
+## Compiled Binaries
+
+`shared/steez/browse/dist/` contains compiled Bun binaries (~57MB each, Mach-O arm64).
+These are gitignored but present on disk after `bun run build`.
+
+**Rebuild after changing browse source:**
+```bash
+cd shared/steez/browse && bun run build
+```
+
+The binaries only work on macOS arm64. The `server-node.mjs` fallback
+provides Windows/Node.js compatibility.
+
+## Browser Interaction
+
+When you need to interact with a browser (QA, dogfooding, cookie setup), use
+the `/steez-browse` skill or run the browse binary directly via `$B <command>`.
+
+Skills resolve `$B` with:
+```bash
+B=~/.steez/bin/browse
+```
+
+## Editing Skills
+
+Each bash code block in a SKILL.md runs in a separate shell — variables don't
+persist between blocks. Use prose to carry state, not shell variables.
+
+## Helper Script Dependencies
+
+```
+steez-slug ← steez-review-log (needs SLUG for file path)
+           ← steez-review-read (needs SLUG for file path)
+
+steez-config ← steez-review-read (reads skip_eng_review)
+             ← all skills (reads proactive in preamble)
+
+steez-diff-scope — standalone, no dependencies
+
+steez-bd ← all skills (beads context in preamble, non-blocking)
+         ← office-hours (chain creation after design doc approved)
+         ← plan-ceo-review (handoff at completion)
+         ← plan-eng-review (handoff at completion)
+         ← ship (handoff at completion, emit-finding for issues)
+  Depends on: bd CLI (beads), jq (macOS system binary)
+```
+
+## Search Before Building
+
+Before designing any solution that involves concurrency, unfamiliar patterns,
+infrastructure, or anything where the runtime/framework might have a built-in:
+
+1. Search for "{runtime} {thing} built-in"
+2. Search for "{thing} best practice {current year}"
+3. Check official runtime/framework docs
+
+Three layers of knowledge: tried-and-true (Layer 1), new-and-popular (Layer 2),
+first-principles (Layer 3). Prize Layer 3 above all. See ETHOS.md for the full
+builder philosophy.
+
+## Commit Style
+
+Use conventional commits: `feat:` | `fix:` | `refactor:` | `docs:` | `chore:`
+
+Prefer one commit per logical change. When you've made multiple changes
+(e.g., a preamble fix + a branding removal + a new skill), split them into
+separate commits. Each commit should be independently understandable.
 
 ## Design References
 
