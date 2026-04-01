@@ -430,6 +430,8 @@ export async function nsLogin(
           } else {
             return { ok: false as const, error: validationError(`Security question not matched. Page text: "${pageText.trim().slice(0, 200)}"`) };
           }
+        } else {
+          return { ok: false as const, error: validationError('Security question page detected but could not read page text.') };
         }
       }
 
