@@ -365,5 +365,5 @@ Do not commit without the user's go-ahead.
 |--------------|----------|---------|
 | "Is this one thing working?" | Step 3 | "Is my adversarial pass helping?" |
 | "Improve this skill" | Step 2 | "Sharpen my pr-review skill" |
-| "Should I adopt these?" | Step 2 + scoring | "Anything in gstack worth adding?" |
+| "Should I adopt these?" | Step 2 + scoring | "Anything in steez worth adding?" |
 | "Audit all my skills" | Step 2 + parallel research | "What should I improve?" |

@@ -51,7 +51,8 @@
       { "from": " /canary", "to": " /steez-canary" },
       { "from": " /cso", "to": " /steez-cso" },
       { "from": "gstack /", "to": "steez /" },
-      { "from": "gstack_contributor", "to": "steez_contributor" }
+      { "from": "gstack_contributor", "to": "steez_contributor" },
+      { "from": "gstack", "to": "steez" }
     ],
     "deleteSection": [
       { "path": "## Contributor Mode" },
