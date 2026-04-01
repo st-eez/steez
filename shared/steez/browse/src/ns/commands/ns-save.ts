@@ -83,21 +83,24 @@ async function resolveLabelsToFieldIds(
     }
 
     for (const fid of ids) {
-      const field = w.nlapiGetField(fid);
-      if (!field) continue;
-      const label = field.getLabel?.() ?? '';
-      if (!label) continue;
-      const entityRef = document.getElementById(fid + '_display') !== null;
-      labelMap[label.toLowerCase()] = {
-        id: fid,
-        type: field.getType?.() ?? 'unknown',
-        entityRef,
-      };
+      try {
+        const field = w.nlapiGetField(fid);
+        if (!field) continue;
+        const label = String(field.getLabel?.() ?? '').trim();
+        if (!label) continue;
+        const entityRef = document.getElementById(fid + '_display') !== null;
+        labelMap[label.toLowerCase()] = {
+          id: fid,
+          type: String(field.getType?.() ?? 'unknown'),
+          entityRef,
+        };
+      } catch { continue; }
     }
 
     // Resolve each search label
     return searchLabels.map(label => {
-      const match = labelMap[label.toLowerCase()];
+      const key = typeof label === 'string' ? label.toLowerCase() : '';
+      const match = key ? labelMap[key] : undefined;
       return {
         label,
         id: match?.id ?? null,
