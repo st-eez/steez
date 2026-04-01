@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# steez-upstream-diff — compare a steez skill against its gstack upstream
+# Usage: steez-upstream-diff [skill]    (e.g., steez-upstream-diff ship)
+#        steez-upstream-diff --all      (list all skills with diff line counts)
+
+GSTACK_DIR="$HOME/Projects/Personal/gstack"
+STEEZ_DIR="$(git -C "$(dirname "$0")/../../.." rev-parse --show-toplevel 2>/dev/null)/skills"
+
+if [ ! -d "$GSTACK_DIR" ]; then
+  echo "gstack repo not found at $GSTACK_DIR" >&2
+  exit 1
+fi
+
+if [ "$1" = "--all" ]; then
+  for skill_dir in "$STEEZ_DIR"/*/; do
+    skill=$(basename "$skill_dir")
+    upstream="$GSTACK_DIR/$skill/SKILL.md"
+    current="$skill_dir/SKILL.md"
+    if [ -f "$upstream" ] && [ -f "$current" ]; then
+      lines=$(diff "$upstream" "$current" 2>/dev/null | grep "^[<>]" | wc -l | tr -d ' ')
+      echo "$skill: $lines lines differ"
+    fi
+  done
+  exit 0
+fi
+
+if [ -z "$1" ]; then
+  echo "Usage: steez-upstream-diff <skill>  or  steez-upstream-diff --all" >&2
+  exit 1
+fi
+
+upstream="$GSTACK_DIR/$1/SKILL.md"
+current="$STEEZ_DIR/$1/SKILL.md"
+
+[ ! -f "$upstream" ] && echo "No gstack upstream for '$1'" >&2 && exit 1
+[ ! -f "$current" ] && echo "No steez skill '$1'" >&2 && exit 1
+
+diff "$upstream" "$current"
