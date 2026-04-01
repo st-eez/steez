@@ -54,7 +54,7 @@ The `claude` package uses directory folding. After `stow --restow claude`, `~/.c
 
 - Editing files in the repo edits them live in `~/.claude/skills/`
 - New skill directories created in the repo appear immediately
-- `steez/bin/` scripts are accessible at `$HOME/.claude/skills/steez/bin/`
+- Helper scripts are accessible via installer-managed symlinks at `~/.steez/bin/`
 
 ## Why no templates
 
@@ -111,7 +111,7 @@ Every SKILL.md follows the same structure:
 └────────────────────────────────────────────┘
          │
 ┌─ Preamble (bash block, run first) ─────────┐
-│ STEEZ_HOME, STEEZ_BIN, session tracking    │
+│ STEEZ_HOME, session tracking               │
 │ Branch detection, config read              │
 │ REPO_MODE=solo, local usage logging        │
 └────────────────────────────────────────────┘
@@ -137,8 +137,7 @@ Every skill preamble sets these variables:
 
 | Variable | Source | Purpose |
 |----------|--------|---------|
-| `STEEZ_HOME` | Hardcoded `$HOME/.steez` | Runtime state directory |
-| `STEEZ_BIN` | Hardcoded `$HOME/.claude/skills/steez/bin` | Helper script directory |
+| `STEEZ_HOME` | `${STEEZ_HOME:-$HOME/.steez}` | Runtime state directory (override for testing) |
 | `_BRANCH` | `git branch --show-current` | Current branch |
 | `_PROACTIVE` | `steez-config get proactive` | Auto-suggest skills |
 | `REPO_MODE` | Hardcoded `solo` | Always solo |
@@ -200,13 +199,10 @@ steez-diff-scope — standalone, no dependencies
 Skills reference the browse binary as `$B`:
 
 ```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
-[ -z "$B" ] && B=~/.claude/skills/steez/browse/dist/browse
+B=~/.steez/bin/browse
 ```
 
-Resolution order: repo-local binary first, global fallback second. This allows per-project browse versions while defaulting to the stowed version.
+Single hardcoded path via installer-managed symlink: `~/.steez/bin/browse` → `~/.steez/repo/shared/steez/browse/dist/browse`.
 
 The browse binary is a compiled Bun daemon built on the Playwright npm library (v1.58.2). It provides a long-lived Chromium session with sub-second command latency. See the browse skill for architecture details.
 
@@ -299,14 +295,14 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 1. `mkdir -p` the skill directory + `cp` source SKILL.md
 2. YAML frontmatter `name:` → `steez-*`
 3. Remove auto-generated comments (template artifact markers)
-4. Replace preamble with steez pattern (`STEEZ_HOME`, `STEEZ_BIN`, curly-brace config fallback, `REPO_MODE=solo`, local JSONL)
+4. Replace preamble with steez pattern (`STEEZ_HOME`, hardcoded `~/.steez/bin/` paths, `REPO_MODE=solo`, local JSONL)
 5. Strip onboarding conditionals (`LAKE_INTRO`, `TEL_PROMPTED`, `PROACTIVE_PROMPTED`) — keep only the `PROACTIVE` check
 6. Voice → "senior engineering partner — CTO-level operator"
 7. Delete YC pitch line
 8. Strip Repo Ownership section
 9. Contributor Mode → Skill Self-Report (always on, `~/.steez/skill-reports/`)
 10. Telemetry → local JSONL only (strip Supabase sync)
-11. SETUP browse → steez pattern (`$_ROOT/.claude/skills/steez/browse/dist/browse`)
+11. SETUP browse → steez pattern (`B=~/.steez/bin/browse`)
 12. Plan Status Footer → `STEEZ REVIEW REPORT`
 13. Global replace all gstack paths/refs → steez
 14. Verify: `grep -c -i gstack SKILL.md` must return 0

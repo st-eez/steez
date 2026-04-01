@@ -408,7 +408,10 @@ func (m *setupModel) runInstall() {
 
 	// Create ~/.steez/repo symlink pointing to checkout.
 	steezHome := filepath.Join(home, ".steez")
-	os.MkdirAll(steezHome, 0o755)
+	if err := os.MkdirAll(steezHome, 0o755); err != nil {
+		m.results = append(m.results, installResult{"~/.steez/", false, err.Error()})
+		return
+	}
 
 	repoSymlink := filepath.Join(steezHome, "repo")
 	if err := installer.CreateSymlink(m.repoPath, repoSymlink, false, true); err != nil {
@@ -419,7 +422,10 @@ func (m *setupModel) runInstall() {
 
 	// Create ~/.steez/bin/ directory with symlinks to shared runtime.
 	binDir := filepath.Join(steezHome, "bin")
-	os.MkdirAll(binDir, 0o755)
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		m.results = append(m.results, installResult{"~/.steez/bin/", false, err.Error()})
+		return
+	}
 
 	binSymlinks := []struct{ name, relPath string }{
 		{"steez-config", "shared/steez/bin/steez-config"},

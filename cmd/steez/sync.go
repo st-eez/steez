@@ -189,6 +189,10 @@ func cmdSync(args []string) int {
 					fmt.Printf("  OLD   %s/%s — contains ~/.claude/skills/steez/ reference\n", dirName, f.Name())
 					oldPathHits++
 				}
+				if strings.Contains(toScan, "STEEZ_BIN") {
+					fmt.Printf("  OLD   %s/%s — contains STEEZ_BIN reference (removed variable)\n", dirName, f.Name())
+					oldPathHits++
+				}
 			}
 		}
 	}
