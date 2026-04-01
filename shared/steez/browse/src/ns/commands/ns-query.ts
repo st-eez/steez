@@ -76,7 +76,7 @@ export async function nsQuery(args: string[], bm: BrowserManager): Promise<NsCom
           });
 
           if (!res.ok) {
-            const text = await res.text().catch(() => '');
+            const text = await res.text().catch(() => `(body unreadable: ${res.statusText})`);
             return { error: text || res.statusText, status: res.status };
           }
 
