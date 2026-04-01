@@ -328,7 +328,7 @@ find . -name '*.test.*' -o -name '*.spec.*' -o -name '*_test.*' -o -name '*_spec
 # 11. Regression test commits in window
 git log origin/<default> --since="<window>" --oneline --grep="test(qa):" --grep="test(design):" --grep="test: coverage"
 
-# 12. gstack skill usage telemetry (if available)
+# 12. steez skill usage telemetry (if available)
 cat ~/.steez/analytics/skill-usage.jsonl 2>/dev/null || true
 
 # 12. Test files changed in window
@@ -624,20 +624,20 @@ Locate and run the discovery script using this fallback chain:
 ```bash
 DISCOVER_BIN=""
 [ -x ~/.steez/bin/steez-global-discover ] && DISCOVER_BIN=~/.steez/bin/steez-global-discover
-[ -z "$DISCOVER_BIN" ] && [ -x .claude/skills/gstack/bin/gstack-global-discover ] && DISCOVER_BIN=.claude/skills/gstack/bin/gstack-global-discover
-[ -z "$DISCOVER_BIN" ] && which gstack-global-discover >/dev/null 2>&1 && DISCOVER_BIN=$(which gstack-global-discover)
-[ -z "$DISCOVER_BIN" ] && [ -f bin/gstack-global-discover.ts ] && DISCOVER_BIN="bun run bin/gstack-global-discover.ts"
+[ -z "$DISCOVER_BIN" ] && [ -x .claude/skills/steez/bin/steez-global-discover ] && DISCOVER_BIN=.claude/skills/steez/bin/steez-global-discover
+[ -z "$DISCOVER_BIN" ] && which steez-global-discover >/dev/null 2>&1 && DISCOVER_BIN=$(which steez-global-discover)
+[ -z "$DISCOVER_BIN" ] && [ -f bin/steez-global-discover.ts ] && DISCOVER_BIN="bun run bin/steez-global-discover.ts"
 echo "DISCOVER_BIN: $DISCOVER_BIN"
 ```
 
-If no binary is found, tell the user: "Discovery script not found. Run `bun run build` in the gstack directory to compile it." and stop.
+If no binary is found, tell the user: "Discovery script not found. Run `bun run build` in the steez directory to compile it." and stop.
 
 Run the discovery:
 ```bash
-$DISCOVER_BIN --since "<window>" --format json 2>/tmp/gstack-discover-stderr
+$DISCOVER_BIN --since "<window>" --format json 2>/tmp/steez-discover-stderr
 ```
 
-Read the stderr output from `/tmp/gstack-discover-stderr` for diagnostic info. Parse the JSON output from stdout.
+Read the stderr output from `/tmp/steez-discover-stderr` for diagnostic info. Parse the JSON output from stdout.
 
 If `total_sessions` is 0, say: "No AI coding sessions found in the last <window>. Try a longer window: `/steez-retro global 30d`" and stop.
 
@@ -744,7 +744,7 @@ align cleanly. Never truncate project names.
 ║  • [1-line description of second theme]
 ║  • [1-line description of third theme]
 ║
-║  Powered by gstack
+║  Powered by steez
 ╚═══════════════════════════════════════════════════════════════
 ```
 
@@ -760,7 +760,7 @@ align cleanly. Never truncate project names.
 - Top Work: 3 bullet points summarizing the user's major themes, inferred from
   commit messages. Not individual commits — synthesize into themes.
   E.g., "Built /steez-retro global — cross-project retrospective with AI session discovery"
-  not "feat: gstack-global-discover" + "feat: /steez-retro global template".
+  not "feat: steez-global-discover" + "feat: /steez-retro global template".
 - The card must be self-contained. Someone seeing ONLY this block should understand
   the user's week without any surrounding context.
 - Do NOT include team members, project totals, or context switching data here.
@@ -874,7 +874,7 @@ Use the Write tool to save JSON to `~/.steez/steez-retros/global-${today}-${next
   "window": "7d",
   "projects": [
     {
-      "name": "gstack",
+      "name": "steez",
       "remote": "<detected from git remote get-url origin, normalized to HTTPS>",
       "commits": 47,
       "insertions": 3200,
@@ -892,7 +892,7 @@ Use the Write tool to save JSON to `~/.steez/steez-retros/global-${today}-${next
     "global_streak_days": 52,
     "avg_context_switches_per_day": 2.1
   },
-  "tweetable": "Week of Mar 14: 5 projects, 182 commits, 15.3k LOC | CC: 48, Codex: 8, Gemini: 3 | Focus: gstack (58%) | Streak: 52d"
+  "tweetable": "Week of Mar 14: 5 projects, 182 commits, 15.3k LOC | CC: 48, Codex: 8, Gemini: 3 | Focus: steez (58%) | Streak: 52d"
 }
 ```
 

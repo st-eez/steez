@@ -145,7 +145,7 @@ plan's living status.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -155,7 +155,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -199,8 +199,8 @@ When the user types `/benchmark`, run this skill.
 
 ```bash
 eval "$(~/.steez/bin/steez-slug 2>/dev/null || echo "SLUG=unknown")"
-mkdir -p .gstack/benchmark-reports
-mkdir -p .gstack/benchmark-reports/baselines
+mkdir -p .steez/benchmark-reports
+mkdir -p .steez/benchmark-reports/baselines
 ```
 
 ### Phase 2: Page Discovery
@@ -281,7 +281,7 @@ Save metrics to baseline file:
 }
 ```
 
-Write to `.gstack/benchmark-reports/baselines/baseline.json`.
+Write to `.steez/benchmark-reports/baselines/baseline.json`.
 
 ### Phase 5: Comparison
 
@@ -378,7 +378,7 @@ TREND: Performance degrading. LCP doubled in 8 days.
 
 ### Phase 9: Save Report
 
-Write to `.gstack/benchmark-reports/{date}-benchmark.md` and `.gstack/benchmark-reports/{date}-benchmark.json`.
+Write to `.steez/benchmark-reports/{date}-benchmark.md` and `.steez/benchmark-reports/{date}-benchmark.json`.
 
 ## Important Rules
 

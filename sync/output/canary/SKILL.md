@@ -206,7 +206,7 @@ plan's living status.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -216,7 +216,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -298,9 +298,9 @@ When the user types `/canary`, run this skill.
 
 ```bash
 eval "$(~/.steez/bin/steez-slug 2>/dev/null || echo "SLUG=unknown")"
-mkdir -p .gstack/canary-reports
-mkdir -p .gstack/canary-reports/baselines
-mkdir -p .gstack/canary-reports/screenshots
+mkdir -p .steez/canary-reports
+mkdir -p .steez/canary-reports/baselines
+mkdir -p .steez/canary-reports/screenshots
 ```
 
 Parse the user's arguments. Default duration is 10 minutes. Default pages: auto-discover from the app's navigation.
@@ -313,7 +313,7 @@ For each page (either from `--pages` or the homepage):
 
 ```bash
 $B goto <page-url>
-$B snapshot -i -a -o ".gstack/canary-reports/baselines/<page-name>.png"
+$B snapshot -i -a -o ".steez/canary-reports/baselines/<page-name>.png"
 $B console --errors
 $B perf
 $B text
@@ -321,7 +321,7 @@ $B text
 
 Collect for each page: screenshot path, console error count, page load time from `perf`, and a text content snapshot.
 
-Save the baseline manifest to `.gstack/canary-reports/baseline.json`:
+Save the baseline manifest to `.steez/canary-reports/baseline.json`:
 
 ```json
 {
@@ -367,7 +367,7 @@ For each page to monitor:
 
 ```bash
 $B goto <page-url>
-$B snapshot -i -a -o ".gstack/canary-reports/screenshots/pre-<page-name>.png"
+$B snapshot -i -a -o ".steez/canary-reports/screenshots/pre-<page-name>.png"
 $B console --errors
 $B perf
 ```
@@ -380,7 +380,7 @@ Monitor for the specified duration. Every 60 seconds, check each page:
 
 ```bash
 $B goto <page-url>
-$B snapshot -i -a -o ".gstack/canary-reports/screenshots/<page-name>-<check-number>.png"
+$B snapshot -i -a -o ".steez/canary-reports/screenshots/<page-name>-<check-number>.png"
 $B console --errors
 $B perf
 ```
@@ -437,12 +437,12 @@ Per-Page Results:
   /settings       HEALTHY     0         380ms
 
 Alerts Fired:  [N] (X critical, Y high, Z medium)
-Screenshots:   .gstack/canary-reports/screenshots/
+Screenshots:   .steez/canary-reports/screenshots/
 
 VERDICT: [DEPLOY IS HEALTHY / DEPLOY HAS ISSUES — details above]
 ```
 
-Save report to `.gstack/canary-reports/{date}-canary.md` and `.gstack/canary-reports/{date}-canary.json`.
+Save report to `.steez/canary-reports/{date}-canary.md` and `.steez/canary-reports/{date}-canary.json`.
 
 Log the result for the review dashboard:
 

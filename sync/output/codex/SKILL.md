@@ -743,8 +743,8 @@ If token count is not available, display: `Tokens: unknown`
 - **No double-reviewing.** If the user already ran `/steez-review`, Codex provides a second
   independent opinion. Do not re-run Claude Code's own review.
 - **Detect skill-file rabbit holes.** After receiving Codex output, scan for signs
-  that Codex got distracted by skill files: `steez-config`, `gstack-update-check`,
-  `SKILL.md`, or `skills/gstack`. If any of these appear in the output, append a
-  warning: "Codex appears to have read gstack skill files instead of reviewing your
+  that Codex got distracted by skill files: `steez-config`, `steez-update-check`,
+  `SKILL.md`, or `skills/steez`. If any of these appear in the output, append a
+  warning: "Codex appears to have read steez skill files instead of reviewing your
   code. Consider retrying."
 

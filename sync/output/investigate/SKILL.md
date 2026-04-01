@@ -253,7 +253,7 @@ After forming your root cause hypothesis, lock edits to the affected module to p
 **If FREEZE_AVAILABLE:** Identify the narrowest directory containing the affected files. Write it to the freeze state file:
 
 ```bash
-STATE_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.gstack}"
+STATE_DIR="${CLAUDE_PLUGIN_DATA:-$HOME/.steez}"
 mkdir -p "$STATE_DIR"
 echo "<detected-directory>/" > "$STATE_DIR/freeze-dir.txt"
 echo "Debug scope locked to: <detected-directory>/"

@@ -279,7 +279,7 @@ If the codebase is empty and purpose is unclear, say: *"I don't have a clear pic
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -289,7 +289,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -312,14 +312,14 @@ If `NEEDS_SETUP`:
 
 If browse is not available, that's fine — visual research is optional. The skill works without it using WebSearch and your built-in design knowledge.
 
-**Find the gstack designer (optional — enables AI mockup generation):**
+**Find the steez designer (optional — enables AI mockup generation):**
 
 ## DESIGN SETUP (run this check BEFORE any design mockup command)
 
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/design/dist/design" ] && D="$_ROOT/.claude/skills/gstack/design/dist/design"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
 [ -z "$D" ] && D=~/.steez/repo/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
@@ -327,7 +327,7 @@ else
   echo "DESIGN_NOT_AVAILABLE"
 fi
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
@@ -595,7 +595,7 @@ Each drill-down is one focused AskUserQuestion. After the user decides, re-check
 
 ## Phase 5: Design System Preview (default ON)
 
-This phase generates visual previews of the proposed design system. Two paths depending on whether the gstack designer is available.
+This phase generates visual previews of the proposed design system. Two paths depending on whether the steez designer is available.
 
 ### Path A: AI Mockups (if DESIGN_READY)
 

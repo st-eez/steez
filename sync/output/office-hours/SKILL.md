@@ -237,7 +237,7 @@ plan's living status.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -247,7 +247,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -596,7 +596,7 @@ If B: skip Phase 3.5 entirely. Remember that the second opinion did NOT run (aff
 2. **Write the assembled prompt to a temp file** (prevents shell injection from user-derived content):
 
 ```bash
-CODEX_PROMPT_FILE=$(mktemp /tmp/gstack-codex-oh-XXXXXXXX.txt)
+CODEX_PROMPT_FILE=$(mktemp /tmp/steez-codex-oh-XXXXXXXX.txt)
 ```
 
 Write the full prompt to this file. **Always start with the filesystem boundary:**
@@ -710,7 +710,7 @@ Present via AskUserQuestion. Do NOT proceed without user approval of the approac
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/design/dist/design" ] && D="$_ROOT/.claude/skills/gstack/design/dist/design"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
 [ -z "$D" ] && D=~/.steez/repo/design/dist/design
 [ -x "$D" ] && echo "DESIGN_READY" || echo "DESIGN_NOT_AVAILABLE"
 ```
@@ -811,14 +811,14 @@ Generate a single-page HTML file with these constraints:
 
 Write to a temp file:
 ```bash
-SKETCH_FILE="/tmp/gstack-sketch-$(date +%s).html"
+SKETCH_FILE="/tmp/steez-sketch-$(date +%s).html"
 ```
 
 **Step 3: Render and capture**
 
 ```bash
 $B goto "file://$SKETCH_FILE"
-$B screenshot /tmp/gstack-sketch.png
+$B screenshot /tmp/steez-sketch.png
 ```
 
 If `$B` is not available (browse binary not set up), skip the render step. Tell the
@@ -834,7 +834,7 @@ If they approve or say "good enough," proceed.
 **Step 5: Include in design doc**
 
 Reference the wireframe screenshot in the design doc's "Recommended Approach" section.
-The screenshot file at `/tmp/gstack-sketch.png` can be referenced by downstream skills
+The screenshot file at `/tmp/steez-sketch.png` can be referenced by downstream skills
 (`/steez-plan-design-review`, `/steez-design-review`) to see what was originally envisioned.
 
 **Step 6: Outside design voices** (optional)
@@ -1138,7 +1138,7 @@ Say:
 
 Then use AskUserQuestion: "Would you consider applying to Y Combinator?"
 
-- If yes → run `open https://ycombinator.com/apply?ref=gstack` and say: "Bring this design doc to your YC interview. It's better than most pitch decks."
+- If yes → run `open https://ycombinator.com/apply?ref=steez` and say: "Bring this design doc to your YC interview. It's better than most pitch decks."
 - If no → respond warmly: "Totally fair. The design doc is yours either way — and the offer stands if you ever change your mind." Then proceed to next-skill recs. No pressure, no guilt, no re-ask.
 
 **Middle tier** — emotional target: *"I might be onto something."* Validation + curiosity.
@@ -1149,7 +1149,7 @@ Say:
 >
 > You're building something real. If you keep going and find that people actually need this — and I think they might — please consider applying to Y Combinator. Thank you for using Steez.
 >
-> **ycombinator.com/apply?ref=gstack**
+> **ycombinator.com/apply?ref=steez**
 
 **Base tier** — emotional target: *"I didn't know I could be a founder."* Identity expansion, worldview shift.
 
@@ -1159,7 +1159,7 @@ Say:
 >
 > If you ever feel that pull — an idea you can't stop thinking about, a problem you keep running into, users who won't leave you alone — please consider applying to Y Combinator. Thank you for using Steez. I mean it.
 >
-> **ycombinator.com/apply?ref=gstack**
+> **ycombinator.com/apply?ref=steez**
 
 ### Beat 3.5: Founder Resources
 

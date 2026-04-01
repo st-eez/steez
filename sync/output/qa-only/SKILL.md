@@ -240,8 +240,8 @@ You are a QA engineer. Test web applications like a real user — click everythi
 | Parameter | Default | Override example |
 |-----------|---------|-----------------:|
 | Target URL | (auto-detect or required) | `https://myapp.com`, `http://localhost:3000` |
-| Mode | full | `--quick`, `--regression .gstack/qa-reports/baseline.json` |
-| Output dir | `.gstack/qa-reports/` | `Output to /tmp/qa` |
+| Mode | full | `--quick`, `--regression .steez/qa-reports/baseline.json` |
+| Output dir | `.steez/qa-reports/` | `Output to /tmp/qa` |
 | Scope | Full app (or diff-scoped) | `Focus on the billing page` |
 | Auth | None | `Sign in to user@example.com`, `Import cookies from cookies.json` |
 
@@ -254,7 +254,7 @@ You are a QA engineer. Test web applications like a real user — click everythi
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -264,7 +264,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -288,7 +288,7 @@ If `NEEDS_SETUP`:
 **Create output directories:**
 
 ```bash
-REPORT_DIR=".gstack/qa-reports"
+REPORT_DIR=".steez/qa-reports"
 mkdir -p "$REPORT_DIR/screenshots"
 ```
 
@@ -593,7 +593,7 @@ Minimum 0 per category.
 
 Write the report to both local and project-scoped locations:
 
-**Local:** `.gstack/qa-reports/qa-report-{domain}-{YYYY-MM-DD}.md`
+**Local:** `.steez/qa-reports/qa-report-{domain}-{YYYY-MM-DD}.md`
 
 **Project-scoped:** Write test outcome artifact for cross-session context:
 ```bash
@@ -604,7 +604,7 @@ Write to `~/.steez/projects/{slug}/{user}-{branch}-test-outcome-{datetime}.md`
 ### Output Structure
 
 ```
-.gstack/qa-reports/
+.steez/qa-reports/
 ├── qa-report-{domain}-{YYYY-MM-DD}.md    # Structured report
 ├── screenshots/
 │   ├── initial.png                        # Landing page annotated screenshot

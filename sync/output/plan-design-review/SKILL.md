@@ -287,9 +287,9 @@ choices.
 Do NOT make any code changes. Do NOT start implementation. Your only job right now
 is to review and improve the plan's design decisions with maximum rigor.
 
-### The gstack designer — YOUR PRIMARY TOOL
+### The steez designer — YOUR PRIMARY TOOL
 
-You have the **gstack designer**, an AI mockup generator that creates real visual mockups
+You have the **steez designer**, an AI mockup generator that creates real visual mockups
 from design briefs. This is your signature capability. Use it by default, not as an
 afterthought.
 
@@ -380,7 +380,7 @@ Report findings before proceeding to Step 0.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/design/dist/design" ] && D="$_ROOT/.claude/skills/gstack/design/dist/design"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
 [ -z "$D" ] && D=~/.steez/repo/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
@@ -388,7 +388,7 @@ else
   echo "DESIGN_NOT_AVAILABLE"
 fi
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
@@ -442,10 +442,10 @@ AskUserQuestion: "I've rated this plan {N}/10 on design completeness. The bigges
 ## Step 0.5: Visual Mockups (DEFAULT when DESIGN_READY)
 
 If the plan involves any UI — screens, pages, components, visual changes — AND the
-gstack designer is available (`DESIGN_READY` was printed during setup), **generate
+steez designer is available (`DESIGN_READY` was printed during setup), **generate
 mockups immediately.** Do not ask permission. This is the default behavior.
 
-Tell the user: "Generating visual mockups with the gstack designer. This is how we
+Tell the user: "Generating visual mockups with the steez designer. This is how we
 review design — real visuals, not text descriptions."
 
 The ONLY time you skip mockups is when:
@@ -456,7 +456,7 @@ If the user explicitly says "skip mockups" or "text only", respect that. Otherwi
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** These commands write design artifacts to
 `~/.steez/projects/$SLUG/designs/` (user config directory, not project files).
-Mockups are design artifacts that inform the plan, not code changes. The gstack
+Mockups are design artifacts that inform the plan, not code changes. The steez
 designer outputs PNGs and HTML comparison boards for human review during the
 planning phase. Generating mockups during planning is the whole point.
 
@@ -608,7 +608,7 @@ Note which direction was approved. This becomes the visual reference for all sub
 
 **Multiple variants/screens:** If the user asked for multiple variants (e.g., "5 versions of the homepage"), generate ALL as separate variant sets with their own comparison boards. Each screen/variant set gets its own subdirectory under `designs/`. Complete all mockup generation and user selection before starting review passes.
 
-**If `DESIGN_NOT_AVAILABLE`:** Tell the user: "The gstack designer isn't set up yet. Run `$D setup` to enable visual mockups. Proceeding with text-only review, but you're missing the best part." Then proceed to review passes with text-based review.
+**If `DESIGN_NOT_AVAILABLE`:** Tell the user: "The steez designer isn't set up yet. Run `$D setup` to enable visual mockups. Proceeding with text-only review, but you're missing the best part." Then proceed to review passes with text-based review.
 
 ## Design Outside Voices (parallel)
 
@@ -738,7 +738,7 @@ If `DESIGN_READY` was printed during setup AND a dimension rates below 7/10,
 offer to generate a visual mockup showing what the improved version would look like:
 
 ```bash
-$D generate --brief "<description of what 10/10 looks like for this dimension>" --output /tmp/gstack-ideal-<dimension>.png
+$D generate --brief "<description of what 10/10 looks like for this dimension>" --output /tmp/steez-ideal-<dimension>.png
 ```
 
 Show the mockup to the user via the Read tool. This makes the gap between
@@ -849,7 +849,7 @@ FIX TO 10: Rewrite vague UI descriptions with specific alternatives.
 9. Generic hero copy ("Welcome to [X]", "Unlock the power of...", "Your all-in-one solution for...")
 10. Cookie-cutter section rhythm (hero → 3 features → testimonials → pricing → CTA, every section same height)
 
-Source: [OpenAI "Designing Delightful Frontends with GPT-5.4"](https://developers.openai.com/blog/designing-delightful-frontends-with-gpt-5-4) (Mar 2026) + gstack design methodology.
+Source: [OpenAI "Designing Delightful Frontends with GPT-5.4"](https://developers.openai.com/blog/designing-delightful-frontends-with-gpt-5-4) (Mar 2026) + steez design methodology.
 - "Cards with icons" → what differentiates these from every SaaS template?
 - "Hero section" → what makes this hero feel like THIS product?
 - "Clean, modern UI" → meaningless. Replace with actual design decisions.

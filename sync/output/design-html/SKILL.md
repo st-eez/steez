@@ -216,7 +216,7 @@ around obstacles.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 D=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/design/dist/design" ] && D="$_ROOT/.claude/skills/gstack/design/dist/design"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/design/dist/design" ] && D="$_ROOT/.claude/skills/steez/design/dist/design"
 [ -z "$D" ] && D=~/.steez/repo/design/dist/design
 if [ -x "$D" ]; then
   echo "DESIGN_READY: $D"
@@ -224,7 +224,7 @@ else
   echo "DESIGN_NOT_AVAILABLE"
 fi
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "BROWSE_READY: $B"
@@ -259,7 +259,7 @@ data, not project files. They persist across branches, conversations, and worksp
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -269,7 +269,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -399,7 +399,7 @@ For **vanilla HTML output**, check for the vendored Pretext bundle:
 ```bash
 _PRETEXT_VENDOR=""
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/gstack/design-html/vendor/pretext.js" ] && _PRETEXT_VENDOR="$_ROOT/.claude/skills/gstack/design-html/vendor/pretext.js"
+[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/steez/design-html/vendor/pretext.js" ] && _PRETEXT_VENDOR="$_ROOT/.claude/skills/steez/design-html/vendor/pretext.js"
 [ -z "$_PRETEXT_VENDOR" ] && [ -f ~/.steez/repo/design-html/vendor/pretext.js ] && _PRETEXT_VENDOR=~/.steez/repo/design-html/vendor/pretext.js
 [ -n "$_PRETEXT_VENDOR" ] && echo "VENDOR: $_PRETEXT_VENDOR" || echo "VENDOR_MISSING"
 ```
@@ -648,9 +648,9 @@ If `$B` is available (browse binary), take verification screenshots at 3 viewpor
 
 ```bash
 $B goto "file://<path-to-finalized.html>"
-$B screenshot /tmp/gstack-verify-mobile.png --width 375
-$B screenshot /tmp/gstack-verify-tablet.png --width 768
-$B screenshot /tmp/gstack-verify-desktop.png --width 1440
+$B screenshot /tmp/steez-verify-mobile.png --width 375
+$B screenshot /tmp/steez-verify-tablet.png --width 768
+$B screenshot /tmp/steez-verify-desktop.png --width 1440
 ```
 
 Show all three screenshots inline using the Read tool. Check for:

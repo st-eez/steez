@@ -234,7 +234,7 @@ plan's living status.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -244,7 +244,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -1129,7 +1129,7 @@ $B text
 Verify the page has content (not blank, not a generic error page).
 
 ```bash
-$B snapshot -i -a -o ".gstack/deploy-reports/post-deploy.png"
+$B snapshot -i -a -o ".steez/deploy-reports/post-deploy.png"
 ```
 
 Take an annotated screenshot as evidence.
@@ -1178,7 +1178,7 @@ After a successful revert: Tell the user "Revert pushed to {base}. The deploy sh
 Create the deploy report directory:
 
 ```bash
-mkdir -p .gstack/deploy-reports
+mkdir -p .steez/deploy-reports
 ```
 
 Produce and display the ASCII summary:
@@ -1218,7 +1218,7 @@ Verification: <HEALTHY / DEGRADED / SKIPPED / REVERTED>
 VERDICT: <DEPLOYED AND VERIFIED / DEPLOYED (UNVERIFIED) / STAGING VERIFIED / REVERTED>
 ```
 
-Save report to `.gstack/deploy-reports/{date}-pr{number}-deploy.md`.
+Save report to `.steez/deploy-reports/{date}-pr{number}-deploy.md`.
 
 Log to the review dashboard:
 

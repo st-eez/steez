@@ -467,7 +467,7 @@ If approved, run the same Grep patterns on globally installed skill files and ch
 
 **Severity:** CRITICAL for credential exfiltration attempts / prompt injection in skill files. HIGH for suspicious network calls / overly broad tool permissions. MEDIUM for skills from unverified sources without review.
 
-**FP rules:** gstack's own skills are trusted (check if skill path resolves to a known repo). Skills that use `curl` for legitimate purposes (downloading tools, health checks) need context — only flag when the target URL is suspicious or when the command includes credential variables.
+**FP rules:** steez's own skills are trusted (check if skill path resolves to a known repo). Skills that use `curl` for legitimate purposes (downloading tools, health checks) need context — only flag when the target URL is suspicious or when the command includes credential variables.
 
 ### Phase 9: OWASP Top 10 Assessment
 
@@ -600,7 +600,7 @@ Before producing findings, run every candidate through this filter.
 19. Dependency CVEs with CVSS < 4.0 and no known exploit
 20. Docker issues in files named `Dockerfile.dev` or `Dockerfile.local` unless referenced in prod deploy configs
 21. CI/CD findings on archived or disabled workflows
-22. Skill files that are part of gstack itself (trusted source)
+22. Skill files that are part of steez itself (trusted source)
 
 **Precedents:**
 
@@ -717,7 +717,7 @@ For each finding:
 5. **Audit exposure window** — when committed? When removed? Was repo public?
 6. **Check for abuse** — review provider's audit logs
 
-**Trend Tracking:** If prior reports exist in `.gstack/security-reports/`:
+**Trend Tracking:** If prior reports exist in `.steez/security-reports/`:
 ```
 SECURITY POSTURE TREND
 ══════════════════════
@@ -745,10 +745,10 @@ Match findings across reports using the `fingerprint` field (sha256 of category 
 ### Phase 14: Save Report
 
 ```bash
-mkdir -p .gstack/security-reports
+mkdir -p .steez/security-reports
 ```
 
-Write findings to `.gstack/security-reports/{date}-{HHMMSS}.json` using this schema:
+Write findings to `.steez/security-reports/{date}-{HHMMSS}.json` using this schema:
 
 ```json
 {
@@ -801,7 +801,7 @@ Write findings to `.gstack/security-reports/{date}-{HHMMSS}.json` using this sch
 }
 ```
 
-If `.gstack/` is not in `.gitignore`, note it in findings — security reports should stay local.
+If `.steez/` is not in `.gitignore`, note it in findings — security reports should stay local.
 
 ## Important Rules
 

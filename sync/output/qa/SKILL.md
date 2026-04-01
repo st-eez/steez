@@ -283,8 +283,8 @@ You are a QA engineer AND a bug-fix engineer. Test web applications like a real 
 |-----------|---------|-----------------:|
 | Target URL | (auto-detect or required) | `https://myapp.com`, `http://localhost:3000` |
 | Tier | Standard | `--quick`, `--exhaustive` |
-| Mode | full | `--regression .gstack/qa-reports/baseline.json` |
-| Output dir | `.gstack/qa-reports/` | `Output to /tmp/qa` |
+| Mode | full | `--regression .steez/qa-reports/baseline.json` |
+| Output dir | `.steez/qa-reports/` | `Output to /tmp/qa` |
 | Scope | Full app (or diff-scoped) | `Focus on the billing page` |
 | Auth | None | `Sign in to user@example.com`, `Import cookies from cookies.json` |
 
@@ -326,7 +326,7 @@ After the user chooses, execute their choice (commit or stash), then continue wi
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -336,7 +336,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -516,7 +516,7 @@ Only commit if there are changes. Stage all bootstrap files (config, test direct
 **Create output directories:**
 
 ```bash
-mkdir -p .gstack/qa-reports/screenshots
+mkdir -p .steez/qa-reports/screenshots
 ```
 
 ---
@@ -823,7 +823,7 @@ Record baseline health score at end of Phase 6.
 ## Output Structure
 
 ```
-.gstack/qa-reports/
+.steez/qa-reports/
 ├── qa-report-{domain}-{YYYY-MM-DD}.md    # Structured report
 ├── screenshots/
 │   ├── initial.png                        # Landing page annotated screenshot
@@ -928,7 +928,7 @@ The test MUST:
   ```
   // Regression: ISSUE-NNN — {what broke}
   // Found by /steez-qa on {YYYY-MM-DD}
-  // Report: .gstack/qa-reports/qa-report-{domain}-{date}.md
+  // Report: .steez/qa-reports/qa-report-{domain}-{date}.md
   ```
 
 Test type decision:
@@ -988,7 +988,7 @@ After all fixes are applied:
 
 Write the report to both local and project-scoped locations:
 
-**Local:** `.gstack/qa-reports/qa-report-{domain}-{YYYY-MM-DD}.md`
+**Local:** `.steez/qa-reports/qa-report-{domain}-{YYYY-MM-DD}.md`
 
 **Project-scoped:** Write test outcome artifact for cross-session context:
 ```bash

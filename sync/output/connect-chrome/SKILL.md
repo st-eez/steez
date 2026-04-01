@@ -1,7 +1,7 @@
 ---
 name: steez-connect-chrome
 version: 0.1.0
-description: Launch real Chrome controlled by gstack with the Side Panel extension auto-loaded. One command: connects Claude to a visible Chrome window where you can watch every action in real time. The extension shows a live activity feed in the Side Panel. Use when asked to "connect chrome", "open chrome", "real browser", "launch chrome", "side panel", or "control my browser". (steez)
+description: Launch real Chrome controlled by steez with the Side Panel extension auto-loaded. One command: connects Claude to a visible Chrome window where you can watch every action in real time. The extension shows a live activity feed in the Side Panel. Use when asked to "connect chrome", "open chrome", "real browser", "launch chrome", "side panel", or "control my browser". (steez)
 allowed-tools:
   - Bash
   - Read
@@ -229,7 +229,7 @@ plan's living status.
 <!-- END MANAGED PREAMBLE -->
 # /connect-chrome — Launch Real Chrome with Side Panel
 
-Connect Claude to a visible Chrome window with the gstack extension auto-loaded.
+Connect Claude to a visible Chrome window with the steez extension auto-loaded.
 You see every click, every navigation, every action in real time.
 
 ## SETUP (run this check BEFORE any browse command)
@@ -237,7 +237,7 @@ You see every click, every navigation, every action in real time.
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 B=""
-[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/steez/browse/dist/browse" ] && B="$_ROOT/.claude/skills/steez/browse/dist/browse"
 [ -z "$B" ] && B=~/.steez/repo/browse/dist/browse
 if [ -x "$B" ]; then
   echo "READY: $B"
@@ -247,7 +247,7 @@ fi
 ```
 
 If `NEEDS_SETUP`:
-1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+1. Tell the user: "steez browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
 2. Run: `cd <SKILL_DIR> && ./setup`
 3. If `bun` is not installed:
    ```bash
@@ -276,15 +276,15 @@ positives and Chromium profile lock conflicts.
 
 ```bash
 # Kill any existing browse server
-if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.gstack/browse.json" ]; then
-  _OLD_PID=$(cat "$(git rev-parse --show-toplevel)/.gstack/browse.json" 2>/dev/null | grep -o '"pid":[0-9]*' | grep -o '[0-9]*')
+if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.steez/browse.json" ]; then
+  _OLD_PID=$(cat "$(git rev-parse --show-toplevel)/.steez/browse.json" 2>/dev/null | grep -o '"pid":[0-9]*' | grep -o '[0-9]*')
   [ -n "$_OLD_PID" ] && kill "$_OLD_PID" 2>/dev/null || true
   sleep 1
   [ -n "$_OLD_PID" ] && kill -9 "$_OLD_PID" 2>/dev/null || true
-  rm -f "$(git rev-parse --show-toplevel)/.gstack/browse.json"
+  rm -f "$(git rev-parse --show-toplevel)/.steez/browse.json"
 fi
 # Clean Chromium profile locks (can persist after crashes)
-_PROFILE_DIR="$HOME/.gstack/chromium-profile"
+_PROFILE_DIR="$HOME/.steez/chromium-profile"
 for _LF in SingletonLock SingletonSocket SingletonCookie; do
   rm -f "$_PROFILE_DIR/$_LF" 2>/dev/null || true
 done
@@ -299,11 +299,11 @@ $B connect
 
 This launches Playwright's bundled Chromium in headed mode with:
 - A visible window you can watch (not your regular Chrome — it stays untouched)
-- The gstack Chrome extension auto-loaded via `launchPersistentContext`
+- The steez Chrome extension auto-loaded via `launchPersistentContext`
 - A golden shimmer line at the top of every page so you know which window is controlled
 - A sidebar agent process for chat commands
 
-The `connect` command auto-discovers the extension from the gstack install
+The `connect` command auto-discovers the extension from the steez install
 directory. It always uses port **34567** so the extension can auto-connect.
 
 After connecting, print the full output to the user. Confirm you see
@@ -321,7 +321,7 @@ $B status
 Confirm the output shows `Mode: headed`. Read the port from the state file:
 
 ```bash
-cat "$(git rev-parse --show-toplevel 2>/dev/null)/.gstack/browse.json" 2>/dev/null | grep -o '"port":[0-9]*' | grep -o '[0-9]*'
+cat "$(git rev-parse --show-toplevel 2>/dev/null)/.steez/browse.json" 2>/dev/null | grep -o '"port":[0-9]*' | grep -o '[0-9]*'
 ```
 
 The port should be **34567**. If it's different, note it — the user may need it
@@ -332,8 +332,8 @@ Also find the extension path so you can help the user if they need to load it ma
 ```bash
 _EXT_PATH=""
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/gstack/extension/manifest.json" ] && _EXT_PATH="$_ROOT/.claude/skills/gstack/extension"
-[ -z "$_EXT_PATH" ] && [ -f "$HOME/.claude/skills/gstack/extension/manifest.json" ] && _EXT_PATH="$HOME/.claude/skills/gstack/extension"
+[ -n "$_ROOT" ] && [ -f "$_ROOT/.claude/skills/steez/extension/manifest.json" ] && _EXT_PATH="$_ROOT/.claude/skills/steez/extension"
+[ -z "$_EXT_PATH" ] && [ -f "$HOME/.claude/skills/steez/extension/manifest.json" ] && _EXT_PATH="$HOME/.claude/skills/steez/extension"
 echo "EXTENSION_PATH: ${_EXT_PATH:-NOT FOUND}"
 ```
 
@@ -341,14 +341,14 @@ echo "EXTENSION_PATH: ${_EXT_PATH:-NOT FOUND}"
 
 Use AskUserQuestion:
 
-> Chrome is launched with gstack control. You should see Playwright's Chromium
+> Chrome is launched with steez control. You should see Playwright's Chromium
 > (not your regular Chrome) with a golden shimmer line at the top of the page.
 >
 > The Side Panel extension should be auto-loaded. To open it:
 > 1. Look for the **puzzle piece icon** (Extensions) in the toolbar — it may
->    already show the gstack icon if the extension loaded successfully
-> 2. Click the **puzzle piece** → find **gstack browse** → click the **pin icon**
-> 3. Click the pinned **gstack icon** in the toolbar
+>    already show the steez icon if the extension loaded successfully
+> 2. Click the **puzzle piece** → find **steez browse** → click the **pin icon**
+> 3. Click the pinned **steez icon** in the toolbar
 > 4. The Side Panel should open on the right showing a live activity feed
 >
 > **Port:** 34567 (auto-detected — the extension connects automatically in the
@@ -365,7 +365,7 @@ If B: Tell the user:
 > sometimes it doesn't appear immediately. Try these steps:
 >
 > 1. Type `chrome://extensions` in the address bar
-> 2. Look for **"gstack browse"** — it should be listed and enabled
+> 2. Look for **"steez browse"** — it should be listed and enabled
 > 3. If it's there but not pinned, go back to any page, click the puzzle piece
 >    icon, and pin it
 > 4. If it's NOT listed at all, click **"Load unpacked"** and navigate to:
@@ -375,7 +375,7 @@ If B: Tell the user:
 >
 > After loading, pin it and click the icon to open the Side Panel.
 >
-> If the Side Panel badge stays gray (disconnected), click the gstack icon
+> If the Side Panel badge stays gray (disconnected), click the steez icon
 > and enter port **34567** manually.
 
 If C:
@@ -423,7 +423,7 @@ Tell the user:
 > You're all set! Here's what you can do with the connected Chrome:
 >
 > **Watch Claude work in real time:**
-> - Run any gstack skill (`/steez-qa`, `/steez-design-review`, `/benchmark`) and watch
+> - Run any steez skill (`/steez-qa`, `/steez-design-review`, `/benchmark`) and watch
 >   every action happen in the visible Chrome window + Side Panel feed
 > - No cookie import needed — the Playwright browser shares its own session
 >
