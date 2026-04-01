@@ -191,6 +191,43 @@ describe("applyOverlay", () => {
     const result = applyOverlay(doc, config, "ship", skillConfig);
     expect(result).toContain('"skill":"steez-ship"');
   });
+
+  // Regression: ISSUE-002 — duplicate END MANAGED PREAMBLE markers
+  // Found by /steez-qa on 2026-04-01
+  // Report: .steez/qa-reports/qa-report-steez-sync-2026-04-01.md
+  it("emits only one END marker when multiple sections match REVIEW REPORT", () => {
+    const md = `---
+name: codex
+---
+
+## GSTACK REVIEW REPORT
+
+Preamble review report.
+
+# /codex — Multi-AI
+
+## Codex Mode
+
+Content.
+
+## GSTACK REVIEW REPORT
+
+Skill-level review report.
+
+## Final`;
+    const { config } = makeTestConfig({});
+    config.preamble.endMarker = "<!-- END MANAGED PREAMBLE -->";
+    const doc = parseDocument(md);
+    const result = applyOverlay(doc, config, "codex");
+    const endCount = (result.match(/<!-- END MANAGED PREAMBLE -->/g) || []).length;
+    expect(endCount).toBe(1);
+    // END marker should appear after the FIRST REVIEW REPORT, not the second
+    const firstReportIdx = result.indexOf("Preamble review report.");
+    const endMarkerIdx = result.indexOf("<!-- END MANAGED PREAMBLE -->");
+    const secondReportIdx = result.indexOf("Skill-level review report.");
+    expect(endMarkerIdx).toBeGreaterThan(firstReportIdx);
+    expect(endMarkerIdx).toBeLessThan(secondReportIdx);
+  });
 });
 
 describe("applyPreambleOnly", () => {
