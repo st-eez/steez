@@ -36,8 +36,10 @@ export class NsMutex {
     }
 
     return new Promise<() => void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const entry: QueueEntry = {
         resolve: () => {
+          if (timer) clearTimeout(timer);
           this._totalAcquired++;
           resolve(this.createRelease());
         },
@@ -49,7 +51,7 @@ export class NsMutex {
 
       // Optional timeout — reject if we wait too long
       if (timeoutMs !== undefined && timeoutMs > 0) {
-        setTimeout(() => {
+        timer = setTimeout(() => {
           const idx = this.queue.indexOf(entry);
           if (idx !== -1) {
             this.queue.splice(idx, 1);
