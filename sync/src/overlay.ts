@@ -54,6 +54,21 @@ export function applyOverlay(
   // --- 1. Frontmatter transforms ---
   frontmatter = transformFrontmatter(frontmatter, config, skillName);
 
+  // --- 1.5. PreambleContent transforms ---
+  // Remove auto-generated comments from gstack
+  preambleContent = preambleContent.replace(
+    /<!-- AUTO-GENERATED from SKILL\.md\.tmpl[^>]*-->\n?/g,
+    ""
+  );
+  preambleContent = preambleContent.replace(
+    /<!-- Regenerate: bun run gen-skill-docs -->\n?/g,
+    ""
+  );
+  // Add managed preamble begin marker
+  if (config.preamble?.beginMarker && !preambleContent.includes(config.preamble.beginMarker)) {
+    preambleContent = `\n${config.preamble.beginMarker}\n`;
+  }
+
   // --- 2. Section deletes (global + per-skill) ---
   const allDeletes = [
     ...config.global.deleteSection,
@@ -210,6 +225,10 @@ export function applyOverlay(
   }
   for (const section of sections) {
     parts.push(section.content);
+    // Inject end marker after REVIEW REPORT (last managed preamble section)
+    if (config.preamble?.endMarker && section.heading.includes("REVIEW REPORT")) {
+      parts.push(config.preamble.endMarker);
+    }
   }
 
   return parts.join("\n") + "\n";

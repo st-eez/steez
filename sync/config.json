@@ -25,6 +25,8 @@
       { "from": "GSTACK REVIEW REPORT", "to": "STEEZ REVIEW REPORT" },
       { "from": "GSTACK_HOME", "to": "STEEZ_HOME" },
       { "from": "CC+gstack", "to": "CC+steez" },
+      { "from": "You are GStack, an open source AI builder framework shaped by Garry Tan's product, startup, and engineering judgment. Encode how he thinks, not his biography.", "to": "You are a senior engineering partner — a CTO-level operator who ships product and owns it in production. You think across engineering, design, product, and operations to get to truth." },
+      { "from": "**User sovereignty.** The user always has context you don't \u2014 domain knowledge, business relationships, strategic timing, taste. When you and another model agree on a change, that agreement is a recommendation, not a decision. Present it. The user decides. Never say \"the outside voice is right\" and act. Say \"the outside voice recommends X \u2014 do you want to proceed?\"\n\nWhen a user shows unusually strong product instinct, deep user empathy, sharp insight, or surprising synthesis across domains, recognize it plainly. For exceptional cases only, say that people with that kind of taste and drive are exactly the kind of builders Garry respects and wants to fund, and that they should consider applying to YC. Use this rarely and only when truly earned.\n\n", "to": "" },
       { "from": "GStack", "to": "Steez" },
       { "from": "/plan-ceo-review", "to": "/steez-plan-ceo-review" },
       { "from": "/plan-eng-review", "to": "/steez-plan-eng-review" },
@@ -35,7 +37,21 @@
       { "from": "/autoplan", "to": "/steez-autoplan" },
       { "from": "/qa-only", "to": "/steez-qa-only" },
       { "from": "/codex", "to": "/steez-codex" },
-      { "from": "/retro", "to": "/steez-retro" }
+      { "from": "/retro", "to": "/steez-retro" },
+      { "from": " /ship", "to": " /steez-ship" },
+      { "from": "`/ship`", "to": "`/steez-ship`" },
+      { "from": "\"/ship\"", "to": "\"/steez-ship\"" },
+      { "from": " /qa ", "to": " /steez-qa " },
+      { "from": "`/qa`", "to": "`/steez-qa`" },
+      { "from": " /review ", "to": " /steez-review " },
+      { "from": "`/review`", "to": "`/steez-review`" },
+      { "from": " /browse", "to": " /steez-browse" },
+      { "from": "`/browse`", "to": "`/steez-browse`" },
+      { "from": " /benchmark", "to": " /steez-benchmark" },
+      { "from": " /canary", "to": " /steez-canary" },
+      { "from": " /cso", "to": " /steez-cso" },
+      { "from": "gstack /", "to": "steez /" },
+      { "from": "gstack_contributor", "to": "steez_contributor" }
     ],
     "deleteSection": [
       { "path": "## Contributor Mode" },
@@ -47,7 +63,8 @@
     ],
     "replaceSection": [
       { "path": "## Preamble (run first)", "file": "steez-preamble.md" },
-      { "path": "## Telemetry (run last)", "file": "steez-telemetry.md" }
+      { "path": "## Telemetry (run last)", "file": "steez-telemetry.md" },
+      { "path": "## Search Before Building", "file": "steez-search-before-building.md", "optional": true }
     ],
     "injectAfter": [
       { "path": "## Preamble (run first)", "file": "steez-beads-context.md" },
@@ -58,7 +75,9 @@
     "namePrefix": "steez-",
     "removeFields": ["sensitive"],
     "descriptionRemove": [" (gstack)"],
-    "descriptionOverrides": {}
+    "descriptionOverrides": {
+      "ship": "Ship workflow: detect + merge base branch, run tests, review diff, bump VERSION, update CHANGELOG, commit, push, create PR. Use when asked to \"ship\", \"deploy\", \"push to main\", \"create a PR\", or \"merge and push\". Proactively suggest when the user says code is ready or asks about deploying. (steez)"
+    }
   },
   "preamble": {
     "beginMarker": "<!-- BEGIN MANAGED PREAMBLE -->",
@@ -110,11 +129,24 @@
     "setup-browser-cookies": {},
     "setup-deploy": {},
     "ship": {
+      "deleteSection": [
+        { "path": "## Step 3.48: Scope Drift Detection", "optional": true }
+      ],
+      "replaceSection": [
+        { "path": "## Step 3.8: Adversarial review (always-on)", "file": "steez-adversarial-review.md", "optional": true }
+      ],
       "injectAfter": [
         { "path": "## Step 8: Create PR/MR", "file": "beads-integration-ship.md" }
       ],
       "replace": [
-        { "from": "SKILL_NAME", "to": "steez-ship" }
+        { "from": "SKILL_NAME", "to": "steez-ship" },
+        { "from": "Always-on for every review. Every diff gets both Claude adversarial subagent and Codex adversarial challenge. Large diffs (200+ lines) additionally get Codex structured review with P1 gate. No configuration needed.", "to": "Auto-scales by diff size. Small diffs (<50 lines) skip adversarial. Medium diffs (50\u2013199) get cross-model adversarial. Large diffs (200+) get all 4 passes: Claude structured, Codex structured, Claude adversarial subagent, Codex adversarial. No configuration needed." },
+        { "from": "Log the corrected pattern as a learning so future reviews catch it with", "to": "Use `bd remember` to log the corrected pattern so future reviews catch it with" },
+        { "from": "## CHANGELOG (auto-generate)", "to": "## Step 5: CHANGELOG (auto-generate)" },
+        { "from": "   - **Voice:** Lead with what the user can now **do** that they couldn't before. Use plain language, not implementation details. Never mention TODOS.md, internal tracking, or contributor-facing details.\n", "to": "" },
+        { "from": "## Scope Drift\n<If scope drift ran: \"Scope Check: CLEAN\" or list of drift/creep findings>\n<If no scope drift: omit this section>\n\n", "to": "" },
+        { "from": "cat ${CLAUDE_SKILL_DIR}/../steez-qa-only", "to": "cat ${CLAUDE_SKILL_DIR}/../qa-only" },
+        { "from": "cat ${CLAUDE_SKILL_DIR}/../steez-document-release", "to": "cat ${CLAUDE_SKILL_DIR}/../document-release" }
       ]
     },
 
