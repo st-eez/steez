@@ -44,7 +44,7 @@ const ENTER_VALUE_RE = /please enter (?:a )?value\(?s?\)? for:?\s*(.+)/i;
 
 function parseValidationLabels(message: string): string[] | null {
   const match = message.match(ENTER_VALUE_RE);
-  if (!match) return null;
+  if (!match?.[1]) return null;
   return match[1].split(',').map(s => s.trim()).filter(Boolean);
 }
 
