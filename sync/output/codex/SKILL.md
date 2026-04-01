@@ -467,7 +467,6 @@ Below the table, add these lines (omit any that are empty/not applicable):
 - **VERDICT:** list reviews that are CLEAR (e.g., "CEO + ENG CLEARED — ready to implement").
   If Eng Review is not CLEAR and not skipped globally, append "eng review required".
 
-<!-- END MANAGED PREAMBLE -->
 ### Write to the plan file
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one

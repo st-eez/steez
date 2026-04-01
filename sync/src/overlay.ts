@@ -223,11 +223,13 @@ export function applyOverlay(
   if (preambleContent.trim()) {
     parts.push(preambleContent);
   }
+  let endMarkerEmitted = false;
   for (const section of sections) {
     parts.push(section.content);
-    // Inject end marker after REVIEW REPORT (last managed preamble section)
-    if (config.preamble?.endMarker && section.heading.includes("REVIEW REPORT")) {
+    // Inject end marker after the FIRST REVIEW REPORT section (preamble boundary)
+    if (!endMarkerEmitted && config.preamble?.endMarker && section.heading.includes("REVIEW REPORT")) {
       parts.push(config.preamble.endMarker);
+      endMarkerEmitted = true;
     }
   }
 
