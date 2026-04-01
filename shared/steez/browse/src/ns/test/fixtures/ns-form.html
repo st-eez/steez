@@ -130,7 +130,7 @@ window.nlapiSetFieldValue = function(fieldId, value, fireSlavingWhenever, fireFi
   FIELDS[fieldId].text = value;
 
   // Simulate sourcing cascade for entity-ref fields
-  if (!fireSlavingWhenever && fieldId === 'salesrep') {
+  if (fireSlavingWhenever && fieldId === 'salesrep') {
     // Simulate async sourcing — after a short delay, update dependent fields
     setTimeout(function() {
       FIELDS['companyname'].value = 'Sourced Company';
@@ -191,7 +191,7 @@ window.nlapiSelectNewLineItem = function(sublistId) {
 window.nlapiSetCurrentLineItemValue = function(sublistId, fieldId, value, fsw, ffc) {
   CURRENT_LINE[fieldId] = value;
   // Simulate sourcing: setting 'item' cascades to rate/amount after delay
-  if (!fsw && fieldId === 'item') {
+  if (fsw && fieldId === 'item') {
     setTimeout(function() {
       CURRENT_LINE['rate'] = '25.00';
       CURRENT_LINE['amount'] = String(parseFloat(CURRENT_LINE['quantity'] || '1') * 25);

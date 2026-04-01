@@ -59,14 +59,14 @@ describe('ns set', () => {
     await page.goto(baseUrl + '/ns-form.html');
   });
 
-  test('set text field suppresses cascading', async () => {
+  test('set text field fires cascading by default', async () => {
     const output = await nsSet(['companyname', 'New Company'], bm);
 
     expect(output.ok).toBe(true);
     expect(output.display).toContain('SET OK');
     expect(output.display).toContain('companyname');
     expect(output.display).toContain('New Company');
-    expect(output.display).toContain('Cascading: suppressed');
+    expect(output.display).toContain('Cascading: fired');
     expect(output.display).toContain('Settled: yes');
 
     // Verify value was actually set
