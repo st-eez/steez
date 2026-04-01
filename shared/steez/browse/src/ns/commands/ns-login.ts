@@ -520,10 +520,7 @@ async function detectLoginSuccess(
 
   if (hasNsApi) return true;
 
-  // If URL is no longer the login page and we're on the same origin, assume success
-  if (!url.includes('customerlogin') && !url.includes('/login')) {
-    return true;
-  }
-
+  // URL is not a known login page, but we couldn't confirm NS API either.
+  // Don't assume success — return false and let the caller report the URL.
   return false;
 }
