@@ -6,6 +6,10 @@ dist/
 __pycache__/
 evals/
 
+# Local context / config
+.context/
+.steez/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

@@ -96,7 +96,10 @@ func RunSetup(repoPath string) error {
 		return err
 	}
 
-	fm := finalModel.(setupModel)
+	fm, ok := finalModel.(setupModel)
+	if !ok {
+		return fmt.Errorf("unexpected model type from TUI")
+	}
 	if fm.quitting {
 		return nil
 	}
