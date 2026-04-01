@@ -343,12 +343,28 @@ function transformFrontmatter(
     fm = fm.replace(new RegExp(`^${field}:.*(?:\\n(?=\\s).*)*\\n?`, "m"), "");
   }
 
+  // Collapse multi-line description (| style) to single-line
+  const descMatch = fm.match(/^description:\s*\|\n([\s\S]*?)(?=\n\w|\n---|\n$)/m);
+  if (descMatch) {
+    const lines = descMatch[1]
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    fm = fm.replace(descMatch[0], `description: ${lines.join(" ")}`);
+  }
+
   // Remove substrings from description
   for (const sub of fmConfig.descriptionRemove) {
     fm = fm.replace(sub, "");
   }
 
-  // Per-skill description override
+  // Append (steez) to description if not already present
+  fm = fm.replace(
+    /^(description:\s*.+?)(\s*)$/m,
+    (match, desc, trail) => desc.includes("(steez)") ? match : `${desc} (steez)${trail}`
+  );
+
+  // Per-skill description override (takes precedence over auto-collapse)
   if (fmConfig.descriptionOverrides[skillName]) {
     // Replace entire description field (handles multi-line | style)
     fm = fm.replace(
