@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head><title>NetSuite Form Stub — View Mode</title></head>
+<body>
+<!--
+  Mock NetSuite form simulating view mode behavior.
+  Entity-ref fields return null from nlapiGetFieldValue when URL has ?id=N but no &e=T.
+  When re-loaded with &e=T, they return real values (edit mode).
+-->
+
+<form id="main_form">
+  <input id="companyname" type="text" value="Acme Corp" />
+  <input id="entity" type="hidden" value="42" />
+  <span id="entity_display" style="display:none">Acme Corp</span>
+  <input id="location" type="hidden" value="5" />
+  <span id="location_display" style="display:none">Main Warehouse</span>
+  <input id="memo" type="text" value="Q3 restock order" />
+  <input id="total" type="text" value="1500.00" />
+</form>
+
+<script>
+// Detect form mode from URL — mirrors real NetSuite behavior
+var params = new URLSearchParams(window.location.search);
+var isEditMode = params.get('e') === 'T';
+var hasId = params.has('id');
+
+var FIELDS = {
+  companyname: {
+    type: 'text', label: 'Company Name', mandatory: true, disabled: false,
+    value: 'Acme Corp', text: 'Acme Corp',
+  },
+  entity: {
+    type: 'select', label: 'Entity', mandatory: true, disabled: false,
+    // In view mode, nlapiGetFieldValue returns null for entity-ref fields
+    value: isEditMode ? '42' : null,
+    text: isEditMode ? 'Acme Corp' : null,
+    isEntityRef: true,
+  },
+  location: {
+    type: 'select', label: 'Location', mandatory: false, disabled: false,
+    value: isEditMode ? '5' : null,
+    text: isEditMode ? 'Main Warehouse' : null,
+    isEntityRef: true,
+  },
+  memo: {
+    type: 'text', label: 'Memo', mandatory: false, disabled: false,
+    value: 'Q3 restock order', text: 'Q3 restock order',
+  },
+  total: {
+    type: 'currency', label: 'Total', mandatory: true, disabled: false,
+    value: '1500.00', text: '$1,500.00',
+  },
+};
+
+window.nlapiGetField = function(id) {
+  var f = FIELDS[id];
+  if (!f) return null;
+  return {
+    getType: function() { return f.type; },
+    getLabel: function() { return f.label; },
+    isMandatory: function() { return f.mandatory; },
+    isDisabled: function() { return f.disabled; },
+    getSelectOptions: function() { return []; },
+  };
+};
+
+window.nlapiGetFieldValue = function(id) {
+  var f = FIELDS[id];
+  return f ? f.value : null;
+};
+
+window.nlapiGetFieldText = function(id) {
+  var f = FIELDS[id];
+  return f ? f.text : null;
+};
+
+window.nlapiGetFieldIds = function() {
+  return Object.keys(FIELDS);
+};
+</script>
+</body>
+</html>

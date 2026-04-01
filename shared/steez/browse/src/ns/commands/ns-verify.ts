@@ -118,6 +118,7 @@ export async function nsVerify(args: string[], bm: BrowserManager): Promise<NsCo
         const relativePath = RECORD_URL_MAP.buildUrl(
           parsed.recordType,
           parsed.id ?? undefined,
+          true, // Edit mode — view mode renders entity-ref fields as display text, nlapiGetFieldValue returns null
         );
 
         const currentUrl = page.url();
@@ -137,10 +138,24 @@ export async function nsVerify(args: string[], bm: BrowserManager): Promise<NsCo
       }
 
       // Guard: must be on a NS page with client API
-      const target = bm.getActiveFrameOrPage();
+      let target = bm.getActiveFrameOrPage();
       const guardErr = await guardNsApi(target);
       if (guardErr) {
         return { ok: false as const, error: guardErr };
+      }
+
+      // View-mode fix: entity-ref fields (entity, location, etc.) render as display text
+      // in view mode — nlapiGetFieldValue returns null. Re-navigate to edit mode.
+      const preMode = await detectFormMode(target);
+      if (preMode === 'view') {
+        const currentUrl = page.url();
+        const editUrl = currentUrl + (currentUrl.includes('?') ? '&e=T' : '?e=T');
+        await page.goto(editUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        target = bm.getActiveFrameOrPage();
+        const editGuardErr = await guardNsApi(target);
+        if (editGuardErr) {
+          return { ok: false as const, error: editGuardErr };
+        }
       }
 
       // Introspect all fields

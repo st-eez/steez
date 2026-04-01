@@ -156,4 +156,32 @@ describe('ns verify', () => {
     expect(output.display).toContain('Matched: companyname');
     expect(output.display).toContain('Mismatch: total');
   });
+
+  test('verify --current on view-mode page re-navigates to edit mode for entity-ref fields', async () => {
+    const page = bm.getPage();
+    // Navigate to view mode (has ?id= but no &e=T)
+    await page.goto(baseUrl + '/ns-form-view.html?id=12345');
+
+    // Entity-ref fields return null in view mode — verify should re-navigate to edit mode
+    const output = await nsVerify(['--current', 'entity=42', 'memo=Q3 restock order'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('VERIFY OK');
+    expect(output.display).toContain('Matched: entity');
+    expect(output.display).toContain('Matched: memo');
+    // Confirm we're now in edit mode (URL should have &e=T)
+    expect(page.url()).toContain('e=T');
+  });
+
+  test('verify --current on view-mode page resolves entity-ref location field', async () => {
+    const page = bm.getPage();
+    await page.goto(baseUrl + '/ns-form-view.html?id=12345');
+
+    const output = await nsVerify(['--current', 'location=5', 'total=1500.00'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('VERIFY OK');
+    expect(output.display).toContain('Matched: location');
+    expect(output.display).toContain('Matched: total');
+  });
 });
