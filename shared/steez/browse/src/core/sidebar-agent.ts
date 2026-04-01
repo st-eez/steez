@@ -195,7 +195,21 @@ async function askClaude(queueEntry: any): Promise<void> {
       stderrBuffer += data.toString();
     });
 
+    // Timeout (default 300s / 5 min — multi-page tasks need time)
+    const timeoutMs = parseInt(process.env.SIDEBAR_AGENT_TIMEOUT || '300000', 10);
+    const timer = setTimeout(() => {
+      try { proc.kill(); } catch {}
+      const timeoutMsg = stderrBuffer.trim()
+        ? `Timed out after ${timeoutMs / 1000}s\nstderr: ${stderrBuffer.trim().slice(-500)}`
+        : `Timed out after ${timeoutMs / 1000}s`;
+      sendEvent({ type: 'agent_error', error: timeoutMsg }).then(() => {
+        isProcessing = false;
+        resolve();
+      });
+    }, timeoutMs);
+
     proc.on('close', (code) => {
+      clearTimeout(timer);
       if (buffer.trim()) {
         try { handleStreamEvent(JSON.parse(buffer)); } catch {}
       }
@@ -210,6 +224,7 @@ async function askClaude(queueEntry: any): Promise<void> {
     });
 
     proc.on('error', (err) => {
+      clearTimeout(timer);
       const errorMsg = stderrBuffer.trim()
         ? `${err.message}\nstderr: ${stderrBuffer.trim().slice(-500)}`
         : err.message;
@@ -218,19 +233,6 @@ async function askClaude(queueEntry: any): Promise<void> {
         resolve();
       });
     });
-
-    // Timeout (default 300s / 5 min — multi-page tasks need time)
-    const timeoutMs = parseInt(process.env.SIDEBAR_AGENT_TIMEOUT || '300000', 10);
-    setTimeout(() => {
-      try { proc.kill(); } catch {}
-      const timeoutMsg = stderrBuffer.trim()
-        ? `Timed out after ${timeoutMs / 1000}s\nstderr: ${stderrBuffer.trim().slice(-500)}`
-        : `Timed out after ${timeoutMs / 1000}s`;
-      sendEvent({ type: 'agent_error', error: timeoutMsg }).then(() => {
-        isProcessing = false;
-        resolve();
-      });
-    }, timeoutMs);
   });
 }
 

@@ -132,7 +132,7 @@ async function detectMandatoryColumns(
 export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
   const result = await withMutex(nsMutex, async (): Promise<NsResult<NsAddRowData>> => {
       const start = Date.now();
-      const target = bm.getActiveFrameOrPage();
+      let target = bm.getActiveFrameOrPage();
 
       // ── Parse args ───────────────────────────────────────────
       const { sublistId, fieldValues } = parseAddRowArgs(args);
@@ -197,6 +197,9 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
               { sub: sublistId, col: column, val: value },
             );
 
+            // Re-acquire target — sourcing may have reloaded the NS iframe
+            target = bm.getActiveFrameOrPage();
+
             // Poll other columns for convergence — sourcing may update
             // dependent columns asynchronously
             const otherColumns = allColumns.filter(c => c !== column);
@@ -213,13 +216,15 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
             }
           }
 
-          // 3. Commit the line
+          // 3. Commit the line — re-acquire in case sourcing shifted the frame
+          target = bm.getActiveFrameOrPage();
           await target.evaluate(
             (sub: string) => (window as any).nlapiCommitLineItem?.(sub),
             sublistId,
           );
 
           // 4. Get final line number and verify commit succeeded
+          target = bm.getActiveFrameOrPage();
           const lineNumber = await target.evaluate(
             (sub: string) => (window as any).nlapiGetLineItemCount?.(sub) ?? 0,
             sublistId,
@@ -229,6 +234,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
           if (lineNumber <= lineCountBefore) {
             // Commit failed silently — values were set on the edit line but not persisted
             // Read back current line values for diagnostic output
+            target = bm.getActiveFrameOrPage();
             const editLineValues = await target.evaluate(
               ({ sub, cols }: { sub: string; cols: string[] }) => {
                 const result: Record<string, string | null> = {};
@@ -248,6 +254,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
           }
 
           // Read committed values
+          target = bm.getActiveFrameOrPage();
           const finalValues = await target.evaluate(
             ({ sub, cols, line }: { sub: string; cols: string[]; line: number }) => {
               const result: Record<string, string | null> = {};

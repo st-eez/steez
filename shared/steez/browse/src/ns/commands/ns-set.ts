@@ -78,7 +78,7 @@ function parseSetArgs(args: string[]): {
 export async function nsSet(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
   const result = await withMutex(nsMutex, async (): Promise<NsResult<NsSetData>> => {
       const start = Date.now();
-      const target = bm.getActiveFrameOrPage();
+      let target = bm.getActiveFrameOrPage();
 
       // ── Validate args ────────────────────────────────────────
       const { fieldId, value, forceSource } = parseSetArgs(args);
@@ -197,6 +197,8 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
           }
 
           // If cascading was fired, wait for convergence
+          // Re-acquire target — sourcing may have reloaded the NS iframe
+          target = bm.getActiveFrameOrPage();
           let settled = true;
           if (trackConvergence && watchFieldIds.length > 0) {
             const convergence = await waitForFieldConvergence(target, watchFieldIds, {
@@ -214,6 +216,8 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
       );
 
       // ── Compute diff ─────────────────────────────────────────
+      // Re-acquire target — frame may have shifted during dialog handling
+      target = bm.getActiveFrameOrPage();
       const changed: FieldChange[] = [];
       if (trackConvergence && watchFieldIds.length > 0) {
         const getter = createPageGetter(target);
