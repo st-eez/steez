@@ -4,7 +4,7 @@
 #        steez-upstream-diff --all      (list all skills with diff line counts)
 
 GSTACK_DIR="$HOME/Projects/Personal/gstack"
-STEEZ_DIR="$(git -C "$(dirname "$0")/../../.." rev-parse --show-toplevel 2>/dev/null)/skills"
+STEEZ_DIR="$HOME/.steez/repo/skills"
 
 if [ ! -d "$GSTACK_DIR" ]; then
   echo "gstack repo not found at $GSTACK_DIR" >&2
