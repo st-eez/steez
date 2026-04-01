@@ -340,6 +340,15 @@ export async function nsLogin(
   }
 
   const creds = config.accounts[accountId];
+  if (!creds) {
+    releaseLock(accountId);
+    return {
+      display: formatNsError('ns login', validationError(
+        `Account "${accountId}" has no credentials in auth config.`,
+      )),
+      ok: false,
+    };
+  }
   const nsAccountId = creds.accountId || accountId;
 
   // 3. Navigate and fill credentials under mutex
