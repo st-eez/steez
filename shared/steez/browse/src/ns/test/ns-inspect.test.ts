@@ -139,6 +139,26 @@ describe('ns inspect', () => {
     await page.goto(baseUrl + '/ns-form.html');
   });
 
+  test('inspect --sublists groups columns into Must fill and Can fill', async () => {
+    const page = bm.getPage();
+    await page.goto(baseUrl + '/ns-form.html');
+
+    const output = await nsInspect(['--sublists'], bm);
+
+    expect(output.ok).toBe(true);
+    // Must fill group with mandatory column
+    expect(output.display).toContain('Must fill (1)');
+    expect(output.display).toContain('item | Item | select | mandatory');
+    // Can fill group with non-mandatory columns
+    expect(output.display).toContain('Can fill (3)');
+    expect(output.display).toContain('quantity | Quantity');
+    expect(output.display).toContain('rate | Rate');
+    expect(output.display).toContain('amount | Amount');
+    // Column types from nlapiGetLineItemField
+    expect(output.display).toContain('integer');
+    expect(output.display).toContain('currency');
+  });
+
   test('inspect without --sublists does not include Sublist lines', async () => {
     const page = bm.getPage();
     await page.goto(baseUrl + '/ns-form.html');

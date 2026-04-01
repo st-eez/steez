@@ -33,7 +33,7 @@
   <table class="uir-machine-table">
     <thead>
       <tr>
-        <td class="listheadertd"><div class="listheadertextb">Item</div></td>
+        <td class="listheadertd"><div class="listheadertextb">Item *</div></td>
         <td class="listheadertd"><div class="listheadertextb">Quantity</div></td>
         <td class="listheadertd"><div class="listheadertextb">Rate</div></td>
         <td class="listheadertd"><div class="listheadertextb">Amount</div></td>
@@ -141,6 +141,27 @@ window.nlapiSetFieldValue = function(fieldId, value, fireSlavingWhenever, fireFi
 
 // Mock nlapiCancel (NS cancel API)
 window.nlapiCancel = function() { return true; };
+
+// Mock sublist field metadata (for nlapiGetLineItemField)
+var SUBLIST_COLUMN_META = {
+  item: {
+    item:     { type: 'select',   mandatory: true },
+    quantity: { type: 'integer',  mandatory: false },
+    rate:     { type: 'currency', mandatory: false },
+    amount:   { type: 'currency', mandatory: false },
+  },
+};
+
+window.nlapiGetLineItemField = function(sublistId, fieldId, line) {
+  var meta = (SUBLIST_COLUMN_META[sublistId] || {})[fieldId];
+  if (!meta) return null;
+  return {
+    getType: function() { return meta.type; },
+    isMandatory: function() { return meta.mandatory; },
+    getLabel: function() { return fieldId; },
+    isDisabled: function() { return false; },
+  };
+};
 
 // Mock sublist APIs
 var SUBLIST_LINES = {

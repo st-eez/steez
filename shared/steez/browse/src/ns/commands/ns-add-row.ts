@@ -81,6 +81,52 @@ function createLineItemGetter(
   };
 }
 
+// ─── Mandatory Column Detection ────────────────────────────
+
+/**
+ * Detect mandatory sublist columns from DOM * markers in header cells.
+ * Mirrors the same parsing logic used by ns inspect --sublists.
+ */
+async function detectMandatoryColumns(
+  target: import('playwright').Page | import('playwright').Frame,
+  sublistId: string,
+): Promise<string[]> {
+  return target.evaluate((sub: string) => {
+    // Strategy A: div[id$="_splits"] (most common)
+    let container: Element | null = document.querySelector(`div[id="${sub}_splits"]`);
+
+    // Strategy B fallback: table.uir-machine-table
+    if (!container) {
+      const tables = document.querySelectorAll('table.uir-machine-table');
+      for (const table of tables) {
+        const parent = table.closest('[id]');
+        if (parent && parent.id.startsWith(sub)) {
+          container = table;
+          break;
+        }
+      }
+    }
+
+    if (!container) return [];
+
+    const mandatoryCols: string[] = [];
+    const headerCells = container.querySelectorAll('td.listheadertd, th.listheadertd');
+    for (const cell of headerCells) {
+      const headerDiv = cell.querySelector('.listheadertextb, .listheadertext');
+      const rawLabel = headerDiv?.textContent?.trim() ?? (cell as HTMLElement).textContent?.trim() ?? '';
+      if (!/\s*\*\s*$/.test(rawLabel)) continue;
+
+      const label = rawLabel.replace(/\s*\*\s*$/, '').trim();
+      const dataField = cell.getAttribute('data-ns-tooltip')
+        || cell.querySelector('[data-field]')?.getAttribute('data-field')
+        || null;
+      const id = dataField || label.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      mandatoryCols.push(id);
+    }
+    return mandatoryCols;
+  }, sublistId);
+}
+
 // ─── ns add-row ─────────────────────────────────────────────
 
 export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
@@ -102,6 +148,23 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
       // ── Guard ────────────────────────────────────────────────
       const guardErr = await guardNsApi(target);
       if (guardErr) return { ok: false as const, error: guardErr };
+
+      // ── Pre-commit mandatory check ───────────────────────────
+      // Read DOM * markers to detect mandatory columns BEFORE touching the form.
+      const mandatoryCols = await detectMandatoryColumns(target, sublistId);
+      const providedCols = new Set(fieldValues.map(fv => fv.column));
+      const missingCols = mandatoryCols.filter(col => !providedCols.has(col));
+
+      if (missingCols.length > 0) {
+        return {
+          ok: false as const,
+          error: validationError(
+            `Missing mandatory columns: ${missingCols.join(', ')}\n` +
+            `Provided: ${fieldValues.map(fv => fv.column).join(', ')}\n` +
+            `Required: ${mandatoryCols.join(', ')}`,
+          ),
+        };
+      }
 
       // ── Idempotency guard: capture line count before ─────────
       const lineCountBefore = await target.evaluate(
@@ -219,6 +282,14 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
     }, { label: 'ns add-row' });
 
   if (!result.ok) {
+    // Distinct format for mandatory-blocked (fail-fast, form not touched)
+    if (result.error?.message.startsWith('Missing mandatory columns')) {
+      const msgLines = result.error.message.split('\n');
+      return {
+        display: [`ADD-ROW BLOCKED | ${msgLines[0]}`, ...msgLines.slice(1)].join('\n'),
+        ok: false,
+      };
+    }
     return { display: formatNsError('ns add-row', result.error!), ok: false };
   }
 

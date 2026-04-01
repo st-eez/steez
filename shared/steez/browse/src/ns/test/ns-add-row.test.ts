@@ -95,4 +95,22 @@ describe('ns add-row', () => {
     expect(output.ok).toBe(true);
     expect(output.display).toMatch(/Settled: (yes|no)/);
   });
+
+  test('blocks add-row when mandatory columns are missing', async () => {
+    // "item" column is mandatory (marked with * in DOM header) — omitting it should block
+    const output = await nsAddRow(['item', 'quantity=5', 'rate=10.00'], bm);
+
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('ADD-ROW BLOCKED');
+    expect(output.display).toContain('Missing mandatory columns: item');
+    expect(output.display).toContain('Provided: quantity, rate');
+    expect(output.display).toContain('Required: item');
+  });
+
+  test('add-row succeeds when all mandatory columns are provided', async () => {
+    const output = await nsAddRow(['item', 'item=300', 'quantity=5'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('ADD-ROW OK');
+  });
 });

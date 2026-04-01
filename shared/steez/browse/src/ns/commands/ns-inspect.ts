@@ -25,6 +25,8 @@ import { withMutex, nsMutex } from '../mutex';
 export interface NsSublistColumn {
   id: string;
   label: string;
+  type: string;
+  mandatory: boolean;
 }
 
 export interface NsSublistLine {
@@ -272,7 +274,26 @@ export async function nsInspect(args: string[], bm: BrowserManager): Promise<NsC
 
   if (d.sublists) {
     for (const sub of d.sublists) {
+      lines.push('');
       lines.push(`Sublist: ${sub.id} (${sub.lineCount} lines, ${sub.columns.length} columns)`);
+
+      // Group columns by mandatory — same shape as header fields
+      const mustFill = sub.columns.filter(c => c.mandatory);
+      const canFill = sub.columns.filter(c => !c.mandatory);
+
+      if (mustFill.length > 0) {
+        lines.push(`  ── Must fill (${mustFill.length}) ──`);
+        for (const c of mustFill) {
+          lines.push(`  ${c.id} | ${c.label} | ${c.type} | mandatory`);
+        }
+      }
+      if (canFill.length > 0) {
+        lines.push(`  ── Can fill (${canFill.length}) ──`);
+        for (const c of canFill) {
+          lines.push(`  ${c.id} | ${c.label} | ${c.type} | -`);
+        }
+      }
+
       for (const line of sub.lines) {
         const vals = sub.columns.map(c => `${c.id}=${truncateValue(line.values[c.id])}`).join(', ');
         lines.push(`  ${line.line}: ${vals}`);
@@ -297,10 +318,26 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
   const discovered = await page.evaluate(() => {
     const results: Array<{
       id: string;
-      columns: Array<{ id: string; label: string }>;
+      columns: Array<{ id: string; label: string; mandatory: boolean }>;
     }> = [];
 
     const seen = new Set<string>();
+
+    /** Parse a header cell: strip trailing *, detect mandatory flag */
+    function parseHeader(cell: Element): { id: string; label: string; mandatory: boolean } | null {
+      const headerDiv = cell.querySelector('.listheadertextb, .listheadertext');
+      const rawLabel = headerDiv?.textContent?.trim() ?? (cell as HTMLElement).textContent?.trim() ?? '';
+      if (!rawLabel) return null;
+
+      const mandatory = /\s*\*\s*$/.test(rawLabel);
+      const label = rawLabel.replace(/\s*\*\s*$/, '').trim();
+
+      const dataField = cell.getAttribute('data-ns-tooltip')
+        || cell.querySelector('[data-field]')?.getAttribute('data-field')
+        || null;
+      const id = dataField || label.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      return { id, label, mandatory };
+    }
 
     // Strategy A: div[id$="_splits"] containers (e.g. "item_splits" → sublist "item")
     const splitDivs = document.querySelectorAll('div[id$="_splits"]');
@@ -309,22 +346,11 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
       if (seen.has(sublistId)) continue;
       seen.add(sublistId);
 
-      // Extract column headers from the table inside the splits container
-      // Real NS tables may not use <thead> — search for listheadertd cells anywhere in the table
-      const columns: Array<{ id: string; label: string }> = [];
+      const columns: Array<{ id: string; label: string; mandatory: boolean }> = [];
       const headerCells = div.querySelectorAll('td.listheadertd, th.listheadertd');
       for (const cell of headerCells) {
-        const headerDiv = cell.querySelector('.listheadertextb, .listheadertext');
-        const label = headerDiv?.textContent?.trim() ?? cell.textContent?.trim() ?? '';
-        if (!label) continue;
-
-        // Try to extract real field ID from the header cell's data attributes or child element IDs
-        const dataField = cell.getAttribute('data-ns-tooltip')
-          || cell.querySelector('[data-field]')?.getAttribute('data-field')
-          || null;
-        // Fallback: derive from label (lowercase, strip non-alphanumeric)
-        const id = dataField || label.toLowerCase().replace(/[^a-z0-9_]/g, '');
-        columns.push({ id, label });
+        const parsed = parseHeader(cell);
+        if (parsed) columns.push(parsed);
       }
 
       // Fallback: if 0 header columns found, try extracting field IDs from
@@ -332,17 +358,15 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
       if (columns.length === 0) {
         const table = div.querySelector('table');
         if (table) {
-          // Look for data rows (tr with class 'uir-machine-row' or just non-header rows)
           const dataRows = table.querySelectorAll('tr:not(:has(.listheadertd))');
           const firstRow = dataRows[0];
           if (firstRow) {
             const inputs = firstRow.querySelectorAll('input[id], select[id], textarea[id]');
             for (const inp of inputs) {
               const inputId = inp.id;
-              // Skip internal/hidden fields
               if (inputId.startsWith('inpt_') || inputId.startsWith('hddn_') || inputId.startsWith('custpage_')) continue;
               if (!inputId || inputId.includes('_fs_')) continue;
-              columns.push({ id: inputId, label: inputId });
+              columns.push({ id: inputId, label: inputId, mandatory: false });
             }
           }
         }
@@ -354,28 +378,19 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
     // Strategy B: table.uir-machine-table not inside a _splits div
     const machineTables = document.querySelectorAll('table.uir-machine-table');
     for (const table of machineTables) {
-      // Check if this table is already inside a discovered _splits container
       const parentSplits = table.closest('div[id$="_splits"]');
-      if (parentSplits) continue; // Already discovered above
+      if (parentSplits) continue;
 
-      // Try to derive a sublist ID from the table's parent or id
       const tableId = table.id || table.closest('[id]')?.id || '';
       const sublistId = tableId.replace(/_[a-z]+$/, '') || `unknown_${seen.size}`;
       if (seen.has(sublistId)) continue;
       seen.add(sublistId);
 
-      const columns: Array<{ id: string; label: string }> = [];
+      const columns: Array<{ id: string; label: string; mandatory: boolean }> = [];
       const headerCells = table.querySelectorAll('td.listheadertd, th.listheadertd');
       for (const cell of headerCells) {
-        const headerDiv = cell.querySelector('.listheadertextb, .listheadertext');
-        const label = headerDiv?.textContent?.trim() ?? cell.textContent?.trim() ?? '';
-        if (!label) continue;
-
-        const dataField = cell.getAttribute('data-ns-tooltip')
-          || cell.querySelector('[data-field]')?.getAttribute('data-field')
-          || null;
-        const id = dataField || label.toLowerCase().replace(/[^a-z0-9_]/g, '');
-        columns.push({ id, label });
+        const parsed = parseHeader(cell);
+        if (parsed) columns.push(parsed);
       }
 
       results.push({ id: sublistId, columns });
@@ -388,13 +403,24 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
   const sublists: NsSublistData[] = [];
 
   for (const sub of discovered) {
-    const { lineCount, lines } = await page.evaluate(
+    const { lineCount, lines, columnTypes } = await page.evaluate(
       ({ sublistId, columnIds }: { sublistId: string; columnIds: string[] }) => {
         /* eslint-disable @typescript-eslint/no-explicit-any */
         const w = window as any;
         const count: number = typeof w.nlapiGetLineItemCount === 'function'
           ? (w.nlapiGetLineItemCount(sublistId) ?? 0)
           : 0;
+
+        // Get column types via nlapiGetLineItemField on first existing line
+        const columnTypes: Record<string, string> = {};
+        if (count > 0 && typeof w.nlapiGetLineItemField === 'function') {
+          for (const colId of columnIds) {
+            try {
+              const f = w.nlapiGetLineItemField(sublistId, colId, 1);
+              columnTypes[colId] = f?.getType?.() ?? 'text';
+            } catch { columnTypes[colId] = 'text'; }
+          }
+        }
 
         const lines: Array<{ line: number; values: Record<string, string> }> = [];
         if (typeof w.nlapiGetLineItemValue === 'function' && count > 0) {
@@ -407,15 +433,23 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
           }
         }
 
-        return { lineCount: count, lines };
+        return { lineCount: count, lines, columnTypes };
         /* eslint-enable @typescript-eslint/no-explicit-any */
       },
       { sublistId: sub.id, columnIds: sub.columns.map(c => c.id) },
     );
 
+    // Enrich columns with types from nlapi
+    const enrichedColumns: NsSublistColumn[] = sub.columns.map(c => ({
+      id: c.id,
+      label: c.label,
+      mandatory: c.mandatory,
+      type: columnTypes[c.id] || 'text',
+    }));
+
     sublists.push({
       id: sub.id,
-      columns: sub.columns,
+      columns: enrichedColumns,
       lineCount,
       lines,
     });
