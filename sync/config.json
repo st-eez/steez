@@ -1,0 +1,140 @@
+{
+  "upstream": "upstream",
+  "output": "output",
+  "pin": {
+    "source": "~/Projects/Personal/gstack/gstack",
+    "tag": "",
+    "sha": "",
+    "timestamp": ""
+  },
+  "global": {
+    "replace": [
+      { "from": "~/.claude/skills/gstack/bin/gstack-", "to": "~/.steez/bin/steez-" },
+      { "from": "~/.claude/skills/gstack/", "to": "~/.steez/repo/" },
+      { "from": "${GSTACK_HOME:-$HOME/.gstack}", "to": "$STEEZ_HOME" },
+      { "from": "~/.gstack/contributor-logs/", "to": "~/.steez/skill-reports/" },
+      { "from": "~/.gstack-dev/evals/", "to": "~/.steez-dev/evals/" },
+      { "from": "~/.gstack/", "to": "~/.steez/" },
+      { "from": ".gstack/no-test-bootstrap", "to": ".steez/no-test-bootstrap" },
+      { "from": ".gstack/plans", "to": ".steez/plans" },
+      { "from": "gstack-config", "to": "steez-config" },
+      { "from": "gstack-review-read", "to": "steez-review-read" },
+      { "from": "gstack-review-log", "to": "steez-review-log" },
+      { "from": "gstack-diff-scope", "to": "steez-diff-scope" },
+      { "from": "gstack-slug", "to": "steez-slug" },
+      { "from": "GSTACK REVIEW REPORT", "to": "STEEZ REVIEW REPORT" },
+      { "from": "GSTACK_HOME", "to": "STEEZ_HOME" },
+      { "from": "CC+gstack", "to": "CC+steez" },
+      { "from": "GStack", "to": "Steez" },
+      { "from": "/plan-ceo-review", "to": "/steez-plan-ceo-review" },
+      { "from": "/plan-eng-review", "to": "/steez-plan-eng-review" },
+      { "from": "/plan-design-review", "to": "/steez-plan-design-review" },
+      { "from": "/design-review", "to": "/steez-design-review" },
+      { "from": "/document-release", "to": "/steez-document-release" },
+      { "from": "/investigate", "to": "/steez-investigate" },
+      { "from": "/autoplan", "to": "/steez-autoplan" },
+      { "from": "/qa-only", "to": "/steez-qa-only" },
+      { "from": "/codex", "to": "/steez-codex" },
+      { "from": "/retro", "to": "/steez-retro" }
+    ],
+    "deleteSection": [
+      { "path": "## Contributor Mode" },
+      { "path": "## Plan Mode Safe Operations" },
+      { "path": "## Repo Ownership — See Something, Say Something", "optional": true },
+      { "path": "## Repo Ownership -- See Something, Say Something", "optional": true },
+      { "path": "## Prior Learnings", "optional": true },
+      { "path": "## Capture Learnings", "optional": true }
+    ],
+    "replaceSection": [
+      { "path": "## Preamble (run first)", "file": "steez-preamble.md" },
+      { "path": "## Telemetry (run last)", "file": "steez-telemetry.md" }
+    ],
+    "injectAfter": [
+      { "path": "## Preamble (run first)", "file": "steez-beads-context.md" },
+      { "path": "## Search Before Building", "file": "steez-skill-self-report.md", "optional": true }
+    ]
+  },
+  "frontmatter": {
+    "namePrefix": "steez-",
+    "removeFields": ["sensitive"],
+    "descriptionRemove": [" (gstack)"],
+    "descriptionOverrides": {}
+  },
+  "preamble": {
+    "beginMarker": "<!-- BEGIN MANAGED PREAMBLE -->",
+    "endMarker": "<!-- END MANAGED PREAMBLE -->",
+    "sections": [
+      { "name": "preamble", "file": "steez-preamble.md" },
+      { "name": "beads-context", "file": "steez-beads-context.md" },
+      { "name": "proactive", "file": "steez-proactive.md" },
+      { "name": "voice", "file": "steez-voice-intro.md" },
+      { "name": "skill-self-report", "file": "steez-skill-self-report.md" },
+      { "name": "telemetry", "file": "steez-telemetry.md" }
+    ]
+  },
+  "skills": {
+    "autoplan": {},
+    "benchmark": {},
+    "browse": {},
+    "canary": {},
+    "codex": {},
+    "connect-chrome": {},
+    "cso": {},
+    "design-consultation": {},
+    "design-html": {},
+    "design-review": {},
+    "design-shotgun": {},
+    "document-release": {},
+    "investigate": {},
+    "land-and-deploy": {},
+    "office-hours": {
+      "injectAfter": [
+        { "path": "## Beads Integration", "file": "beads-integration-office-hours.md", "optional": true }
+      ]
+    },
+    "plan-ceo-review": {
+      "injectAfter": [
+        { "path": "### Beads Integration (completion)", "file": "beads-integration-ceo-review.md", "optional": true }
+      ]
+    },
+    "plan-design-review": {},
+    "plan-eng-review": {
+      "injectAfter": [
+        { "path": "### Beads Integration (completion)", "file": "beads-integration-eng-review.md", "optional": true }
+      ]
+    },
+    "qa": {},
+    "qa-only": {},
+    "retro": {},
+    "review": {},
+    "setup-browser-cookies": {},
+    "setup-deploy": {},
+    "ship": {
+      "injectAfter": [
+        { "path": "## Step 8: Create PR/MR", "file": "beads-integration-ship.md" }
+      ],
+      "replace": [
+        { "from": "SKILL_NAME", "to": "steez-ship" }
+      ]
+    },
+
+    "__comment_gstack_only": "Skills that exist in gstack but not in steez",
+    "careful": { "skip": true },
+    "freeze": { "skip": true },
+    "gstack-upgrade": { "skip": true },
+    "guard": { "skip": true },
+    "learn": { "skip": true },
+    "unfreeze": { "skip": true },
+
+    "__comment_steez_only": "Custom steez skills — preamble-only mode",
+    "agenda": { "custom": true },
+    "audit": { "custom": true },
+    "claude-spawn": { "custom": true },
+    "jira": { "custom": true },
+    "loop-prompt": { "custom": true },
+    "reminders": { "custom": true },
+    "sharpen-skill": { "custom": true },
+    "tmux": { "custom": true }
+  },
+  "newSkillPolicy": "warn"
+}

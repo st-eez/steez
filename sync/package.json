@@ -1,0 +1,11 @@
+{
+  "name": "steez-sync",
+  "type": "module",
+  "scripts": {
+    "sync": "bun run src/cli.ts",
+    "test": "bun test src/test/"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
