@@ -114,6 +114,41 @@ describe('ns save', () => {
     expect(output.display).toContain('ConcurrencyError');
   }, 15_000);
 
+  test('validation error enriches single field label with field ID', async () => {
+    const page = bm.getPage();
+    await page.goto(baseUrl + '/ns-form.html');
+
+    await page.evaluate(() => {
+      (window as any).__saveBehavior = 'validation';
+    });
+
+    const output = await nsSave([], bm);
+
+    expect(output.ok).toBe(false);
+    // Original message still present
+    expect(output.display).toContain('Please enter a value for Company Name');
+    // Field ID mapping appended
+    expect(output.display).toContain('Company Name → companyname (text)');
+  }, 15_000);
+
+  test('validation error enriches multiple field labels with field IDs and types', async () => {
+    const page = bm.getPage();
+    await page.goto(baseUrl + '/ns-form.html');
+
+    await page.evaluate(() => {
+      (window as any).__saveBehavior = 'validation-multi';
+    });
+
+    const output = await nsSave([], bm);
+
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('Company Name → companyname (text)');
+    expect(output.display).toContain('Sales Rep → salesrep (select, entityRef)');
+    // Suggested action includes ns set hints
+    expect(output.display).toContain('ns set companyname');
+    expect(output.display).toContain('ns set salesrep');
+  }, 15_000);
+
   test('error includes Dialog lines from captured dialogs', async () => {
     const page = bm.getPage();
     await page.goto(baseUrl + '/ns-form.html');

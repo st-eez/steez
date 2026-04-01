@@ -24,6 +24,7 @@ import {
 import { withDialogHandler, detectDomModal, type CapturedDialog } from '../utils/with-dialog-handler';
 import { waitForSettle } from '../utils/with-retry';
 import { withMutex, nsMutex } from '../mutex';
+import type { Page, Frame } from 'playwright';
 
 // ─── Types ────────────────────────────────────────────────
 
@@ -37,6 +38,75 @@ export interface NsSaveData {
 // ─── Helpers ──────────────────────────────────────────────
 
 const SAVE_TIMEOUT_MS = 30_000;
+
+/** Parse "Please enter value(s) for: X, Y, Z" into display labels */
+const ENTER_VALUE_RE = /please enter (?:a )?value\(?s?\)? for:?\s*(.+)/i;
+
+function parseValidationLabels(message: string): string[] | null {
+  const match = message.match(ENTER_VALUE_RE);
+  if (!match) return null;
+  return match[1].split(',').map(s => s.trim()).filter(Boolean);
+}
+
+interface ResolvedLabel {
+  label: string;
+  id: string | null;
+  type: string;
+  entityRef: boolean;
+}
+
+/** Single evaluate: map display labels → field IDs using the NS client API */
+async function resolveLabelsToFieldIds(
+  target: Page | Frame,
+  labels: string[],
+): Promise<ResolvedLabel[]> {
+  return target.evaluate((searchLabels: string[]) => {
+    const w = window as any;
+    if (typeof w.nlapiGetField !== 'function') return [];
+
+    // Build label → fieldId map from all known fields
+    const labelMap: Record<string, { id: string; type: string; entityRef: boolean }> = {};
+
+    // Strategy: scan form elements for field IDs, then get their labels
+    const form = document.getElementById('main_form');
+    const ids = new Set<string>();
+
+    if (typeof w.nlapiGetFieldIds === 'function') {
+      for (const id of w.nlapiGetFieldIds() ?? []) ids.add(id);
+    }
+    if (form) {
+      for (const el of form.querySelectorAll('[id]')) {
+        const id = el.id;
+        if (id.startsWith('_') || id.includes('_fs_') || id.endsWith('_arrow')) continue;
+        if (w.nlapiGetField(id)) ids.add(id);
+      }
+    }
+
+    for (const fid of ids) {
+      const field = w.nlapiGetField(fid);
+      if (!field) continue;
+      const label = field.getLabel?.() ?? '';
+      if (!label) continue;
+      const entityRef = document.getElementById(fid + '_display') !== null;
+      labelMap[label.toLowerCase()] = {
+        id: fid,
+        type: field.getType?.() ?? 'unknown',
+        entityRef,
+      };
+    }
+
+    // Resolve each search label
+    return searchLabels.map(label => {
+      const match = labelMap[label.toLowerCase()];
+      return {
+        label,
+        id: match?.id ?? null,
+        type: match?.type ?? 'unknown',
+        entityRef: match?.entityRef ?? false,
+      };
+    });
+  }, labels);
+}
 
 /** Extract the record id from a URL query string (?id=123) */
 function extractRecordId(url: string): string | null {
@@ -107,6 +177,34 @@ export async function nsSave(args: string[], bm: BrowserManager): Promise<NsComm
           const lastMessage = dialogs[dialogs.length - 1].message;
           const classified = classifyMessage(lastMessage);
           if (classified) {
+            // Enrich "Please enter value(s) for:" errors with field ID mappings
+            if (classified.type === 'ValidationError') {
+              const labels = parseValidationLabels(lastMessage);
+              if (labels && labels.length > 0) {
+                try {
+                  const resolved = await resolveLabelsToFieldIds(target, labels);
+                  if (resolved.length > 0) {
+                    const mappings: string[] = [];
+                    const setHints: string[] = [];
+                    for (const r of resolved) {
+                      if (r.id) {
+                        const typeInfo = r.entityRef ? `${r.type}, entityRef` : r.type;
+                        mappings.push(`  ${r.label} → ${r.id} (${typeInfo})`);
+                        setHints.push(`ns set ${r.id} <value>`);
+                      } else {
+                        mappings.push(`  ${r.label} → (unknown field ID)`);
+                      }
+                    }
+                    classified.message += '\n' + mappings.join('\n');
+                    if (setHints.length > 0) {
+                      classified.suggestedAction = 'Set missing fields and retry: ' + setHints.join(', ');
+                    }
+                  }
+                } catch {
+                  // Introspection failed — return unmodified error
+                }
+              }
+            }
             return { ok: false as const, error: classified, dialogs };
           }
           // Unclassified dialog — treat as informational, keep waiting

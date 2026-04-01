@@ -158,7 +158,7 @@ export function detectConcurrencyFromMessage(message: string): NsError | null {
  */
 export function detectValidationFromMessage(message: string): NsError | null {
   const patterns = [
-    /please enter a value for/i,
+    /please enter (?:a )?value\(?s?\)? for/i,
     /invalid .* value/i,
     /field is required/i,
     /must be a number/i,

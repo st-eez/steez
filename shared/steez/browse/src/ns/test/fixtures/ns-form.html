@@ -48,7 +48,7 @@
 <div class="uir-message-warning" style="display:none">Warning: duplicate record</div>
 
 <!-- Save button (NS toolbar) -->
-<button id="btn_multibutton_submitter" onclick="if(window.__saveBehavior === 'validation') { alert('Please enter a value for Company Name'); } else if(window.__saveBehavior === 'concurrency') { alert('This record has been changed since you started editing'); } else { var sep = window.location.href.indexOf('?') === -1 ? '?' : '&amp;'; window.location.href = window.location.href + sep + 'id=12345'; }">Save</button>
+<button id="btn_multibutton_submitter" onclick="if(window.__saveBehavior === 'validation') { alert('Please enter a value for Company Name'); } else if(window.__saveBehavior === 'validation-multi') { alert('Please enter value(s) for: Company Name, Sales Rep'); } else if(window.__saveBehavior === 'concurrency') { alert('This record has been changed since you started editing'); } else { var sep = window.location.href.indexOf('?') === -1 ? '?' : '&amp;'; window.location.href = window.location.href + sep + 'id=12345'; }">Save</button>
 
 <!-- Mutation target for settle detection tests -->
 <div id="mutation-target">initial content</div>
