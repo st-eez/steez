@@ -125,8 +125,16 @@
     },
     "qa": {},
     "qa-only": {},
-    "retro": {},
-    "review": {},
+    "retro": {
+      "deleteSection": [
+        { "path": "## Global Retrospective Mode", "optional": true }
+      ]
+    },
+    "review": {
+      "deleteSection": [
+        { "path": "### Learnings Logging (plan-file discrepancies only)", "optional": true }
+      ]
+    },
     "setup-browser-cookies": {},
     "setup-deploy": {},
     "ship": {

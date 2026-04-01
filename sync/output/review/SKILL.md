@@ -449,25 +449,6 @@ INVESTIGATION: {likely reason with evidence from git log / code}
 IMPACT: {HIGH|MEDIUM|LOW} — {what breaks or degrades if this stays undelivered}
 ```
 
-### Learnings Logging (plan-file discrepancies only)
-
-**Only for discrepancies sourced from plan files** (not commit messages or TODOS.md), log a learning so future sessions know this pattern occurred:
-
-```bash
-~/.steez/bin/steez-learnings-log '{
-  "type": "pitfall",
-  "key": "plan-delivery-gap-KEBAB_SUMMARY",
-  "insight": "Planned X but delivered Y because Z",
-  "confidence": 8,
-  "source": "observed",
-  "files": ["PLAN_FILE_PATH"]
-}'
-```
-
-Replace KEBAB_SUMMARY with a kebab-case summary of the gap, and fill in the actual values.
-
-**Do NOT log learnings from commit-message-derived or TODOS.md-derived discrepancies.** These are informational in the review output but too noisy for durable memory.
-
 ### Integration with Scope Drift Detection
 
 The plan completion results augment the existing Scope Drift Detection. If a plan file is found:
