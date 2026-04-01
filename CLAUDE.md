@@ -47,6 +47,8 @@ steez-bd resume                  # session brief: current bead, suggested skill,
 steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
+steez-upstream-diff <skill>          # diff a steez skill against gstack upstream
+steez-upstream-diff --all            # show divergence summary for all skills
 ```
 
 `bun test` runs before every commit to browse source. Both core and NS tests
@@ -58,13 +60,14 @@ network calls, no credentials.
 ```
 steez/                                    # repo root
 ├── shared/steez/                         # shared runtime
-│   ├── bin/                              # 6 bash helper scripts
+│   ├── bin/                              # 7 bash helper scripts
 │   │   ├── steez-config                  # read/write ~/.steez/config
 │   │   ├── steez-slug                    # git remote → owner-repo slug
 │   │   ├── steez-diff-scope              # categorize diff scopes
 │   │   ├── steez-review-log              # append review entries
 │   │   ├── steez-review-read             # read review log + config
-│   │   └── steez-bd                      # beads integration
+│   │   ├── steez-bd                      # beads integration
+│   │   └── steez-upstream-diff           # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
 │   │   │   ├── core/                     # CLI + server + commands (~3,800 lines)
@@ -118,17 +121,15 @@ steez/                                    # repo root
 
 ## Preamble System
 
-Skills declare `preamble-tier: N` in SKILL.md frontmatter. `steez sync` assembles
-section templates from `preamble/sections/` per `preamble/tiers.json` into managed
-blocks delimited by `<!-- BEGIN/END MANAGED PREAMBLE -->` markers.
+Each skill has a managed preamble block between `<!-- BEGIN/END MANAGED PREAMBLE -->`
+markers. Edit preamble content directly in the skill's SKILL.md file. The preamble
+includes session tracking, analytics, voice, and completion protocol sections.
 
-- T1: minimal (session tracking, analytics, writing rules, completion status)
-- T2: T1 + voice, AskUserQuestion format, completeness, self-report, telemetry
-- T3: T2 + search-before-building
-- T4: T3 (reserved for future differentiation)
+## Upstream Relationship
 
-Run `steez sync --check` in CI to detect drift. Edit templates in `preamble/sections/`,
-never hand-edit content inside the managed block markers.
+steez is a fork of gstack. Skills are owned directly in `skills/`. To check what
+gstack has changed upstream: `steez-upstream-diff <skill>` or `--all` for a summary.
+The gstack repo is at `~/Projects/Personal/gstack`. Cherry-pick improvements manually.
 
 ## Install Model
 
