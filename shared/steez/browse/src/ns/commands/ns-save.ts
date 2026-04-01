@@ -129,7 +129,7 @@ function sleep(ms: number): Promise<void> {
 export async function nsSave(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
   const result = await withMutex(nsMutex, async (): Promise<NsResult<NsSaveData>> => {
       const start = Date.now();
-      const target = bm.getActiveFrameOrPage();
+      let target = bm.getActiveFrameOrPage();
 
       // Guard: must be on a NS page with client API
       const guardErr = await guardNsApi(target);
@@ -182,6 +182,8 @@ export async function nsSave(args: string[], bm: BrowserManager): Promise<NsComm
               const labels = parseValidationLabels(lastMessage);
               if (labels && labels.length > 0) {
                 try {
+                  // Re-acquire target — active frame may have shifted after dialog dismiss
+                  target = bm.getActiveFrameOrPage();
                   const resolved = await resolveLabelsToFieldIds(target, labels);
                   if (resolved.length > 0) {
                     const mappings: string[] = [];
