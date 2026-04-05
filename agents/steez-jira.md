@@ -241,6 +241,22 @@ acli jira sprint view --id 123
 acli jira sprint list-workitems --id 123
 ```
 
+## Forms (ProForma)
+
+`acli` does not support Jira Forms. Use the bundled helper script which reads auth
+from acli's config and calls the Jira Forms REST API directly.
+
+```sh
+# Read form answers (human-readable)
+python3 ~/.steez/repo/skills/jira/scripts/jira_forms.py read XX-123
+
+# List forms attached to a ticket (metadata)
+python3 ~/.steez/repo/skills/jira/scripts/jira_forms.py list XX-123
+
+# Dump full form data as JSON
+python3 ~/.steez/repo/skills/jira/scripts/jira_forms.py json XX-123
+```
+
 ## Time Tracking
 
 `acli` does not support worklog operations. Use the bundled helper script which reads
@@ -272,6 +288,7 @@ response directly to the user without reformatting.
   the ticket key.
 - **Comments**: confirmation the comment was posted, with ticket key.
 - **Time logs**: confirmation of hours logged, with ticket key and total.
+- **Forms**: form name, status, and answers in a readable format.
 - **Errors**: the exact error message and a concrete suggestion for what to try next.
 
 Always include `key` and `summary` fields in search output for context.
