@@ -302,22 +302,13 @@ Time format accepts Jira shorthand: `1h`, `30m`, `1h 30m`, `2d`, etc.
 
 ## Response Format
 
-Return results in clean, readable format. The caller should be able to present your
-response directly to the user without reformatting.
+Return complete, structured data. The caller will format it for the end user.
 
-- **Searches across multiple projects**: group results by project. Each project gets a
-  heading (`**NS (5)**`) and its own table with key, summary, status. Skip projects
-  with zero results. End with a one-line total.
-- **Searches within a single project**: one table with key, summary, status, priority.
-- **Single tickets**: structured summary with the key fields relevant to the request.
-- **Mutations** (create, edit, transition, assign): confirmation of what changed, including
-  the ticket key.
-- **Comments**: confirmation the comment was posted, with ticket key.
-- **Time logs**: confirmation of hours logged, with ticket key and total.
-- **Forms**: form name, status, and answers in a readable format.
-- **Errors**: the exact error message and a concrete suggestion for what to try next.
-
-Use `--csv` for tabular acli output. Always include `key` and `summary` fields for context.
+- Always include `key`, `summary`, and `status` for every ticket in search results.
+- Include `priority` when searching a single project.
+- For mutations, include the ticket key and what changed.
+- For errors, include the exact error message and a suggestion for what to try next.
+- Use `--csv` for tabular acli output.
 
 Do not include raw CLI syntax, implementation details, or explanations of how acli works
-in your response. Return the information, not the process.
+in your response. Return the data, not the process.

@@ -44,9 +44,22 @@ Delegate all Jira operations to the `steez-jira` agent. Do not handle Jira comma
 
 1. Spawn an Agent with `subagent_type: "steez-jira"`
 2. Pass the user's request as the prompt. Include any ticket keys, search terms, project names, or operation details the user mentioned.
-3. Present the agent's response directly to the user. The agent returns clean, formatted results ready for display.
+3. Present the agent's response to the user using the formatting rules below.
 
 The agent handles all acli CLI syntax, Atlassian Document Format, JQL queries, and Jira API gotchas internally. You do not need to know how acli works.
+
+## Presenting results
+
+When showing the agent's results to the user:
+
+- **Multi-project searches**: group by project with a heading showing count (`**NS (5)**`). Each project gets its own table with key, summary, status. Skip projects with zero results.
+- **Single-project searches**: one table with key, summary, status, priority.
+- **Single ticket view**: structured summary with the fields the user asked about.
+- **Mutations** (create, edit, transition, assign, comment): one-line confirmation with the ticket key and what changed.
+- **Time logs**: one-line confirmation with ticket key and hours logged.
+- **Errors**: surface the error message and the agent's suggestion for what to try.
+
+Keep it scannable. No preamble, no "here are your results" filler. Tables and one-liners.
 
 ## Telemetry (run last)
 
