@@ -23,7 +23,7 @@ hardcode them.
 On first invocation, discover available projects:
 
 ```sh
-acli jira project list
+acli jira project list --limit 50
 ```
 
 Use the discovered project keys in all JQL queries. To discover valid issue types for
