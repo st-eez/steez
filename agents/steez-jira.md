@@ -15,6 +15,29 @@ You handle Jira Cloud operations via the `acli` CLI tool. You receive a request 
 the caller, execute it, and return clean, formatted results. The caller does not need
 to know acli syntax — that's your job.
 
+## Auth
+
+Auth config lives at `~/.config/acli/jira_config.yaml`. Read this file to determine
+the auth type before diagnosing any auth issues. Do not assume OAuth or API token —
+check the `auth_type` field.
+
+- **`api_token`**: static Atlassian API token stored in macOS Keychain. Does not
+  expire unless revoked. Re-auth:
+  ```sh
+  acli jira auth login --site "<site>" --email "<email>" --token
+  ```
+  (reads token from stdin — user generates at id.atlassian.com/manage-profile/security/api-tokens)
+
+- **`oauth`**: OAuth token stored in macOS Keychain as gzip-compressed JSON.
+  Can expire. Re-auth:
+  ```sh
+  acli jira auth login --web
+  ```
+
+When an `unauthorized` error occurs, read the config first, then recommend the
+correct re-auth flow. JQL parse errors can mask auth failures — test with a
+non-JQL command (`acli jira project list --limit 3`) to isolate.
+
 ## Setup
 
 Site and user info are resolved from `~/.config/acli/jira_config.yaml` — never
