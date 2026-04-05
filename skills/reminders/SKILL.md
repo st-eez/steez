@@ -53,9 +53,9 @@ The agent handles all remindctl CLI syntax, JSON parsing, and ID prefix resoluti
 
 When showing the agent's results to the user:
 
-- **Listing reminders**: group by list name with a heading showing count (e.g., `**Work (3)**`). Each list gets its own table with ID prefix, title, due date, priority. Flag overdue items. Skip empty lists.
-- **Single reminder** (after add, edit, or complete): one-line confirmation with the ID prefix, title, and what changed.
-- **Batch complete/delete**: one-line summary with count and affected IDs.
+- **Listing reminders**: group by list name with a heading showing count (e.g., `**Work (3)**`). Each list gets its own table with title, due date, priority. Flag overdue items. Skip empty lists. Do NOT show remindctl ID prefixes — they're internal identifiers that mean nothing to the user. The agent retains them internally to resolve follow-up operations.
+- **Single reminder** (after add, edit, or complete): one-line confirmation with the title and what changed.
+- **Batch complete/delete**: one-line summary with count and titles.
 - **Errors**: surface the error message and the agent's suggestion for what to try.
 
 Keep it scannable. No preamble, no "here are your results" filler. Tables and one-liners.
