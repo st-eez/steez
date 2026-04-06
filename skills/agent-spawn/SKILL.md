@@ -9,10 +9,6 @@ description: "REQUIRED for spawning, launching, or orchestrating AI coding agent
 
 ```bash
 STEEZ_HOME="${STEEZ_HOME:-$HOME/.steez}"
-# Session tracking
-mkdir -p "$STEEZ_HOME/sessions"
-touch "$STEEZ_HOME/sessions/$PPID"
-find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 # Branch detection
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
@@ -100,9 +96,9 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 - "beside", "next to", "side by side", "split" → `split-h`
 - "in this window", "in this pane", "here" → `split-h`
 - "below", "above", "stacked" → `split-v`
-- **Default** (no locality or split cue at all) → `new-window`
+- **Default** (no locality or split cue at all) → **dynamic layout** (see Layout Orchestration below)
 
-**Precedence rule:** If the user said ANY locality word ("this", "here", "beside", "in window"), that is a split cue. The default `new-window` ONLY applies when there is zero locality language. Never let the default override an explicit split cue.
+**Precedence rule:** If the user said ANY locality word ("this", "here", "beside", "in window"), that is a split cue. Explicit "new window" or "new session" overrides. The dynamic default ONLY applies when there is zero locality language. Never let the default override an explicit cue.
 
 ### 3. Anchor (where to create it)
 
@@ -135,7 +131,7 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 | "spawn codex in this window (2)" | `codex` | `split-h` | window 2 | `split-h --model codex` (if already in 2) |
 | "put claude in window 3" | `claude` | `split-h` | window 3 | `split-h --target mac:3.1 --model claude` |
 | "new window with an agent" | `prometheus` | `new-window` | — | `new-window` |
-| "spawn an agent" (no locality) | `prometheus` | `new-window` | — | `new-window` |
+| "spawn an agent" (no locality) | `prometheus` | dynamic | current window | layout-aware (see below) |
 | "start codex below" | `codex` | `split-v` | current pane | `split-v --model codex` |
 
 **Working directory** — tmux inherits the cwd of the source pane on split/new-window, so skip this entirely unless the user explicitly mentions a different path or worktree. Rules:
@@ -148,6 +144,28 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 - User says nothing about a task → no prompt, just open the agent
 
 **Only use AskUserQuestion for things you genuinely cannot infer.** If the user said "spawn an agent beside me", proceed directly with zero questions.
+
+## Layout Orchestration
+
+When topology is **dynamic** (no explicit layout cue), spawn agents in the current window. The orchestrator stays leftmost. Before spawning, count agent panes: `tmux list-panes -F "#{pane_id}"` minus your own `$TMUX_PANE`.
+
+| Agents | Next spawn | Self width |
+|--------|-----------|------------|
+| 0 | `split-h` from self | 50% |
+| 1-2 | `split-v --target <bottom-agent>` (stack in right half) | 50% |
+| 3 | `split-h --target <top-agent>` (creates 2nd column), resize self to 33% | 33% |
+| 4-5 | `split-v --target` in column with fewer panes | 33% |
+| 6+ | Propose layout to user before spawning | — |
+
+Splitting a pane does not interrupt the agent running in it.
+
+**From scratch, 6 agents:**
+1. `spawn.sh split-h` → %A1
+2. `spawn.sh split-h --target %A1` → %A4 (creates right column, pushes %A1 to middle)
+3. `tmux resize-pane -t $TMUX_PANE -x 33%`
+4. `split-v --target %A1` twice, `split-v --target %A4` twice
+
+After all spawns, verify orchestrator width: `tmux resize-pane -t $TMUX_PANE -x 50%` (1-3 agents) or `-x 33%` (4-6).
 
 ## Step 2 — Spawn via helper script
 
@@ -201,14 +219,15 @@ The script outputs structured key=value lines:
 - `RESOLVED=/full/path METHOD=zoxide` — directory was resolved (method: literal, local, zoxide, or find)
 - `SELF=%0 TARGET=%5` — stable pane IDs (never shift when panes are killed or moved)
 - `MODEL=prometheus` — which agent was launched
-- `READY` — agent is up and accepting input
-- `PROMPT_SENT` — initial prompt was delivered
+- `PROMPT_SENT` — prompt was passed as a CLI argument at launch
+- `WORKING` — agent launched and is actively processing the prompt
+- `IDLE` — agent launched and is waiting for input (no prompt was sent, or it finished fast)
 
 **Error handling:**
 
 - `ERROR: ...` + exit 1 — something failed (not in tmux, split failed, directory not found, unknown model). No orphan panes are created if directory resolution fails.
 - `AMBIGUOUS=N` + `CANDIDATE=...` lines + exit 2 — multiple directory matches. Present the candidates to the user and re-run with the full path via `--dir /full/path/here`.
-- No `READY` line after the script completes — agent failed to start within 30 seconds. Check the target pane manually.
+- No `WORKING` or `IDLE` after 15 seconds — agent failed to start or is stuck. Check the target pane manually with `agent-state`.
 
 **Directory resolution** uses a tiered cascade:
 1. Literal paths (`/foo`, `~/foo`, `./foo`) → used directly

@@ -206,30 +206,34 @@ AGENT_STATE="$HOME/.steez/bin/agent-state"
 case "$MODEL" in
   prometheus) LAUNCH_CMD="prometheus" ;;
   claude)     LAUNCH_CMD="claude --dangerously-skip-permissions" ;;
-  codex)      LAUNCH_CMD="codex --full-auto" ;;
+  codex)      LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox" ;;
 esac
 
 echo "MODEL=$MODEL"
-tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
+
+# --- Launch agent ---
+if [ -n "$PROMPT_TEXT" ]; then
+  # Pass prompt as CLI argument — agent starts working immediately
+  tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD \"$PROMPT_TEXT\""
+else
+  tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
+fi
 sleep 0.3
 tmux send-keys -t "$NEW_TARGET" Enter
+[ -n "$PROMPT_TEXT" ] && echo "PROMPT_SENT"
 
-# --- Wait for readiness (via agent-state) ---
-for i in $(seq 1 30); do
+# --- Poll for agent state ---
+# Wait for agent to boot, load hooks, and begin processing before first poll
+sleep 5
+for i in $(seq 1 10); do
   sleep 1
   state_out=$("$AGENT_STATE" "$NEW_TARGET" 2>/dev/null) || continue
   state=$(echo "$state_out" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['state'])" 2>/dev/null) || continue
-  if [[ "$state" == "idle" ]]; then
-    echo "READY"
+  if [[ "$state" == "working" ]]; then
+    echo "WORKING"
+    break
+  elif [[ "$state" == "idle" ]]; then
+    echo "IDLE"
     break
   fi
 done
-
-# --- Send initial prompt (if provided) ---
-if [ -n "$PROMPT_TEXT" ]; then
-  sleep 2
-  tmux send-keys -t "$NEW_TARGET" "$PROMPT_TEXT"
-  sleep 0.3
-  tmux send-keys -t "$NEW_TARGET" Enter
-  echo "PROMPT_SENT"
-fi
