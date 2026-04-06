@@ -192,7 +192,7 @@ func TestDoctor_FixMode(t *testing.T) {
 func createSharedRuntime(t *testing.T, repoPath string) {
 	t.Helper()
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
-	for _, name := range []string{"steez-config", "steez-slug", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-bd"} {
+	for _, name := range []string{"steez-config", "steez-slug", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-bd", "steez-agent-state", "steez-agent-history"} {
 		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
 	}
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)
