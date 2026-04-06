@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# spawn.sh — Create a tmux target and launch Claude Code in it.
+# spawn.sh — Create a tmux target and launch an AI agent in it.
 #
 # Usage:
-#   spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>]
+#   spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>] [--model <name>]
 #
 # Target types: split-h, split-v, new-window, new-session
+# Models: prometheus (default), claude, codex
 #
 # --target <pane>  For split-h/split-v: split this pane instead of self.
 #                  Use pane_id format (%N, e.g., %5) or session:window.pane (e.g., mac:5.1).
@@ -27,16 +28,24 @@ DIR_NAME=""
 SESSION_NAME=""
 PROMPT_TEXT=""
 SPLIT_TARGET=""
+MODEL="prometheus"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir)    DIR_NAME="$2"; shift 2 ;;
+    --dir)     DIR_NAME="$2"; shift 2 ;;
     --session) SESSION_NAME="$2"; shift 2 ;;
-    --prompt) PROMPT_TEXT="$2"; shift 2 ;;
-    --target) SPLIT_TARGET="$2"; shift 2 ;;
+    --prompt)  PROMPT_TEXT="$2"; shift 2 ;;
+    --target)  SPLIT_TARGET="$2"; shift 2 ;;
+    --model)   MODEL="$2"; shift 2 ;;
     *) echo "ERROR: unknown argument '$1'"; exit 1 ;;
   esac
 done
+
+# Validate model
+case "$MODEL" in
+  prometheus|claude|codex) ;;
+  *) echo "ERROR: unknown model '$MODEL' (use: prometheus, claude, codex)"; exit 1 ;;
+esac
 
 # --- Directory resolution ---
 resolve_dir() {
@@ -191,15 +200,29 @@ if [ -n "$TARGET_DIR" ]; then
   sleep 0.5
 fi
 
-# --- Launch Claude ---
-tmux send-keys -t "$NEW_TARGET" "claude --dangerously-skip-permissions"
+# --- Launch agent ---
+AGENT_STATE="$HOME/.steez/bin/agent-state"
+
+case "$MODEL" in
+  prometheus) LAUNCH_CMD="prometheus" ;;
+  claude)     LAUNCH_CMD="claude --dangerously-skip-permissions" ;;
+  codex)      LAUNCH_CMD="codex --full-auto" ;;
+esac
+
+echo "MODEL=$MODEL"
+tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
 sleep 0.3
 tmux send-keys -t "$NEW_TARGET" Enter
 
-# --- Wait for readiness ---
-for i in $(seq 1 25); do
-  tmux capture-pane -t "$NEW_TARGET" -p | grep -q '❯' && echo "READY" && break
+# --- Wait for readiness (via agent-state) ---
+for i in $(seq 1 30); do
   sleep 1
+  state_out=$("$AGENT_STATE" "$NEW_TARGET" 2>/dev/null) || continue
+  state=$(echo "$state_out" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['state'])" 2>/dev/null) || continue
+  if [[ "$state" == "idle" ]]; then
+    echo "READY"
+    break
+  fi
 done
 
 # --- Send initial prompt (if provided) ---
