@@ -1,7 +1,7 @@
 ---
 name: tmux
 preamble-tier: 1
-description: "REQUIRED when running any tmux command — contains critical safety rules and correct syntax that prevent common mistakes like sending commands to the wrong pane. Use this skill whenever the user mentions tmux, panes, windows, sessions, or asks to read/send to another pane. Also trigger when the user says things like 'read the other pane', 'what's running in my other window', 'send this to the other pane', 'split the window', 'check that pane', or any variation of interacting with tmux. Even if you think you know tmux, this skill contains project-specific guardrails you must follow. EXCEPTION: Do NOT use this skill when the user wants to spawn, launch, or start a Claude Code agent or instance — use the claude-spawn skill instead, even if tmux panes or windows are mentioned."
+description: "REQUIRED when running any tmux command — contains critical safety rules and correct syntax that prevent common mistakes like sending commands to the wrong pane. Use this skill whenever the user mentions tmux, panes, windows, sessions, or asks to read/send to another pane. Also trigger when the user says things like 'read the other pane', 'what's running in my other window', 'send this to the other pane', 'split the window', 'check that pane', or any variation of interacting with tmux. Even if you think you know tmux, this skill contains project-specific guardrails you must follow. EXCEPTION: Do NOT use this skill when the user wants to spawn, launch, or start an AI coding agent or instance — use the agent-spawn skill instead, even if tmux panes or windows are mentioned."
 ---
 
 <!-- BEGIN MANAGED PREAMBLE -->
@@ -196,6 +196,8 @@ echo "Command finished"
 
 Adjust the shell name if the pane uses `bash` or another shell.
 
+For panes running AI agents (Claude Code, Codex), this pattern does not work because the process name stays `claude` or `node` regardless of whether the agent is working or idle. Use `agent-state` instead. See "Agent Panes" below.
+
 ## Creating Panes And Windows
 
 ```bash
@@ -244,4 +246,118 @@ tmux send-keys -t work:1.2 C-c
 sleep 1
 tmux send-keys -t work:1.2 "npm run dev" \; run-shell -d 0.3 'tmux send-keys -t work:1.2 Enter'
 ```
+
+## Agent Panes
+
+When a pane runs an AI agent (Claude Code, Codex CLI), use `agent-state` and `agent-history` instead of raw tmux primitives. These tools parse agent-specific signals (title prefixes, prompt patterns, JSONL transcripts) that `capture-pane` and `pane_current_command` cannot interpret meaningfully.
+
+Non-agent panes (shells, servers, test runners) still use the raw tmux patterns above.
+
+### Checking Agent State
+
+```bash
+~/.steez/bin/agent-state %5
+```
+
+Returns JSON with the agent type and current state:
+
+```json
+{"pane":"%5","agent":"claude","state":"working","name":"steez"}
+```
+
+Possible states:
+
+- `working` ... agent is thinking, streaming, or executing tools
+- `idle` ... turn complete, ready for the next task
+- `blocked:question` ... waiting for the user to answer a question
+- `blocked:permission` ... waiting for permission approval
+- `blocked:unknown` ... blocked on an unrecognized prompt type (fallback)
+
+### Waiting For An Agent To Finish
+
+Poll `agent-state` instead of `pane_current_command`. This distinguishes working from blocked from idle, so you know whether the agent needs input or is still running.
+
+```bash
+while true; do
+  STATE=$(~/.steez/bin/agent-state %5 | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('state',''))")
+  [[ "$STATE" == "working" ]] || break
+  sleep 3
+done
+echo "Agent finished (state: $STATE)"
+```
+
+If the state is `blocked:question` or `blocked:permission`, the agent will not finish on its own. Use `agent-history --blocked` to see what it needs before deciding how to respond.
+
+### Reading Agent Conversation
+
+Use `agent-history` to read structured conversation data from the agent's JSONL transcript. It accepts a pane ID or a direct path to a transcript file.
+
+**Last prompt and response:**
+
+```bash
+~/.steez/bin/agent-history %5 --last
+```
+
+```json
+{"agent":"claude","prompt":"fix the login bug","response":"I found the issue in auth.ts..."}
+```
+
+**What is blocking the agent:**
+
+```bash
+~/.steez/bin/agent-history %5 --blocked
+```
+
+```json
+{"agent":"claude","tool":"AskUserQuestion","input":{"questions":[{"question":"Should I use OAuth or API keys?"}]},"question":"Should I use OAuth or API keys?"}
+```
+
+Returns the pending tool call that has no result yet. For `AskUserQuestion`, the top-level `question` field extracts the first question text for convenience.
+
+**Recent conversation history:**
+
+```bash
+~/.steez/bin/agent-history %5 --history 3
+```
+
+```json
+{"agent":"claude","pairs":[{"prompt":"...","response":"..."},{"prompt":"...","response":"..."},{"prompt":"...","response":"..."}]}
+```
+
+Returns the last N prompt/response pairs in chronological order.
+
+### Multi-Agent Overview
+
+Scan all panes for running agents:
+
+```bash
+~/.steez/bin/agent-state --all
+```
+
+```json
+[
+  {"pane":"%2","agent":"claude","state":"working","name":"steez"},
+  {"pane":"%5","agent":"codex","state":"idle","name":"api-server"}
+]
+```
+
+Only agent panes are included. Non-agent panes are filtered out.
+
+**Add `--detail` for session metadata** (session ID, working directory, transcript path). Useful for routing decisions or passing a transcript path to `agent-history`:
+
+```bash
+~/.steez/bin/agent-state %5 --detail
+```
+
+```json
+{"pane":"%5","agent":"claude","state":"idle","name":"steez","detail":{"session_id":"abc123","cwd":"/Users/steez/project","transcript_path":"/Users/steez/.claude/projects/-Users-steez-project/abc123.jsonl"}}
+```
+
+**Add `--read` to include visible pane content** (equivalent to `capture-pane -p -S -`):
+
+```bash
+~/.steez/bin/agent-state %5 --read
+```
+
+The output includes a `"content"` field with the full visible pane text. Combine with `--detail` for both content and metadata in one call.
 
