@@ -5,6 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: agent-state <pane> [--read] [--detail]
        agent-state --all [--read] [--detail]
+       agent-state --all --layout
 
 Detect the state of AI coding agents (Claude Code, Codex) in tmux panes.
 
@@ -17,6 +18,7 @@ States:
 
 Options:
   --all      Check all tmux panes for AI agents
+  --layout   Visual box layout showing pane splits and agent states (requires --all)
   --read     Include visible pane content in output
   --detail   Include session metadata (session_id, cwd, transcript_path)
   -h         Show this help
@@ -240,10 +242,225 @@ check_pane() {
   format_json "$pane_id" "$state" "$name" "$agent" "$content" "$detail"
 }
 
+render_layout() {
+  local tsv_lines=()
+  local pane_data
+  pane_data=$(tmux list-panes -a -F '#{session_name}	#{window_index}	#{window_name}	#{pane_id}	#{pane_left}	#{pane_top}	#{pane_width}	#{pane_height}')
+
+  while IFS=$'\t' read -r session win_idx win_name pane_id left top width height; do
+    local agent
+    agent=$(detect_agent "$pane_id")
+
+    local state="none" name=""
+    if [[ "$agent" != "unknown" ]]; then
+      local result
+      result=$(detect_state "$pane_id" 2>/dev/null) || continue
+      state="${result%%|*}"
+      local rest="${result#*|}"
+      name="${rest%%|*}"
+    else
+      name=$(tmux display-message -t "$pane_id" -p '#{pane_current_command}' 2>/dev/null || echo "shell")
+      agent="shell"
+    fi
+
+    tsv_lines+=("${session}	${win_idx}	${win_name}	${pane_id}	${left}	${top}	${width}	${height}	${agent}	${state}	${name}")
+  done <<< "$pane_data"
+
+  if [[ ${#tsv_lines[@]} -eq 0 ]]; then
+    echo "No tmux panes found."
+    return
+  fi
+
+  printf '%s\n' "${tsv_lines[@]}" | python3 -c "$(cat <<'PYEOF'
+import sys
+from collections import OrderedDict
+
+panes = []
+for raw in sys.stdin:
+    raw = raw.rstrip('\n')
+    if not raw:
+        continue
+    p = raw.split('\t', 10)
+    if len(p) < 11:
+        continue
+    panes.append({
+        'session': p[0], 'win_idx': int(p[1]), 'win_name': p[2],
+        'id': p[3], 'left': int(p[4]), 'top': int(p[5]),
+        'width': int(p[6]), 'height': int(p[7]),
+        'agent': p[8], 'state': p[9], 'name': p[10],
+    })
+
+# Group by session:window
+windows = OrderedDict()
+for p in panes:
+    key = (p['session'], p['win_idx'])
+    if key not in windows:
+        windows[key] = {'name': p['win_name'], 'session': p['session'], 'panes': []}
+    windows[key]['panes'].append(p)
+
+# Only show windows with at least one agent
+windows = OrderedDict(
+    (k, v) for k, v in windows.items()
+    if any(p['agent'] != 'shell' for p in v['panes'])
+)
+
+if not windows:
+    print('No agent panes found.')
+    sys.exit(0)
+
+# ANSI colors (only when outputting to terminal)
+if sys.stdout.isatty():
+    BOLD, DIM, RESET = '\033[1m', '\033[2m', '\033[0m'
+    GREEN, YELLOW = '\033[32m', '\033[33m'
+else:
+    BOLD = DIM = RESET = GREEN = YELLOW = ''
+
+TARGET_W = 72
+CELL_H = 2  # content lines per grid cell
+
+
+def state_color(s):
+    if s == 'working':
+        return GREEN
+    if s.startswith('blocked'):
+        return YELLOW
+    return DIM
+
+
+def snap(bounds):
+    """Merge boundaries that are 1 apart (tmux inter-pane separator)."""
+    if len(bounds) <= 1:
+        return bounds
+    result = [bounds[0]]
+    for b in bounds[1:]:
+        if b - result[-1] == 1:
+            result[-1] = b
+        else:
+            result.append(b)
+    return result
+
+
+def render_window(win):
+    ps = win['panes']
+
+    # Grid boundaries from pane geometry, snapped to collapse separators
+    xs = snap(sorted(set(p['left'] for p in ps) | set(p['left'] + p['width'] for p in ps)))
+    ys = snap(sorted(set(p['top'] for p in ps) | set(p['top'] + p['height'] for p in ps)))
+    nc, nr = len(xs) - 1, len(ys) - 1
+    if nc == 0 or nr == 0:
+        return ''
+
+    # Map each grid cell to its pane
+    grid = [[None] * nc for _ in range(nr)]
+    pm = {}
+    for p in ps:
+        pm[p['id']] = p
+        for r in range(nr):
+            for c in range(nc):
+                if (xs[c] >= p['left'] and xs[c] < p['left'] + p['width']
+                        and ys[r] >= p['top'] and ys[r] < p['top'] + p['height']):
+                    grid[r][c] = p['id']
+
+    # Proportional column widths (min 18 chars for labels)
+    total_real = xs[-1] - xs[0]
+    usable = TARGET_W - nc - 1
+    cw = [max(18, round(usable * (xs[c + 1] - xs[c]) / total_real)) for c in range(nc)]
+
+    # Border predicates
+    def hb(r, c):
+        """Horizontal border between row r-1 and row r at column c."""
+        if r == 0 or r == nr:
+            return True
+        return grid[r - 1][c] != grid[r][c]
+
+    def vb(r, c):
+        """Vertical border between col c-1 and col c at row r."""
+        if c == 0 or c == nc:
+            return True
+        return grid[r][c - 1] != grid[r][c]
+
+    # Box-drawing junction characters keyed by (up, down, left, right)
+    BOX = {
+        (1, 1, 1, 1): '┼', (1, 1, 1, 0): '┤', (1, 1, 0, 1): '├', (1, 1, 0, 0): '│',
+        (1, 0, 1, 1): '┴', (1, 0, 1, 0): '┘', (1, 0, 0, 1): '└', (1, 0, 0, 0): ' ',
+        (0, 1, 1, 1): '┬', (0, 1, 1, 0): '┐', (0, 1, 0, 1): '┌', (0, 1, 0, 0): ' ',
+        (0, 0, 1, 1): '─', (0, 0, 1, 0): ' ', (0, 0, 0, 1): ' ', (0, 0, 0, 0): ' ',
+    }
+
+    def jn(r, c):
+        u = int(r > 0 and vb(r - 1, c))
+        d = int(r < nr and vb(r, c))
+        l = int(c > 0 and hb(r, c - 1))
+        ri = int(c < nc and hb(r, c))
+        return BOX.get((u, d, l, ri), '+')
+
+    out = []
+
+    for r in range(nr):
+        # Horizontal border above this row
+        ln = ''
+        for c in range(nc):
+            ln += jn(r, c)
+            ln += ('\u2500' if hb(r, c) else ' ') * cw[c]
+        ln += jn(r, nc)
+        out.append(ln)
+
+        # Content lines
+        for li in range(CELL_H):
+            ln = ''
+            for c in range(nc):
+                ln += '\u2502' if vb(r, c) else ' '
+                pid = grid[r][c]
+                p = pm.get(pid, {})
+                # Only label in the top-left cell of each pane
+                is_tl = (r == 0 or grid[r - 1][c] != pid) and (c == 0 or grid[r][c - 1] != pid)
+
+                if is_tl and li == 0:
+                    txt = f" {p.get('id', '')} {p.get('name', '')}"
+                    ln += txt[:cw[c]].ljust(cw[c])
+                elif is_tl and li == 1 and p.get('agent') != 'shell':
+                    a, s = p.get('agent', ''), p.get('state', '')
+                    visible = f" {a} \u00b7 {s}"
+                    ln += f" {state_color(s)}{a} \u00b7 {s}{RESET}" + ' ' * max(0, cw[c] - len(visible))
+                elif is_tl and li == 1 and p.get('agent') == 'shell':
+                    name = p.get('name', 'shell')
+                    visible = f" ({name})"
+                    ln += f" {DIM}({name}){RESET}" + ' ' * max(0, cw[c] - len(visible))
+                else:
+                    ln += ' ' * cw[c]
+            ln += '\u2502' if vb(r, nc) else ' '
+            out.append(ln)
+
+    # Bottom border
+    ln = ''
+    for c in range(nc):
+        ln += jn(nr, c)
+        ln += ('\u2500' if hb(nr, c) else ' ') * cw[c]
+    ln += jn(nr, nc)
+    out.append(ln)
+
+    return '\n'.join(out)
+
+
+first_win = True
+for (session, win_idx), win in windows.items():
+    if not first_win:
+        print()
+    first_win = False
+    hdr = f"{BOLD}{session}:{win_idx}{RESET}"
+    if win['name']:
+        hdr += f"  {DIM}{win['name']}{RESET}"
+    print(hdr)
+    print(render_window(win))
+PYEOF
+)"
+}
+
 main() {
   local all=false
   local read_content=false
   local detail=false
+  local layout=false
   local pane=""
 
   while [[ $# -gt 0 ]]; do
@@ -251,15 +468,26 @@ main() {
       --all) all=true; shift ;;
       --read) read_content=true; shift ;;
       --detail) detail=true; shift ;;
+      --layout) layout=true; shift ;;
       -h|--help) usage ;;
       -*) echo "error: unknown option '$1'" >&2; exit 1 ;;
       *) pane="$1"; shift ;;
     esac
   done
 
+  if [[ "$layout" == "true" && "$all" == "false" ]]; then
+    echo "error: --layout requires --all" >&2
+    exit 1
+  fi
+
   if [[ "$all" == "false" && -z "$pane" ]]; then
     echo "error: specify a pane target or use --all" >&2
     exit 1
+  fi
+
+  if [[ "$layout" == "true" ]]; then
+    render_layout
+    return
   fi
 
   if [[ "$all" == "true" ]]; then

@@ -243,7 +243,7 @@ After spawning, report:
 - How to check on it: `~/.steez/bin/agent-state <pane_id> --detail`
 - How to switch to it: `tmux select-window -t <target>` or `tmux switch-client -t <target>`
 
-The `agent-state` command returns structured JSON with the agent's current state (idle, working, blocked:question, blocked:permission). Use it instead of raw capture-pane for status checks.
+The `agent-state` command returns structured JSON with the agent's current state (idle, working, blocked:question, blocked:permission). For a visual overview of all agents across windows, use `~/.steez/bin/agent-state --all --layout`.
 
 In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't use AskUserQuestion — just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
 
