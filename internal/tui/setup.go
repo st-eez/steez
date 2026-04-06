@@ -449,6 +449,25 @@ func (m *setupModel) runInstall() {
 		}
 	}
 
+	// Hook symlinks (Claude Code hooks).
+	hookDir := filepath.Join(home, ".claude", "hooks")
+	if err := os.MkdirAll(hookDir, 0o755); err != nil {
+		m.results = append(m.results, installResult{"~/.claude/hooks/", false, err.Error()})
+	} else {
+		hookSymlinks := []struct{ name, relPath string }{
+			{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
+		}
+		for _, hs := range hookSymlinks {
+			source := filepath.Join(repoSymlink, hs.relPath)
+			target := filepath.Join(hookDir, hs.name)
+			if err := installer.CreateSymlink(source, target, false, true); err != nil {
+				m.results = append(m.results, installResult{"hooks/" + hs.name, false, err.Error()})
+			} else {
+				m.results = append(m.results, installResult{"hooks/" + hs.name, true, ""})
+			}
+		}
+	}
+
 	// Each skill.
 	for _, name := range m.skillNames {
 		source := filepath.Join(m.repoPath, "skills", name)

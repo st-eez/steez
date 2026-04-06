@@ -40,6 +40,9 @@ func RunDoctor(repoPath string, fix bool) ([]CheckResult, error) {
 	// 1b. Bin symlinks.
 	results = append(results, checkBinSymlinks(steezHome)...)
 
+	// 1c. Hook symlinks.
+	results = append(results, checkHookSymlinks(home)...)
+
 	// 2. Runtime directory.
 	results = append(results, checkRuntimeDirs(home, fix)...)
 
@@ -183,6 +186,65 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 			Name:    fmt.Sprintf("bin/%s", name),
 			Status:  "pass",
 			Message: fmt.Sprintf("~/.steez/bin/%s → %s", name, resolved),
+		})
+	}
+
+	return results
+}
+
+func checkHookSymlinks(home string) []CheckResult {
+	hookDir := filepath.Join(home, ".claude", "hooks")
+	expected := []string{
+		"steez-skill-analytics.sh",
+	}
+
+	var results []CheckResult
+
+	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
+		results = append(results, CheckResult{
+			Name:    "Hooks directory",
+			Status:  "warn",
+			Message: "Missing: ~/.claude/hooks/ — run steez install",
+			FixCmd:  "steez install",
+		})
+		return results
+	}
+
+	for _, name := range expected {
+		path := filepath.Join(hookDir, name)
+		isSym, resolved, err := IsSymlink(path)
+		if err != nil || !isSym {
+			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+				results = append(results, CheckResult{
+					Name:    fmt.Sprintf("hooks/%s", name),
+					Status:  "warn",
+					Message: fmt.Sprintf("Missing: ~/.claude/hooks/%s", name),
+					FixCmd:  "steez install",
+				})
+			} else {
+				results = append(results, CheckResult{
+					Name:    fmt.Sprintf("hooks/%s", name),
+					Status:  "warn",
+					Message: fmt.Sprintf("~/.claude/hooks/%s is not a symlink", name),
+				})
+			}
+			continue
+		}
+
+		if err := ValidateSymlink(path); err != nil {
+			results = append(results, CheckResult{
+				Name:    fmt.Sprintf("hooks/%s", name),
+				Status:  "fail",
+				Message: fmt.Sprintf("Dangling: ~/.claude/hooks/%s → %s", name, resolved),
+				FixCmd:  "steez install",
+			})
+			continue
+		}
+
+		results = append(results, CheckResult{
+			Name:    fmt.Sprintf("hooks/%s", name),
+			Status:  "pass",
+			Message: fmt.Sprintf("~/.claude/hooks/%s → %s", name, resolved),
 		})
 	}
 

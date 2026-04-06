@@ -171,15 +171,26 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 		CreateSymlink(source, target, false, false)
 	}
 
+	// Create hook symlinks.
+	hookDir := filepath.Join(home, ".claude", "hooks")
+	os.MkdirAll(hookDir, 0o755)
+	for _, hs := range []struct{ name, relPath string }{
+		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
+	} {
+		source := filepath.Join(repoSymlink, hs.relPath)
+		target := filepath.Join(hookDir, hs.name)
+		CreateSymlink(source, target, false, false)
+	}
+
 	// Install one skill.
-	source := filepath.Join(repoPath, "skills", "review")
-	target := filepath.Join(skillsDir, "steez-review")
+	source := filepath.Join(repoPath, "skills", "tmux")
+	target := filepath.Join(skillsDir, "steez-tmux")
 	CreateSymlink(source, target, false, false)
 
 	// Write registry.
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "steez-review", Source: source, Target: target},
+			{Name: "steez-tmux", Source: source, Target: target},
 		},
 	}
 	data, _ := json.MarshalIndent(reg, "", "  ")
