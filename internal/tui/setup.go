@@ -366,7 +366,7 @@ func (m setupModel) viewPreflight() string {
 	b.WriteString("\n")
 
 	for _, name := range m.skillNames {
-		b.WriteString(fmt.Sprintf("    steez-%s\n", name))
+		b.WriteString(fmt.Sprintf("    %s\n", name))
 	}
 
 	// Check for browse-dependent skills.
@@ -431,15 +431,24 @@ func (m *setupModel) runInstall() {
 	}
 
 	binSymlinks := []struct{ name, relPath string }{
-		{"steez-config", "shared/steez/bin/steez-config"},
-		{"steez-slug", "shared/steez/bin/steez-slug"},
-		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
-		{"steez-review-log", "shared/steez/bin/steez-review-log"},
-		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"config", "shared/steez/bin/config"},
+		{"slug", "shared/steez/bin/slug"},
+		{"diff-scope", "shared/steez/bin/diff-scope"},
+		{"review-log", "shared/steez/bin/review-log"},
+		{"review-read", "shared/steez/bin/review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
-		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
+		{"agent-state", "shared/steez/bin/agent-state"},
+		{"agent-history", "shared/steez/bin/agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
+	}
+	// Remove old steez-prefixed bin symlinks from before the rename.
+	oldBinNames := []string{
+		"steez-config", "steez-slug", "steez-diff-scope",
+		"steez-review-log", "steez-review-read",
+		"steez-agent-state", "steez-agent-history",
+	}
+	for _, old := range oldBinNames {
+		_ = installer.RemoveSymlink(filepath.Join(binDir, old))
 	}
 	for _, bs := range binSymlinks {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -473,13 +482,17 @@ func (m *setupModel) runInstall() {
 	// Each skill.
 	for _, name := range m.skillNames {
 		source := filepath.Join(m.repoPath, "skills", name)
-		target := filepath.Join(skillsTarget, "steez-"+name)
-		symlinkName := "steez-" + name
+		target := filepath.Join(skillsTarget, name)
+
+		// Remove old steez-prefixed skill symlink if it exists.
+		oldTarget := filepath.Join(skillsTarget, "steez-"+name)
+		_ = installer.RemoveSymlink(oldTarget)
+		config.RemoveFromRegistry(reg, "steez-"+name)
 
 		if err := installer.CreateSymlink(source, target, false, true); err != nil {
 			m.results = append(m.results, installResult{name, false, err.Error()})
 		} else {
-			config.AddToRegistry(reg, symlinkName, source, target)
+			config.AddToRegistry(reg, name, source, target)
 			m.results = append(m.results, installResult{name, true, ""})
 		}
 	}
@@ -538,7 +551,7 @@ func (m setupModel) viewInstall() string {
 		b.WriteString(m.styles.Success.Render(fmt.Sprintf("  Installed %d skills. All checks pass.", totalSkills)))
 		b.WriteString("\n")
 		if len(m.skillNames) > 0 {
-			b.WriteString(m.styles.Muted.Render(fmt.Sprintf("  Try: /steez-%s", m.skillNames[0])))
+			b.WriteString(m.styles.Muted.Render(fmt.Sprintf("  Try: /%s", m.skillNames[0])))
 		}
 	} else if failed > 0 && succeeded > 0 {
 		b.WriteString(m.styles.Warning.Render(fmt.Sprintf("  Installed %d of %d skills. %d failed.", succeeded-1, totalSkills, failed)))

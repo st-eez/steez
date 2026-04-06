@@ -79,7 +79,7 @@ cmd_resume() {
       skill_label=$(_get_skill_label "$first_id")
       if [ -n "$skill_label" ]; then
         echo ""
-        echo "SUGGESTED SKILL: /steez-$skill_label (from $first_id)"
+        echo "SUGGESTED SKILL: /$skill_label (from $first_id)"
       fi
     fi
   fi
@@ -155,7 +155,7 @@ _show_bead_brief() {
   local skill_label
   skill_label=$(_get_skill_label "$id")
   if [ -n "$skill_label" ]; then
-    echo "SUGGESTED SKILL: /steez-$skill_label"
+    echo "SUGGESTED SKILL: /$skill_label"
   else
     echo "SUGGESTED SKILL: none"
   fi

@@ -60,14 +60,14 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	binDir := filepath.Join(steezHome, "bin")
 	os.MkdirAll(binDir, 0o755)
 	for _, bs := range []struct{ name, relPath string }{
-		{"steez-config", "shared/steez/bin/steez-config"},
-		{"steez-slug", "shared/steez/bin/steez-slug"},
-		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
-		{"steez-review-log", "shared/steez/bin/steez-review-log"},
-		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"config", "shared/steez/bin/config"},
+		{"slug", "shared/steez/bin/slug"},
+		{"diff-scope", "shared/steez/bin/diff-scope"},
+		{"review-log", "shared/steez/bin/review-log"},
+		{"review-read", "shared/steez/bin/review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
-		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
+		{"agent-state", "shared/steez/bin/agent-state"},
+		{"agent-history", "shared/steez/bin/agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -79,11 +79,11 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	reg := &config.Registry{}
 	for _, name := range skills {
 		source := filepath.Join(repoPath, "skills", name)
-		target := filepath.Join(skillsDir, "steez-"+name)
+		target := filepath.Join(skillsDir, name)
 		if err := CreateSymlink(source, target, false, false); err != nil {
 			t.Fatalf("install %s: %v", name, err)
 		}
-		config.AddToRegistry(reg, "steez-"+name, source, target)
+		config.AddToRegistry(reg, name, source, target)
 	}
 
 	// Verify 6 entries (6 skills, repo/bin symlinks not in registry).
@@ -128,7 +128,7 @@ func TestIntegration_CaseBUpgrade(t *testing.T) {
 
 	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "office-hours")
-	target := filepath.Join(skillsDir, "steez-office-hours")
+	target := filepath.Join(skillsDir, "office-hours")
 	CreateSymlink(source, target, false, false)
 
 	// Verify non-steez skill is untouched.
@@ -160,14 +160,14 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	binDir := filepath.Join(steezHome, "bin")
 	os.MkdirAll(binDir, 0o755)
 	for _, bs := range []struct{ name, relPath string }{
-		{"steez-config", "shared/steez/bin/steez-config"},
-		{"steez-slug", "shared/steez/bin/steez-slug"},
-		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
-		{"steez-review-log", "shared/steez/bin/steez-review-log"},
-		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"config", "shared/steez/bin/config"},
+		{"slug", "shared/steez/bin/slug"},
+		{"diff-scope", "shared/steez/bin/diff-scope"},
+		{"review-log", "shared/steez/bin/review-log"},
+		{"review-read", "shared/steez/bin/review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
-		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
+		{"agent-state", "shared/steez/bin/agent-state"},
+		{"agent-history", "shared/steez/bin/agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -189,13 +189,13 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 
 	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "tmux")
-	target := filepath.Join(skillsDir, "steez-tmux")
+	target := filepath.Join(skillsDir, "tmux")
 	CreateSymlink(source, target, false, false)
 
 	// Write registry.
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "steez-tmux", Source: source, Target: target},
+			{Name: "tmux", Source: source, Target: target},
 		},
 	}
 	data, _ := json.MarshalIndent(reg, "", "  ")

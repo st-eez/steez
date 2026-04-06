@@ -22,9 +22,9 @@ type Registry struct {
 
 // RegisteredSymlink records a single steez-managed symlink.
 type RegisteredSymlink struct {
-	Name   string `json:"name"`   // e.g. "steez-office-hours"
+	Name   string `json:"name"`   // e.g. "office-hours"
 	Source string `json:"source"` // repo skill directory
-	Target string `json:"target"` // ~/.claude/skills/steez-office-hours
+	Target string `json:"target"` // ~/.claude/skills/office-hours
 }
 
 // Dir returns the steez config directory (~/.steez/).

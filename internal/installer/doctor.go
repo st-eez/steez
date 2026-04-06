@@ -135,9 +135,9 @@ func checkRepoSymlink(repoSymlink, repoPath string) CheckResult {
 func checkBinSymlinks(steezHome string) []CheckResult {
 	binDir := filepath.Join(steezHome, "bin")
 	expected := []string{
-		"steez-config", "steez-slug", "steez-diff-scope",
-		"steez-review-log", "steez-review-read", "steez-bd",
-		"steez-agent-state", "steez-agent-history", "browse",
+		"config", "slug", "diff-scope",
+		"review-log", "review-read", "steez-bd",
+		"agent-state", "agent-history", "browse",
 	}
 
 	var results []CheckResult
@@ -350,7 +350,7 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 					Name:    entry.Name,
 					Status:  "warn",
 					Message: fmt.Sprintf("Missing symlink: %s", entry.Target),
-					FixCmd:  fmt.Sprintf("steez install %s", strings.TrimPrefix(entry.Name, "steez-")),
+					FixCmd:  fmt.Sprintf("steez install %s", entry.Name),
 				})
 			} else {
 				// Exists as a real dir/file.
@@ -423,22 +423,33 @@ func checkUnregisteredSymlinks(skillsDir string, reg *config.Registry) []CheckRe
 
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, "steez-") {
-			continue
-		}
-
 		fullPath := filepath.Join(skillsDir, name)
 		if registered[fullPath] {
 			continue
 		}
 
-		isSym, _, _ := IsSymlink(fullPath)
-		if isSym {
+		isSym, resolved, _ := IsSymlink(fullPath)
+		if !isSym {
+			continue
+		}
+
+		// Old-format steez-prefixed symlinks left over from before the rename.
+		if strings.HasPrefix(name, "steez-") {
 			skillName := strings.TrimPrefix(name, "steez-")
 			results = append(results, CheckResult{
 				Name:    name,
 				Status:  "warn",
-				Message: fmt.Sprintf("Unregistered steez symlink. Run: steez install %s", skillName),
+				Message: fmt.Sprintf("Old-format steez symlink. Run: steez install %s", skillName),
+			})
+			continue
+		}
+
+		// New-format: check if the symlink resolves into a steez repo skills/ dir.
+		if strings.Contains(resolved, filepath.Join("skills", name)) {
+			results = append(results, CheckResult{
+				Name:    name,
+				Status:  "warn",
+				Message: fmt.Sprintf("Unregistered steez symlink. Run: steez install %s", name),
 			})
 		}
 	}
@@ -448,9 +459,9 @@ func checkUnregisteredSymlinks(skillsDir string, reg *config.Registry) []CheckRe
 
 func checkBrowseBinary(repoPath string, reg *config.Registry) []CheckResult {
 	// Check if any browse-dependent skills are installed.
-	browseSkills := []string{"steez-browse", "steez-qa", "steez-qa-only",
-		"steez-design-review", "steez-canary", "steez-benchmark",
-		"steez-connect-chrome", "steez-setup-browser-cookies"}
+	browseSkills := []string{"browse", "qa", "qa-only",
+		"design-review", "canary", "benchmark",
+		"connect-chrome", "setup-browser-cookies"}
 
 	hasBrowseSkill := false
 	for _, s := range reg.Symlinks {

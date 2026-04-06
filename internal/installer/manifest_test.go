@@ -39,7 +39,7 @@ const validManifest = `{
     }
   },
   "shared_infra": {
-    "bin": ["steez-bd"],
+    "bin": ["steez-bd", "config", "slug"],
     "runtime_dir": "~/.steez",
     "browse_binary": "skills/browse/dist/browse"
   }
