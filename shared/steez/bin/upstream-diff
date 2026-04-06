@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# steez-upstream-diff — compare a steez skill against its gstack upstream
-# Usage: steez-upstream-diff [skill]    (e.g., steez-upstream-diff ship)
-#        steez-upstream-diff --all      (list all skills with diff line counts)
+# upstream-diff — compare a steez skill against its gstack upstream
+# Usage: upstream-diff [skill]    (e.g., upstream-diff ship)
+#        upstream-diff --all      (list all skills with diff line counts)
 
 GSTACK_DIR="$HOME/Projects/Personal/gstack"
 STEEZ_DIR="$HOME/.steez/repo/skills"
@@ -25,7 +25,7 @@ if [ "$1" = "--all" ]; then
 fi
 
 if [ -z "$1" ]; then
-  echo "Usage: steez-upstream-diff <skill>  or  steez-upstream-diff --all" >&2
+  echo "Usage: upstream-diff <skill>  or  upstream-diff --all" >&2
   exit 1
 fi
 

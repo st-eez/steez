@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# steez-config — read/write ~/.steez/config.yaml
+# config — read/write ~/.steez/config.yaml
 #
 # Usage:
-#   steez-config get <key>          — read a config value
-#   steez-config set <key> <value>  — write a config value
-#   steez-config list               — show all config
+#   config get <key>          — read a config value
+#   config set <key> <value>  — write a config value
+#   config list               — show all config
 #
 # Env overrides (for testing):
 #   STEEZ_STATE_DIR  — override ~/.steez state directory
@@ -15,12 +15,12 @@ CONFIG_FILE="$STATE_DIR/config"
 
 case "${1:-}" in
   get)
-    KEY="${2:?Usage: steez-config get <key>}"
+    KEY="${2:?Usage: config get <key>}"
     grep -E "^${KEY}:" "$CONFIG_FILE" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '[:space:]' || true
     ;;
   set)
-    KEY="${2:?Usage: steez-config set <key> <value>}"
-    VALUE="${3:?Usage: steez-config set <key> <value>}"
+    KEY="${2:?Usage: config set <key> <value>}"
+    VALUE="${3:?Usage: config set <key> <value>}"
     mkdir -p "$STATE_DIR"
     if grep -qE "^${KEY}:" "$CONFIG_FILE" 2>/dev/null; then
       # Portable in-place edit (BSD sed uses -i '', GNU sed uses -i without arg)
@@ -34,7 +34,7 @@ case "${1:-}" in
     cat "$CONFIG_FILE" 2>/dev/null || true
     ;;
   *)
-    echo "Usage: steez-config {get|set|list} [key] [value]"
+    echo "Usage: config {get|set|list} [key] [value]"
     exit 1
     ;;
 esac

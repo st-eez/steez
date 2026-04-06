@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# steez-diff-scope — categorize what changed in the diff against a base branch
-# Usage: source <(steez-diff-scope main)  → sets SCOPE_FRONTEND=true SCOPE_BACKEND=false ...
-# Or:    steez-diff-scope main           → prints SCOPE_*=... lines
+# diff-scope — categorize what changed in the diff against a base branch
+# Usage: source <(diff-scope main)  → sets SCOPE_FRONTEND=true SCOPE_BACKEND=false ...
+# Or:    diff-scope main           → prints SCOPE_*=... lines
 set -euo pipefail
 
 BASE="${1:-main}"

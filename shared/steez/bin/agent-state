@@ -3,8 +3,8 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: steez-agent-state <pane> [--read] [--detail]
-       steez-agent-state --all [--read] [--detail]
+Usage: agent-state <pane> [--read] [--detail]
+       agent-state --all [--read] [--detail]
 
 Detect the state of AI coding agents (Claude Code, Codex) in tmux panes.
 

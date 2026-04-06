@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: steez-agent-history [<pane|path>] <mode> [--agent claude|codex]
+Usage: agent-history [<pane|path>] <mode> [--agent claude|codex]
 
 Read structured conversation data from Claude Code or Codex CLI transcripts.
 
@@ -13,7 +13,7 @@ Modes:
   --history N    Last N human/assistant pairs (chronological)
 
 Input:
-  %42            Pane ID — resolves transcript via steez-agent-state --detail
+  %42            Pane ID — resolves transcript via agent-state --detail
   /path/to.jsonl Direct transcript path (agent inferred from path)
   (none)         Uses $TMUX_PANE if set
 
@@ -65,7 +65,7 @@ AGENT=""
 resolve_from_pane() {
   local pane="$1"
   local detail
-  detail=$("$HOME/.steez/bin/steez-agent-state" "$pane" --detail 2>/dev/null) || error_json "pane $pane is not a recognized AI agent"
+  detail=$("$HOME/.steez/bin/agent-state" "$pane" --detail 2>/dev/null) || error_json "pane $pane is not a recognized AI agent"
 
   AGENT=$(printf '%s' "$detail" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))")
   TRANSCRIPT=$(printf '%s' "$detail" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('detail',{}).get('transcript_path','') if d.get('detail') else '')")
