@@ -25,7 +25,7 @@ EOF
 }
 
 error_json() {
-  python3 -c "import json,sys; print(json.dumps({'error': sys.argv[1]}))" "$1"
+  python3 -c "import json,sys; print(json.dumps({'error': sys.argv[1]}, indent=2))" "$1"
   exit 1
 }
 
@@ -156,8 +156,11 @@ for raw in sys.stdin:
     except:
         continue
 
+def emit(obj):
+    print(json.dumps(obj, indent=2))
+
 if not lines:
-    print(json.dumps({'error': 'no conversation data'}))
+    emit({'error': 'no conversation data'})
     sys.exit(0)
 
 
@@ -198,9 +201,9 @@ def parse_claude():
         prompt = prompts[-1] if prompts else ''
         response = responses[-1] if responses else ''
         if not prompt and not response:
-            print(json.dumps({'error': 'no conversation data'}))
+            emit({'error': 'no conversation data'})
             return
-        print(json.dumps({'agent': agent, 'prompt': prompt, 'response': response}))
+        emit({'agent': agent, 'prompt': prompt, 'response': response})
 
     elif mode == 'history':
         # Pair prompts with responses chronologically
@@ -241,7 +244,7 @@ def parse_claude():
 
         # Take last N
         result = pairs[-history_n:] if history_n > 0 else pairs
-        print(json.dumps({'agent': agent, 'pairs': result}))
+        emit({'agent': agent, 'pairs': result})
 
     elif mode == 'blocked':
         # Find the last assistant tool_use with no corresponding tool_result
@@ -268,7 +271,7 @@ def parse_claude():
                 break
 
         if not last_tool:
-            print(json.dumps({'error': 'no pending tool use found'}))
+            emit({'error': 'no pending tool use found'})
             return
 
         result = {
@@ -281,7 +284,7 @@ def parse_claude():
             questions = last_tool.get('input', {}).get('questions', [])
             if questions and isinstance(questions[0], dict):
                 result['question'] = questions[0].get('question', '')
-        print(json.dumps(result))
+        emit(result)
 
 
 def parse_codex():
@@ -303,9 +306,9 @@ def parse_codex():
 
         prompt = prompts[-1] if prompts else ''
         if not prompt and not last_response:
-            print(json.dumps({'error': 'no conversation data'}))
+            emit({'error': 'no conversation data'})
             return
-        print(json.dumps({'agent': agent, 'prompt': prompt, 'response': last_response}))
+        emit({'agent': agent, 'prompt': prompt, 'response': last_response})
 
     elif mode == 'history':
         # Collect assistant responses from response_item messages
@@ -333,7 +336,7 @@ def parse_codex():
             pairs.append({'prompt': current_prompt, 'response': ''})
 
         result = pairs[-history_n:] if history_n > 0 else pairs
-        print(json.dumps({'agent': agent, 'pairs': result}))
+        emit({'agent': agent, 'pairs': result})
 
     elif mode == 'blocked':
         # Find last function_call with no matching function_call_output
@@ -353,7 +356,7 @@ def parse_codex():
                     break
 
         if not last_call:
-            print(json.dumps({'error': 'no pending tool use found'}))
+            emit({'error': 'no pending tool use found'})
             return
 
         # Parse arguments (may be JSON string)
@@ -364,11 +367,11 @@ def parse_codex():
             except:
                 pass
 
-        print(json.dumps({
+        emit({
             'agent': agent,
             'tool': last_call.get('name', ''),
             'input': args
-        }))
+        })
 
 
 if agent == 'claude':
@@ -376,5 +379,5 @@ if agent == 'claude':
 elif agent == 'codex':
     parse_codex()
 else:
-    print(json.dumps({'error': 'unknown agent type: ' + agent}))
+    emit({'error': 'unknown agent type: ' + agent})
 "
