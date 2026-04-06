@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: steez-agent-history [<pane|path>] <mode> [--agent claude|codex]
+
+Read structured conversation data from Claude Code or Codex CLI transcripts.
+
+Modes:
+  --last         Last human prompt + assistant response
+  --blocked      Pending tool_use awaiting approval/answer
+  --history N    Last N human/assistant pairs (chronological)
+
+Input:
+  %42            Pane ID — resolves transcript via steez-agent-state --detail
+  /path/to.jsonl Direct transcript path (agent inferred from path)
+  (none)         Uses $TMUX_PANE if set
+
+Options:
+  --agent claude|codex   Override agent type inference
+  -h, --help             Show this help
+EOF
+  exit 0
+}
+
+error_json() {
+  printf '{"error":"%s"}\n' "$1"
+  exit 1
+}
+
+# --- Argument parsing ---
+TARGET=""
+MODE=""
+HISTORY_N=""
+AGENT_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --last)    MODE="last"; shift ;;
+    --blocked) MODE="blocked"; shift ;;
+    --history)
+      MODE="history"
+      shift
+      [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]] || { echo "error: --history requires a number" >&2; exit 1; }
+      HISTORY_N="$1"; shift
+      ;;
+    --agent)
+      shift
+      [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex") ]] || { echo "error: --agent requires claude or codex" >&2; exit 1; }
+      AGENT_OVERRIDE="$1"; shift
+      ;;
+    -h|--help) usage ;;
+    -*) echo "error: unknown option '$1'" >&2; exit 1 ;;
+    *)  TARGET="$1"; shift ;;
+  esac
+done
+
+[[ -n "$MODE" ]] || { echo "error: specify a mode (--last, --blocked, or --history N)" >&2; exit 1; }
+
+# --- Input resolution ---
+TRANSCRIPT=""
+AGENT=""
+
+resolve_from_pane() {
+  local pane="$1"
+  local detail
+  detail=$("$HOME/.steez/bin/steez-agent-state" "$pane" --detail 2>/dev/null) || error_json "pane $pane is not a recognized AI agent"
+
+  AGENT=$(printf '%s' "$detail" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))")
+  TRANSCRIPT=$(printf '%s' "$detail" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('detail',{}).get('transcript_path','') if d.get('detail') else '')")
+
+  [[ -n "$TRANSCRIPT" ]] || error_json "no transcript found for pane $pane"
+}
+
+if [[ -z "$TARGET" ]]; then
+  # No target — try $TMUX_PANE
+  [[ -n "${TMUX_PANE:-}" ]] || { echo "error: no target specified and \$TMUX_PANE not set" >&2; exit 1; }
+  resolve_from_pane "$TMUX_PANE"
+elif [[ "$TARGET" == %* ]]; then
+  # Pane ID
+  resolve_from_pane "$TARGET"
+else
+  # Direct path
+  TRANSCRIPT="$TARGET"
+  [[ -f "$TRANSCRIPT" ]] || error_json "file not found: $TRANSCRIPT"
+  # Infer agent from path
+  if [[ -n "$AGENT_OVERRIDE" ]]; then
+    AGENT="$AGENT_OVERRIDE"
+  elif [[ "$TRANSCRIPT" == */.claude/* ]]; then
+    AGENT="claude"
+  elif [[ "$TRANSCRIPT" == */.codex/* ]]; then
+    AGENT="codex"
+  else
+    error_json "cannot infer agent type from path — use --agent claude|codex"
+  fi
+fi
+
+[[ -n "$AGENT_OVERRIDE" ]] && AGENT="$AGENT_OVERRIDE"
+
+# --- Tail strategy: 500 lines, fallback to 2000 ---
+LINES=$(tail -500 "$TRANSCRIPT")
+
+# Check if we have at least one human prompt in the tailed data
+has_prompt() {
+  if [[ "$AGENT" == "claude" ]]; then
+    printf '%s' "$1" | python3 -c "
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        obj = json.loads(line)
+    except: continue
+    if obj.get('type') == 'user' and isinstance(obj.get('message',{}).get('content'), str) and not obj.get('isMeta') and not obj.get('isSidechain'):
+        print('yes')
+        exit(0)
+print('no')
+"
+  else
+    printf '%s' "$1" | python3 -c "
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        obj = json.loads(line)
+    except: continue
+    if obj.get('type') == 'event_msg' and obj.get('payload',{}).get('type') == 'user_message':
+        print('yes')
+        exit(0)
+print('no')
+"
+  fi
+}
+
+if [[ "$(has_prompt "$LINES")" != "yes" ]]; then
+  LINES=$(tail -2000 "$TRANSCRIPT")
+fi
+
+# --- Parse ---
+printf '%s' "$LINES" | python3 -c "
+import sys, json
+
+agent = '$AGENT'
+mode = '$MODE'
+history_n = int('${HISTORY_N:-0}') if '${HISTORY_N:-0}'.isdigit() else 0
+
+lines = []
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        lines.append(json.loads(raw))
+    except:
+        continue
+
+if not lines:
+    print(json.dumps({'error': 'no conversation data'}))
+    sys.exit(0)
+
+
+def parse_claude():
+    # Collect human prompts (type=user, content is string, not meta/sidechain)
+    prompts = []
+    for obj in lines:
+        if (obj.get('type') == 'user'
+            and isinstance(obj.get('message', {}).get('content'), str)
+            and not obj.get('isMeta')
+            and not obj.get('isSidechain')):
+            prompts.append(obj['message']['content'])
+
+    # Collect assistant messages grouped by message.id (delta pattern)
+    # Each id can have multiple JSONL lines with different content blocks
+    from collections import OrderedDict
+    assistant_groups = OrderedDict()
+    for obj in lines:
+        if obj.get('type') == 'assistant' and not obj.get('isSidechain'):
+            mid = obj.get('message', {}).get('id', '')
+            if mid not in assistant_groups:
+                assistant_groups[mid] = []
+            content = obj.get('message', {}).get('content', [])
+            if isinstance(content, list):
+                assistant_groups[mid].extend(content)
+
+    # Extract text blocks from each assistant message group
+    responses = []
+    for mid, blocks in assistant_groups.items():
+        text_parts = []
+        for b in blocks:
+            if isinstance(b, dict) and b.get('type') == 'text' and b.get('text', '').strip():
+                text_parts.append(b['text'])
+        if text_parts:
+            responses.append('\n\n'.join(text_parts))
+
+    if mode == 'last':
+        prompt = prompts[-1] if prompts else ''
+        response = responses[-1] if responses else ''
+        if not prompt and not response:
+            print(json.dumps({'error': 'no conversation data'}))
+            return
+        print(json.dumps({'agent': agent, 'prompt': prompt, 'response': response}))
+
+    elif mode == 'history':
+        # Pair prompts with responses chronologically
+        # Walk the JSONL in order, tracking prompt/response alternation
+        pairs = []
+        current_prompt = None
+        prompt_idx = 0
+        response_idx = 0
+        seen_msg_ids = set()
+
+        for obj in lines:
+            if (obj.get('type') == 'user'
+                and isinstance(obj.get('message', {}).get('content'), str)
+                and not obj.get('isMeta')
+                and not obj.get('isSidechain')):
+                # New prompt — if we had a pending prompt without response, emit it
+                if current_prompt is not None:
+                    pairs.append({'prompt': current_prompt, 'response': ''})
+                current_prompt = obj['message']['content']
+            elif obj.get('type') == 'assistant' and not obj.get('isSidechain'):
+                mid = obj.get('message', {}).get('id', '')
+                if mid in seen_msg_ids:
+                    continue  # Already processed this message group
+                seen_msg_ids.add(mid)
+                # Get the full grouped response for this message id
+                blocks = assistant_groups.get(mid, [])
+                text_parts = [b['text'] for b in blocks if isinstance(b, dict) and b.get('type') == 'text' and b.get('text', '').strip()]
+                if text_parts and current_prompt is not None:
+                    pairs.append({'prompt': current_prompt, 'response': '\n\n'.join(text_parts)})
+                    current_prompt = None
+                elif text_parts:
+                    # Response without a tracked prompt (e.g., continuation)
+                    pairs.append({'prompt': '', 'response': '\n\n'.join(text_parts)})
+
+        # Emit final pending prompt
+        if current_prompt is not None:
+            pairs.append({'prompt': current_prompt, 'response': ''})
+
+        # Take last N
+        result = pairs[-history_n:] if history_n > 0 else pairs
+        print(json.dumps({'agent': agent, 'pairs': result}))
+
+    elif mode == 'blocked':
+        # Find the last assistant tool_use with no corresponding tool_result
+        # Walk backwards through assistant messages to find the last tool_use block
+        resolved_tool_use_ids = set()
+        for obj in lines:
+            if obj.get('type') == 'user':
+                content = obj.get('message', {}).get('content', [])
+                if isinstance(content, list):
+                    for b in content:
+                        if isinstance(b, dict) and b.get('type') == 'tool_result':
+                            resolved_tool_use_ids.add(b.get('tool_use_id', ''))
+
+        # Find last unresolved tool_use
+        last_tool = None
+        for mid in reversed(list(assistant_groups.keys())):
+            blocks = assistant_groups[mid]
+            for b in reversed(blocks):
+                if isinstance(b, dict) and b.get('type') == 'tool_use':
+                    if b.get('id', '') not in resolved_tool_use_ids:
+                        last_tool = b
+                        break
+            if last_tool:
+                break
+
+        if not last_tool:
+            print(json.dumps({'error': 'no pending tool use found'}))
+            return
+
+        result = {
+            'agent': agent,
+            'tool': last_tool.get('name', ''),
+            'input': last_tool.get('input', {})
+        }
+        # Extract question for AskUserQuestion
+        if last_tool.get('name') == 'AskUserQuestion':
+            questions = last_tool.get('input', {}).get('questions', [])
+            if questions and isinstance(questions[0], dict):
+                result['question'] = questions[0].get('question', '')
+        print(json.dumps(result))
+
+
+def parse_codex():
+    # Human prompts: event_msg with payload.type=user_message
+    prompts = []
+    for obj in lines:
+        if (obj.get('type') == 'event_msg'
+            and obj.get('payload', {}).get('type') == 'user_message'):
+            prompts.append(obj['payload'].get('message', ''))
+
+    if mode == 'last':
+        # Use task_complete for the final response
+        last_response = ''
+        for obj in reversed(lines):
+            if (obj.get('type') == 'event_msg'
+                and obj.get('payload', {}).get('type') == 'task_complete'):
+                last_response = obj['payload'].get('last_agent_message', '') or ''
+                break
+
+        prompt = prompts[-1] if prompts else ''
+        if not prompt and not last_response:
+            print(json.dumps({'error': 'no conversation data'}))
+            return
+        print(json.dumps({'agent': agent, 'prompt': prompt, 'response': last_response}))
+
+    elif mode == 'history':
+        # Collect assistant responses from response_item messages
+        # Pair with task_complete events for turn boundaries
+        # Strategy: each user_message starts a turn, each task_complete ends it
+        pairs = []
+        current_prompt = None
+
+        for obj in lines:
+            if (obj.get('type') == 'event_msg'
+                and obj.get('payload', {}).get('type') == 'user_message'):
+                if current_prompt is not None:
+                    pairs.append({'prompt': current_prompt, 'response': ''})
+                current_prompt = obj['payload'].get('message', '')
+            elif (obj.get('type') == 'event_msg'
+                  and obj.get('payload', {}).get('type') == 'task_complete'):
+                response = obj['payload'].get('last_agent_message', '') or ''
+                if current_prompt is not None:
+                    pairs.append({'prompt': current_prompt, 'response': response})
+                    current_prompt = None
+                else:
+                    pairs.append({'prompt': '', 'response': response})
+
+        if current_prompt is not None:
+            pairs.append({'prompt': current_prompt, 'response': ''})
+
+        result = pairs[-history_n:] if history_n > 0 else pairs
+        print(json.dumps({'agent': agent, 'pairs': result}))
+
+    elif mode == 'blocked':
+        # Find last function_call with no matching function_call_output
+        resolved_call_ids = set()
+        for obj in lines:
+            if (obj.get('type') == 'response_item'
+                and obj.get('payload', {}).get('type') == 'function_call_output'):
+                resolved_call_ids.add(obj['payload'].get('call_id', ''))
+
+        last_call = None
+        for obj in reversed(lines):
+            if (obj.get('type') == 'response_item'
+                and obj.get('payload', {}).get('type') == 'function_call'):
+                call_id = obj['payload'].get('call_id', '')
+                if call_id not in resolved_call_ids:
+                    last_call = obj['payload']
+                    break
+
+        if not last_call:
+            print(json.dumps({'error': 'no pending tool use found'}))
+            return
+
+        # Parse arguments (may be JSON string)
+        args = last_call.get('arguments', '')
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except:
+                pass
+
+        print(json.dumps({
+            'agent': agent,
+            'tool': last_call.get('name', ''),
+            'input': args
+        }))
+
+
+if agent == 'claude':
+    parse_claude()
+elif agent == 'codex':
+    parse_codex()
+else:
+    print(json.dumps({'error': 'unknown agent type: ' + agent}))
+"
