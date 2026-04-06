@@ -25,7 +25,7 @@ EOF
 }
 
 error_json() {
-  printf '{"error":"%s"}\n' "$1"
+  python3 -c "import json,sys; print(json.dumps({'error': sys.argv[1]}))" "$1"
   exit 1
 }
 
