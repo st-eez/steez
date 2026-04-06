@@ -47,6 +47,8 @@ steez-bd resume                  # session brief: current bead, suggested skill,
 steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
+steez-agent-state <pane>             # detect AI agent state in a tmux pane
+steez-agent-state --all [--detail]   # scan all panes for AI agents
 steez-upstream-diff <skill>          # diff a steez skill against gstack upstream
 steez-upstream-diff --all            # show divergence summary for all skills
 ```
@@ -60,13 +62,14 @@ network calls, no credentials.
 ```
 steez/                                    # repo root
 ├── shared/steez/                         # shared runtime
-│   ├── bin/                              # 7 bash helper scripts
+│   ├── bin/                              # 8 bash helper scripts
 │   │   ├── steez-config                  # read/write ~/.steez/config
 │   │   ├── steez-slug                    # git remote → owner-repo slug
 │   │   ├── steez-diff-scope              # categorize diff scopes
 │   │   ├── steez-review-log              # append review entries
 │   │   ├── steez-review-read             # read review log + config
 │   │   ├── steez-bd                      # beads integration
+│   │   ├── steez-agent-state             # detect AI agent state in tmux panes
 │   │   └── steez-upstream-diff           # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
@@ -77,7 +80,10 @@ steez/                                    # repo root
 │   │   ├── scripts/                      # build-node-server.sh (Windows compat layer)
 │   │   ├── dist/                         # compiled binaries (gitignored)
 │   │   └── package.json                  # scripts: build, test, dev
-│   ├── hooks/                             # Claude Code hooks (symlinked to ~/.claude/hooks/)
+│   ├── hooks/                             # Claude Code + Codex hooks (symlinked by installer)
+│   │   ├── skill-analytics.sh            # PostToolUse hook for skill usage tracking
+│   │   ├── session-start.sh              # Claude SessionStart hook (tmux pane vars)
+│   │   └── codex-session-start.sh        # Codex SessionStart hook (tmux pane vars)
 │   └── package.json                      # ecosystem tests
 ├── skills/                               # skill directories
 │   ├── browse/SKILL.md                   # browse skill definition
@@ -105,6 +111,7 @@ steez/                                    # repo root
 │   ├── steez-review-log -> ~/.steez/repo/shared/steez/bin/steez-review-log
 │   ├── steez-review-read -> ~/.steez/repo/shared/steez/bin/steez-review-read
 │   ├── steez-bd -> ~/.steez/repo/shared/steez/bin/steez-bd
+│   ├── steez-agent-state -> ~/.steez/repo/shared/steez/bin/steez-agent-state
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
 ├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
@@ -210,6 +217,9 @@ steez-bd ← all skills (beads context in preamble, non-blocking)
          ← plan-eng-review (handoff at completion)
          ← ship (handoff at completion, emit-finding for issues)
   Depends on: bd CLI (beads), jq (macOS system binary)
+
+steez-agent-state — standalone (tmux, ps, python3)
+  Used by: tmux skill, claude-spawn skill
 ```
 
 ## Search Before Building

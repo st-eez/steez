@@ -7,29 +7,31 @@ import (
 	"strings"
 )
 
-// CheckHookRegistration reads ~/.claude/settings.json and prints a message
-// if the Skill PostToolUse hook is not registered. It does not modify the file.
+// CheckHookRegistration reads ~/.claude/settings.json and prints messages
+// for any steez-managed hooks that are not registered. It does not modify the file.
 func CheckHookRegistration(home string) {
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		// No settings.json — definitely needs the hook.
-		printHookSnippet()
+		// No settings.json — definitely needs all hooks.
+		printSkillHookSnippet()
+		printSessionStartHookSnippet()
 		return
 	}
 
-	// Simple string check — if the file contains both "Skill" and
-	// "steez-skill-analytics" in the hooks section, it's registered.
 	content := string(data)
-	if strings.Contains(content, `"Skill"`) && strings.Contains(content, "steez-skill-analytics") {
-		return
+
+	if !(strings.Contains(content, `"Skill"`) && strings.Contains(content, "steez-skill-analytics")) {
+		printSkillHookSnippet()
 	}
 
-	printHookSnippet()
+	if !(strings.Contains(content, `"SessionStart"`) && strings.Contains(content, "steez-session-start")) {
+		printSessionStartHookSnippet()
+	}
 }
 
-func printHookSnippet() {
+func printSkillHookSnippet() {
 	fmt.Println()
 	fmt.Println("  Hook registration needed. Add this to ~/.claude/settings.json")
 	fmt.Println("  under hooks.PostToolUse:")
@@ -43,5 +45,16 @@ func printHookSnippet() {
 	fmt.Println(`          "timeout": 5`)
 	fmt.Println(`        }`)
 	fmt.Println(`      ]`)
+	fmt.Println(`    }`)
+}
+
+func printSessionStartHookSnippet() {
+	fmt.Println()
+	fmt.Println("  Hook registration needed. Add this to ~/.claude/settings.json")
+	fmt.Println("  under hooks.SessionStart:")
+	fmt.Println()
+	fmt.Println(`    {`)
+	fmt.Println(`      "type": "command",`)
+	fmt.Println(`      "command": "$HOME/.claude/hooks/steez-session-start.sh"`)
 	fmt.Println(`    }`)
 }

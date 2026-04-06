@@ -127,6 +127,7 @@ func cmdInstall(args []string) int {
 		{"steez-review-log", "shared/steez/bin/steez-review-log"},
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	}
 	for _, bs := range binSymlinks {
@@ -151,12 +152,36 @@ func cmdInstall(args []string) int {
 
 	hookSymlinks := []struct{ name, relPath string }{
 		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
+		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
 	}
 	for _, hs := range hookSymlinks {
 		source := filepath.Join(repoSymlink, hs.relPath)
 		target := filepath.Join(hookDir, hs.name)
 		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
 			fmt.Fprintf(os.Stderr, "  error: hooks/%s: %v\n", hs.name, err)
+			failed++
+		} else {
+			installed++
+		}
+	}
+
+	// Codex hook symlinks (~/.codex/hooks/).
+	codexHookDir := filepath.Join(home, ".codex", "hooks")
+	if !*dryRun {
+		if err := os.MkdirAll(codexHookDir, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating ~/.codex/hooks/: %v\n", err)
+			return 1
+		}
+	}
+
+	codexHookSymlinks := []struct{ name, relPath string }{
+		{"session-start.sh", "shared/steez/hooks/codex-session-start.sh"},
+	}
+	for _, hs := range codexHookSymlinks {
+		source := filepath.Join(repoSymlink, hs.relPath)
+		target := filepath.Join(codexHookDir, hs.name)
+		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
+			fmt.Fprintf(os.Stderr, "  error: codex-hooks/%s: %v\n", hs.name, err)
 			failed++
 		} else {
 			installed++

@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: steez-agent-state <pane> [--read] [--detail]
+       steez-agent-state --all [--read] [--detail]
+
+Detect the state of AI coding agents (Claude Code, Codex) in tmux panes.
+
+States:
+  working              — agent is thinking, streaming, or executing tools
+  blocked:question     — waiting for user to answer a question
+  blocked:permission   — waiting for permission approval
+  blocked:unknown      — blocked on unrecognized prompt type
+  idle                 — turn complete, ready for next task
+
+Options:
+  --all      Check all tmux panes for AI agents
+  --read     Include visible pane content in output
+  --detail   Include session metadata (session_id, cwd, transcript_path)
+  -h         Show this help
+
+Setup (--detail):
+  Both agents use a SessionStart hook that writes @session_id and
+  @transcript_path to tmux pane variables. Without these, --detail falls
+  back to filesystem matching (Claude) or lsof (Codex).
+
+  Claude Code — add a SessionStart hook in ~/.claude/settings.json:
+    {"type":"command","command":"$HOME/.claude/hooks/steez-session-start.sh"}
+  The hook reads session JSON from stdin and writes pane variables.
+
+  Codex CLI — enable hooks in ~/.codex/config.toml:
+    [features]
+    codex_hooks = true
+  Then create ~/.codex/hooks.json with a SessionStart hook pointing to
+  ~/.codex/hooks/session-start.sh (same pane variable pattern).
+EOF
+  exit 0
+}
+
+detect_agent() {
+  local pane="$1"
+  local shell_pid
+  shell_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null) || {
+    echo "unknown"
+    return
+  }
+
+  local child_cmd
+  child_cmd=$(ps -eo pid,ppid,comm | awk -v ppid="$shell_pid" '$2 == ppid { print $3; exit }')
+
+  case "$child_cmd" in
+    claude) echo "claude" ;;
+    codex)  echo "codex" ;;
+    node)
+      local child_args
+      child_args=$(ps -eo pid,ppid,command | awk -v ppid="$shell_pid" '$2 == ppid { print; exit }')
+      if echo "$child_args" | grep -q "codex"; then
+        echo "codex"
+      elif echo "$child_args" | grep -q "claude"; then
+        echo "claude"
+      else
+        echo "unknown"
+      fi
+      ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+detect_state() {
+  local pane="$1"
+
+  local title
+  title=$(tmux display-message -t "$pane" -p '#{pane_title}' 2>/dev/null) || {
+    echo "error: pane '$pane' not found" >&2
+    return 1
+  }
+
+  if [[ -z "$title" ]]; then
+    echo "error: pane '$pane' has no title" >&2
+    return 1
+  fi
+
+  local name prefix
+  if [[ "$title" == *" "* ]]; then
+    name="${title#* }"
+    prefix=$(printf '%d' "'${title:0:1}" 2>/dev/null) || prefix=0
+  else
+    name="$title"
+    prefix=0
+  fi
+
+  local tail
+  tail=$(tmux capture-pane -t "$pane" -p | tail -10)
+
+  local agent
+  agent=$(detect_agent "$pane")
+
+  local state
+  if echo "$tail" | grep -q "Esc to cancel" || echo "$tail" | grep -q "esc to cancel"; then
+    if echo "$tail" | grep -q "Enter to select"; then
+      state="blocked:question"
+    elif echo "$tail" | grep -q "Tab to amend"; then
+      state="blocked:permission"
+    elif echo "$tail" | grep -q "enter to confirm"; then
+      state="blocked:permission"
+    else
+      state="blocked:unknown"
+    fi
+  elif (( prefix >= 0x2800 && prefix <= 0x28FF )); then
+    state="working"
+  elif [[ "$agent" == "codex" ]]; then
+    # Codex doesn't set braille title prefixes — detect state from pane content.
+    # The › (U+203A) prompt character appears at line start only when idle.
+    if echo "$tail" | grep -q $'^›'; then
+      state="idle"
+    else
+      state="working"
+    fi
+  else
+    state="idle"
+  fi
+
+  echo "$state|$name|$agent"
+}
+
+is_agent_pane() {
+  local pane="$1"
+  [[ "$(detect_agent "$pane")" != "unknown" ]]
+}
+
+find_transcript() {
+  local agent="$1" pane="$2"
+
+  # Primary: tmux pane variable (set by SessionStart hooks)
+  local pane_path
+  pane_path=$(tmux show-options -pv -t "$pane" @transcript_path 2>/dev/null)
+  if [[ -n "$pane_path" ]]; then
+    echo "$pane_path"
+    return
+  fi
+
+  # Fallback: agent-specific discovery
+  case "$agent" in
+    claude)
+      local cwd
+      cwd=$(tmux display-message -t "$pane" -p '#{pane_current_path}' 2>/dev/null)
+      [[ -z "$cwd" ]] && return 1
+      local path_key="${cwd//\//-}"
+      local session_dir="$HOME/.claude/projects/${path_key}"
+      [[ -d "$session_dir" ]] || return 1
+      ls -t "$session_dir"/*.jsonl 2>/dev/null | head -1
+      ;;
+    codex)
+      # lsof: Codex native binary holds JSONL open as a write handle
+      local shell_pid
+      shell_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null) || return 1
+      # Walk: shell → node → codex native binary (comm is full path, not just "codex")
+      local node_pid codex_pid
+      node_pid=$(ps -eo pid,ppid,comm | awk -v ppid="$shell_pid" '$2 == ppid && $3 == "node" { print $1; exit }')
+      if [[ -n "$node_pid" ]]; then
+        codex_pid=$(ps -eo pid,ppid,comm | awk -v ppid="$node_pid" '$2 == ppid && /codex/ { print $1; exit }')
+      fi
+      if [[ -z "$codex_pid" ]]; then
+        # Direct codex binary as child of shell
+        codex_pid=$(ps -eo pid,ppid,comm | awk -v ppid="$shell_pid" '$2 == ppid && /codex/ { print $1; exit }')
+      fi
+      if [[ -n "$codex_pid" ]]; then
+        lsof -p "$codex_pid" -Fn 2>/dev/null | grep '\.jsonl$' | head -1 | cut -c2-
+      fi
+      ;;
+  esac
+}
+
+extract_detail() {
+  local pane="$1" transcript="$2"
+
+  local session_id cwd
+  cwd=$(tmux display-message -t "$pane" -p '#{pane_current_path}' 2>/dev/null)
+  session_id=$(tmux show-options -pv -t "$pane" @session_id 2>/dev/null)
+
+  python3 -c "
+import json,sys
+a=sys.argv
+print(json.dumps({k:(v if v else None) for k,v in zip(['session_id','cwd','transcript_path'],a[1:])}))
+" "$session_id" "$cwd" "$transcript"
+}
+
+format_json() {
+  local pane="$1" state="$2" name="$3" agent="$4" content="$5" detail="$6"
+
+  local escaped_name
+  escaped_name=$(printf '%s' "$name" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' | sed 's/^"//;s/"$//')
+  printf '{"pane":"%s","agent":"%s","state":"%s","name":"%s"' "$pane" "$agent" "$state" "$escaped_name"
+  if [[ -n "$content" ]]; then
+    local escaped
+    escaped=$(printf '%s' "$content" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+    printf ',"content":%s' "$escaped"
+  fi
+  if [[ -n "$detail" ]]; then
+    printf ',"detail":%s' "$detail"
+  fi
+  printf '}'
+}
+
+check_pane() {
+  local pane="$1" include_read="$2" include_detail="$3"
+
+  local pane_id
+  pane_id=$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null)
+  if [[ -z "$pane_id" ]]; then
+    echo "error: pane '$pane' not found" >&2
+    return 1
+  fi
+
+  local result
+  result=$(detect_state "$pane") || return 1
+
+  local state name agent
+  state="${result%%|*}"
+  local rest="${result#*|}"
+  name="${rest%%|*}"
+  agent="${rest#*|}"
+
+  local content=""
+  local detail=""
+
+  if [[ "$include_read" == "true" ]]; then
+    content=$(tmux capture-pane -t "$pane" -p -S -)
+  fi
+
+  if [[ "$include_detail" == "true" ]]; then
+    local transcript
+    local transcript
+    transcript=$(find_transcript "$agent" "$pane" 2>/dev/null) || true
+    detail=$(extract_detail "$pane" "$transcript" 2>/dev/null) || true
+  fi
+
+  format_json "$pane_id" "$state" "$name" "$agent" "$content" "$detail"
+}
+
+main() {
+  local all=false
+  local read_content=false
+  local detail=false
+  local pane=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all) all=true; shift ;;
+      --read) read_content=true; shift ;;
+      --detail) detail=true; shift ;;
+      -h|--help) usage ;;
+      -*) echo "error: unknown option '$1'" >&2; exit 1 ;;
+      *) pane="$1"; shift ;;
+    esac
+  done
+
+  if [[ "$all" == "false" && -z "$pane" ]]; then
+    echo "error: specify a pane target or use --all" >&2
+    exit 1
+  fi
+
+  if [[ "$all" == "true" ]]; then
+    local panes first=true
+    panes=$(tmux list-panes -a -F '#{pane_id}')
+
+    printf '['
+    while IFS= read -r pid; do
+      if ! is_agent_pane "$pid"; then
+        continue
+      fi
+
+      if [[ "$first" == "true" ]]; then
+        first=false
+      else
+        printf ','
+      fi
+
+      check_pane "$pid" "$read_content" "$detail"
+    done <<< "$panes"
+    printf ']\n'
+  else
+    local resolved
+    resolved=$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null)
+    if [[ -z "$resolved" ]]; then
+      echo "error: pane '$pane' not found" >&2
+      exit 1
+    fi
+    if ! is_agent_pane "$pane"; then
+      echo "error: pane '$pane' is not a recognized AI agent" >&2
+      exit 1
+    fi
+    check_pane "$pane" "$read_content" "$detail"
+    printf '\n'
+  fi
+}
+
+main "$@"
