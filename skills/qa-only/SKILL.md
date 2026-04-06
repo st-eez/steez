@@ -1,8 +1,8 @@
 ---
-name: steez-qa-only
+name: qa-only
 preamble-tier: 4
 version: 1.0.0
-description: Report-only QA testing. Systematically tests a web application and produces a structured report with health score, screenshots, and repro steps — but never fixes anything. Use when asked to "just report bugs", "qa report only", or "test but don't fix". For the full test-fix-verify loop, use /steez-qa instead. Proactively suggest when the user wants a bug report without any code changes. (steez)
+description: Report-only QA testing. Systematically tests a web application and produces a structured report with health score, screenshots, and repro steps — but never fixes anything. Use when asked to "just report bugs", "qa report only", or "test but don't fix". For the full test-fix-verify loop, use /qa instead. Proactively suggest when the user wants a bug report without any code changes. (steez)
 allowed-tools:
   - Bash
   - Read
@@ -24,7 +24,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || { echo "[steez] WARNING: config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -41,7 +41,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-qa-only, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /qa-only, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -128,7 +128,7 @@ jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-qa-only" --ar
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate your /steez-qa-only experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /qa-only experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -140,7 +140,7 @@ At the end of each major workflow step, rate your /steez-qa-only experience 0-10
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-qa-only
+**Date:** {YYYY-MM-DD} | **Skill:** /qa-only
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -178,7 +178,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -193,12 +193,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
@@ -206,7 +206,7 @@ file you are allowed to edit in plan mode. The plan file review report is part o
 plan's living status.
 <!-- END MANAGED PREAMBLE -->
 
-# /steez-qa-only: Report-Only QA Testing
+# /qa-only: Report-Only QA Testing
 
 You are a QA engineer. Test web applications like a real user — click everything, fill every form, check every state. Produce a structured report with evidence. **NEVER fix anything.**
 
@@ -263,10 +263,10 @@ Before falling back to git diff heuristics, check for richer test plan sources:
 1. **Project-scoped test plans:** Check `~/.steez/projects/` for recent `*-test-plan-*.md` files for this repo
    ```bash
    setopt +o nomatch 2>/dev/null || true  # zsh compat
-   eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
+   eval "$(~/.steez/bin/slug 2>/dev/null)"
    ls -t ~/.steez/projects/$SLUG/*-test-plan-*.md 2>/dev/null | head -1
    ```
-2. **Conversation context:** Check if a prior `/steez-plan-eng-review` or `/steez-plan-ceo-review` produced test plan output in this conversation
+2. **Conversation context:** Check if a prior `/plan-eng-review` or `/plan-ceo-review` produced test plan output in this conversation
 3. **Use whichever source is richer.** Fall back to git diff analysis only if neither is available.
 
 ---
@@ -275,7 +275,7 @@ Before falling back to git diff heuristics, check for richer test plan sources:
 
 ### Diff-aware (automatic when on a feature branch with no URL)
 
-This is the **primary mode** for developers verifying their work. When the user says `/steez-qa-only` without a URL and the repo is on a feature branch, automatically:
+This is the **primary mode** for developers verifying their work. When the user says `/qa-only` without a URL and the repo is on a feature branch, automatically:
 
 1. **Analyze the branch diff** to understand what changed:
    ```bash
@@ -291,7 +291,7 @@ This is the **primary mode** for developers verifying their work. When the user 
    - API endpoints → test them directly with `$B js "await fetch('/api/...')"`
    - Static pages (markdown, HTML) → navigate to them directly
 
-   **If no obvious pages/routes are identified from the diff:** Do not skip browser testing. The user invoked /steez-qa-only because they want browser-based verification. Fall back to Quick mode — navigate to the homepage, follow the top 5 navigation targets, check console for errors, and test any interactive elements found. Backend, config, and infrastructure changes affect app behavior — always verify the app still works.
+   **If no obvious pages/routes are identified from the diff:** Do not skip browser testing. The user invoked /qa-only because they want browser-based verification. Fall back to Quick mode — navigate to the homepage, follow the top 5 navigation targets, check console for errors, and test any interactive elements found. Backend, config, and infrastructure changes affect app behavior — always verify the app still works.
 
 3. **Detect the running app** — check common local dev ports:
    ```bash
@@ -547,7 +547,7 @@ Minimum 0 per category.
 9. **Never delete output files.** Screenshots and reports accumulate — that's intentional.
 10. **Use `snapshot -C` for tricky UIs.** Finds clickable divs that the accessibility tree misses.
 11. **Show screenshots to the user.** After every `$B screenshot`, `$B snapshot -a -o`, or `$B responsive` command, use the Read tool on the output file(s) so the user can see them inline. For `responsive` (3 files), Read all three. This is critical — without it, screenshots are invisible to the user.
-12. **Never refuse to use the browser.** When the user invokes /steez-qa or /steez-qa-only, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
+12. **Never refuse to use the browser.** When the user invokes /qa or /qa-only, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
 
 ---
 
@@ -559,7 +559,7 @@ Write the report to both local and project-scoped locations:
 
 **Project-scoped:** Write test outcome artifact for cross-session context:
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 ```
 Write to `~/.steez/projects/{slug}/{user}-{branch}-test-outcome-{datetime}.md`
 
@@ -582,5 +582,5 @@ Report filenames use the domain and date: `qa-report-myapp-com-2026-03-12.md`
 
 ## Additional Rules (qa-only specific)
 
-11. **Never fix bugs.** Find and document only. Do not read source code, edit files, or suggest fixes in the report. Your job is to report what's broken, not to fix it. Use `/steez-qa` for the test-fix-verify loop.
-12. **No test framework detected?** If the project has no test infrastructure (no test config files, no test directories), include in the report summary: "No test framework detected. Run `/steez-qa` to bootstrap one and enable regression test generation."
+11. **Never fix bugs.** Find and document only. Do not read source code, edit files, or suggest fixes in the report. Your job is to report what's broken, not to fix it. Use `/qa` for the test-fix-verify loop.
+12. **No test framework detected?** If the project has no test infrastructure (no test config files, no test directories), include in the report summary: "No test framework detected. Run `/qa` to bootstrap one and enable regression test generation."

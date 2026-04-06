@@ -1,5 +1,5 @@
 #!/bin/bash
-# Expose Claude session metadata to tmux pane variables for steez-agent-state --detail
+# Expose Claude session metadata to tmux pane variables for agent-state --detail
 # Hook: SessionStart (settings.json)
 read -r -t 5 INPUT || true
 if [ -n "$TMUX_PANE" ]; then

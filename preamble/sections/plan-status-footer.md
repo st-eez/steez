@@ -7,7 +7,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -22,12 +22,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one

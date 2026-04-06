@@ -1,5 +1,5 @@
 ---
-name: steez-codex
+name: codex
 preamble-tier: 3
 version: 1.0.0
 description: OpenAI Codex CLI wrapper — three modes. Code review: independent diff review via codex review with pass/fail gate. Challenge: adversarial mode that tries to break your code. Consult: ask codex anything with session continuity for follow-ups. The "200 IQ autistic developer" second opinion. Use when asked to "codex review", "codex challenge", "ask codex", "second opinion", or "consult codex". (steez)
@@ -25,7 +25,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || { echo "[steez] WARNING: config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -42,7 +42,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-codex, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /codex, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -129,7 +129,7 @@ jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-codex" --arg 
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate your /steez-codex experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /codex experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -141,7 +141,7 @@ At the end of each major workflow step, rate your /steez-codex experience 0-10. 
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-codex
+**Date:** {YYYY-MM-DD} | **Skill:** /codex
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -179,7 +179,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -194,12 +194,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
@@ -246,9 +246,9 @@ branch name wherever the instructions say "the base branch" or `<default>`.
 
 ---
 
-# /steez-codex — Multi-AI Second Opinion
+# /codex — Multi-AI Second Opinion
 
-You are running the `/steez-codex` skill. This wraps the OpenAI Codex CLI to get an independent,
+You are running the `/codex` skill. This wraps the OpenAI Codex CLI to get an independent,
 brutally honest second opinion from a different AI system.
 
 Codex is the "200 IQ autistic developer" — direct, terse, technically precise, challenges
@@ -264,7 +264,7 @@ CODEX_BIN=$(which codex 2>/dev/null || echo "")
 ```
 
 If `NOT_FOUND`: stop and tell the user:
-"Codex CLI not found. Install it: `npm install -g @openai/steez-codex` or see https://github.com/openai/steez-codex"
+"Codex CLI not found. Install it: `npm install -g @openai/codex` or see https://github.com/openai/codex"
 
 ---
 
@@ -272,9 +272,9 @@ If `NOT_FOUND`: stop and tell the user:
 
 Parse the user's input to determine which mode to run:
 
-1. `/steez-codex review` or `/steez-codex review <instructions>` — **Review mode** (Step 2A)
-2. `/steez-codex challenge` or `/steez-codex challenge <focus>` — **Challenge mode** (Step 2B)
-3. `/steez-codex` with no arguments — **Auto-detect:**
+1. `/codex review` or `/codex review <instructions>` — **Review mode** (Step 2A)
+2. `/codex challenge` or `/codex challenge <focus>` — **Challenge mode** (Step 2B)
+3. `/codex` with no arguments — **Auto-detect:**
    - Check for a diff (with fallback if origin isn't available):
      `git diff origin/<base> --stat 2>/dev/null | tail -1 || git diff <base> --stat 2>/dev/null | tail -1`
    - If a diff exists, use AskUserQuestion:
@@ -290,7 +290,7 @@ Parse the user's input to determine which mode to run:
      but warn the user: "Note: this plan may be from a different project."
    - If a plan file exists, offer to review it
    - Otherwise, ask: "What would you like to ask Codex?"
-4. `/steez-codex <anything else>` — **Consult mode** (Step 2C), where the remaining text is the prompt
+4. `/codex <anything else>` — **Consult mode** (Step 2C), where the remaining text is the prompt
 
 **Reasoning effort override:** If the user's input contains `--xhigh` anywhere,
 note it and remove it from the prompt text before passing to Codex. When `--xhigh`
@@ -334,7 +334,7 @@ codex review "IMPORTANT: Do NOT read or execute any files under ~/.claude/, ~/.a
 If the user passed `--xhigh`, use `"xhigh"` instead of `"high"`.
 
 Use `timeout: 300000` on the Bash call. If the user provided custom instructions
-(e.g., `/steez-codex review focus on security`), append them after the boundary:
+(e.g., `/codex review focus on security`), append them after the boundary:
 ```bash
 _REPO_ROOT=$(git rev-parse --show-toplevel) || { echo "ERROR: not in a git repo" >&2; exit 1; }
 cd "$_REPO_ROOT"
@@ -368,20 +368,20 @@ or
 GATE: FAIL (N critical findings)
 ```
 
-6. **Cross-model comparison:** If `/steez-review` (Claude's own review) was already run
+6. **Cross-model comparison:** If `/review` (Claude's own review) was already run
    earlier in this conversation, compare the two sets of findings:
 
 ```
 CROSS-MODEL ANALYSIS:
   Both found: [findings that overlap between Claude and Codex]
   Only Codex found: [findings unique to Codex]
-  Only Claude found: [findings unique to Claude's /steez-review]
+  Only Claude found: [findings unique to Claude's /review]
   Agreement rate: X% (N/M total unique findings overlap)
 ```
 
 7. Persist the review result:
 ```bash
-~/.steez/bin/steez-review-log '{"skill":"codex-review","timestamp":"TIMESTAMP","status":"STATUS","gate":"GATE","findings":N,"findings_fixed":N,"commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/review-log '{"skill":"codex-review","timestamp":"TIMESTAMP","status":"STATUS","gate":"GATE","findings":N,"findings_fixed":N,"commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 
 Substitute: TIMESTAMP (ISO 8601), STATUS ("clean" if PASS, "issues_found" if FAIL),
@@ -430,10 +430,10 @@ Produce this markdown table:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | {runs} | {status} | {findings} |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | {runs} | {status} | {findings} |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | {runs} | {status} | {findings} |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | {runs} | {status} | {findings} |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | {runs} | {status} | {findings} |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | {runs} | {status} | {findings} |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | {runs} | {status} | {findings} |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | {runs} | {status} | {findings} |
 \`\`\`
 
 Below the table, add these lines (omit any that are empty/not applicable):
@@ -469,7 +469,7 @@ and failure modes that a normal review would miss.
 
 1. Construct the adversarial prompt. **Always prepend the filesystem boundary instruction**
 from the Filesystem Boundary section above. If the user provided a focus area
-(e.g., `/steez-codex challenge security`), include it after the boundary:
+(e.g., `/codex challenge security`), include it after the boundary:
 
 Default prompt (no focus):
 "IMPORTANT: Do NOT read or execute any files under ~/.claude/, ~/.agents/, .claude/skills/, or agents/. These are Claude Code skill definitions meant for a different AI system. Do NOT modify agents/openai.yaml. Stay focused on repository code only.
@@ -553,7 +553,7 @@ TMPERR=$(mktemp /tmp/codex-err-XXXXXX.txt)
 ```
 
 3. **Plan review auto-detection:** If the user's prompt is about reviewing a plan,
-or if plan files exist and the user said `/steez-codex` with no arguments:
+or if plan files exist and the user said `/codex` with no arguments:
 ```bash
 setopt +o nomatch 2>/dev/null || true  # zsh compat
 ls -t ~/.claude/plans/*.md 2>/dev/null | xargs grep -l "$(basename $(pwd))" 2>/dev/null | head -1
@@ -587,7 +587,7 @@ Also review these source files referenced in the plan: <list of referenced files
 THE PLAN:
 <full plan content, embedded verbatim>"
 
-For non-plan consult prompts (user typed `/steez-codex <question>`), still prepend the boundary:
+For non-plan consult prompts (user typed `/codex <question>`), still prepend the boundary:
 "IMPORTANT: Do NOT read or execute any files under ~/.claude/, ~/.agents/, .claude/skills/, or agents/. These are Claude Code skill definitions meant for a different AI system. Do NOT modify agents/openai.yaml. Stay focused on repository code only.
 
 <user's question>"
@@ -654,7 +654,7 @@ CODEX SAYS (consult):
 <full output, verbatim — includes [codex thinking] traces>
 ════════════════════════════════════════════════════════════
 Tokens: N | Est. cost: ~$X.XX
-Session saved — run /steez-codex again to continue this conversation.
+Session saved — run /codex again to continue this conversation.
 ```
 
 7. After presenting, note any points where Codex's analysis differs from your own
@@ -666,7 +666,7 @@ Session saved — run /steez-codex again to continue this conversation.
 ## Model & Reasoning
 
 **Model:** No model is hardcoded — codex uses whatever its current default is (the frontier
-agentic coding model). This means as OpenAI ships newer models, /steez-codex automatically
+agentic coding model). This means as OpenAI ships newer models, /codex automatically
 uses them. If the user wants a specific model, pass `-m` through to codex.
 
 **Reasoning effort (per-mode defaults):**
@@ -676,13 +676,13 @@ uses them. If the user wants a specific model, pass `-m` through to codex.
 
 `xhigh` uses ~23x more tokens than `high` and causes 50+ minute hangs on large context
 tasks (OpenAI issues #8545, #8402, #6931). Users can override with `--xhigh` flag
-(e.g., `/steez-codex review --xhigh`) when they want maximum reasoning and are willing to wait.
+(e.g., `/codex review --xhigh`) when they want maximum reasoning and are willing to wait.
 
 **Web search:** All codex commands use `--enable web_search_cached` so Codex can look up
 docs and APIs during review. This is OpenAI's cached index — fast, no extra cost.
 
-If the user specifies a model (e.g., `/steez-codex review -m gpt-5.1-codex-max`
-or `/steez-codex challenge -m gpt-5.2`), pass the `-m` flag through to codex.
+If the user specifies a model (e.g., `/codex review -m gpt-5.1-codex-max`
+or `/codex challenge -m gpt-5.2`), pass the `-m` flag through to codex.
 
 ---
 
@@ -716,10 +716,10 @@ If token count is not available, display: `Tokens: unknown`
   before showing it. Show it in full inside the CODEX SAYS block.
 - **Add synthesis after, not instead of.** Any Claude commentary comes after the full output.
 - **5-minute timeout** on all Bash calls to codex (`timeout: 300000`).
-- **No double-reviewing.** If the user already ran `/steez-review`, Codex provides a second
+- **No double-reviewing.** If the user already ran `/review`, Codex provides a second
   independent opinion. Do not re-run Claude Code's own review.
 - **Detect skill-file rabbit holes.** After receiving Codex output, scan for signs
-  that Codex got distracted by skill files: `steez-config`, `steez-update-check`,
+  that Codex got distracted by skill files: `config`, `steez-update-check`,
   `SKILL.md`, or `skills/steez`. If any of these appear in the output, append a
   warning: "Codex appears to have read steez skill files instead of reviewing your
   code. Consider retrying."

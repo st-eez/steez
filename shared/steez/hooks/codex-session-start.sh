@@ -1,5 +1,5 @@
 #!/bin/bash
-# Expose Codex session metadata to tmux pane variables for steez-agent-state --detail
+# Expose Codex session metadata to tmux pane variables for agent-state --detail
 input=$(cat)
 if [ -n "$TMUX_PANE" ]; then
   sid=$(echo "$input" | jq -r '.session_id // empty')

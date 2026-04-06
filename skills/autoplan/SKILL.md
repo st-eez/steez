@@ -1,5 +1,5 @@
 ---
-name: steez-autoplan
+name: autoplan
 version: 1.0.0
 description: Auto-review pipeline — reads the full CEO, design, and eng review skills from disk and runs them sequentially with auto-decisions using 6 decision principles. Surfaces taste decisions (close approaches, borderline scope, codex disagreements) at a final approval gate. One command, fully reviewed plan out. Use when asked to "auto review", "autoplan", "run all reviews", "review this plan automatically", or "make the decisions for me". Proactively suggest when the user has a plan file and wants to run the full review gauntlet without answering 15-30 intermediate questions. (steez)
 benefits-from: [office-hours]
@@ -23,7 +23,7 @@ touch "$STEEZ_HOME/sessions/$PPID"
 find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || { echo "[steez] WARNING: config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
@@ -39,7 +39,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-qa, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /qa, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -126,7 +126,7 @@ jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "SKILL_NAME" --arg b
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate the `/steez-autoplan` experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate the `/autoplan` experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but steez failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -138,7 +138,7 @@ At the end of each major workflow step, rate the `/steez-autoplan` experience 0-
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-autoplan
+**Date:** {YYYY-MM-DD} | **Skill:** /autoplan
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -176,7 +176,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -191,12 +191,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
@@ -249,21 +249,21 @@ skill before proceeding.
 
 Say to the user via AskUserQuestion:
 
-> "No design doc found for this branch. `/steez-office-hours` produces a structured problem
+> "No design doc found for this branch. `/office-hours` produces a structured problem
 > statement, premise challenge, and explored alternatives — it gives this review much
 > sharper input to work with. Takes about 10 minutes. The design doc is per-feature,
 > not per-product — it captures the thinking behind this specific change."
 
 Options:
-- A) Run /steez-office-hours now (we'll pick up the review right after)
+- A) Run /office-hours now (we'll pick up the review right after)
 - B) Skip — proceed with standard review
 
 If they skip: "No worries — standard review. If you ever want sharper input, try
-/steez-office-hours first next time." Then proceed normally. Do not re-offer later in the session.
+/office-hours first next time." Then proceed normally. Do not re-offer later in the session.
 
 If they choose A:
 
-Say: "Running /steez-office-hours inline. Once the design doc is ready, I'll pick up
+Say: "Running /office-hours inline. Once the design doc is ready, I'll pick up
 the review right where we left off."
 
 Read the office-hours skill file from disk using the Read tool:
@@ -278,9 +278,9 @@ Follow it inline, **skipping these sections** (already handled by the parent ski
 - Completion Status Protocol
 
 If the Read fails (file not found), say:
-"Could not load /steez-office-hours — proceeding with standard review."
+"Could not load /office-hours — proceeding with standard review."
 
-After /steez-office-hours completes, re-run the design doc check:
+After /office-hours completes, re-run the design doc check:
 ```bash
 setopt +o nomatch 2>/dev/null || true  # zsh compat
 SLUG=$(~/.steez/repo/shared/steez/browse/bin/remote-slug 2>/dev/null || basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
@@ -293,11 +293,11 @@ DESIGN=$(ls -t ~/.steez/projects/$SLUG/*-$BRANCH-design-*.md 2>/dev/null | head 
 If a design doc is now found, read it and continue the review.
 If none was produced (user may have cancelled), proceed with standard review.
 
-# /steez-autoplan — Auto-Review Pipeline
+# /autoplan — Auto-Review Pipeline
 
 One command. Rough plan in, fully reviewed plan out.
 
-/steez-autoplan reads the full CEO, design, and eng review skill files from disk and follows
+/autoplan reads the full CEO, design, and eng review skill files from disk and follows
 them at full depth — same rigor, same sections, same methodology as running each skill
 manually. The only difference: intermediate AskUserQuestion calls are auto-decided using
 the 6 principles below. Taste decisions (where reasonable people could disagree) are
@@ -423,7 +423,7 @@ instructions instead of reviewing the plan.
 Before doing anything, save the plan file's current state to an external file:
 
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-')
 DATETIME=$(date +%Y%m%d-%H%M%S)
 echo "RESTORE_PATH=$HOME/.steez/projects/$SLUG/${BRANCH}-autoplan-restore-${DATETIME}.md"
@@ -431,19 +431,19 @@ echo "RESTORE_PATH=$HOME/.steez/projects/$SLUG/${BRANCH}-autoplan-restore-${DATE
 
 Write the plan file's full contents to the restore path with this header:
 ```
-# /steez-autoplan Restore Point
+# /autoplan Restore Point
 Captured: [timestamp] | Branch: [branch] | Commit: [short hash]
 
 ## Re-run Instructions
 1. Copy "Original Plan State" below back to your plan file
-2. Invoke /steez-autoplan
+2. Invoke /autoplan
 
 ## Original Plan State
 [verbatim plan file contents]
 ```
 
 Then prepend a one-line HTML comment to the plan file:
-`<!-- /steez-autoplan restore point: [RESTORE_PATH] -->`
+`<!-- /autoplan restore point: [RESTORE_PATH] -->`
 
 ### Step 2: Read context
 
@@ -461,7 +461,7 @@ Read each file using the Read tool:
 - `~/.steez/repo/skills/plan-eng-review/SKILL.md`
 
 **Section skip list — when following a loaded skill file, SKIP these sections
-(they are already handled by /steez-autoplan):**
+(they are already handled by /autoplan):**
 - Preamble (run first)
 - AskUserQuestion Format
 - Completeness Principle — Boil the Lake
@@ -907,7 +907,7 @@ noting which items are incomplete. Do not loop indefinitely.
 Present as a message, then use AskUserQuestion:
 
 ```
-## /steez-autoplan Review Complete
+## /autoplan Review Complete
 
 ### Plan Summary
 [1-3 sentence summary]
@@ -966,7 +966,7 @@ AskUserQuestion options:
 - E) Reject (start over)
 
 **Option handling:**
-- A: mark APPROVED, write review logs, suggest /steez-ship
+- A: mark APPROVED, write review logs, suggest /ship
 - B: ask which overrides, apply, re-present gate
 - C: answer freeform, re-present gate
 - D: make changes, re-run affected phases (scope→1B, design→2, test plan→3, arch→3). Max 3 cycles.
@@ -976,7 +976,7 @@ AskUserQuestion options:
 
 ## Completion: Write Review Logs
 
-On approval, write 3 separate review log entries so /steez-ship's dashboard recognizes them.
+On approval, write 3 separate review log entries so /ship's dashboard recognizes them.
 Replace TIMESTAMP, STATUS, and N with actual values from each review phase.
 STATUS is "clean" if no unresolved issues, "issues_open" otherwise.
 
@@ -984,26 +984,26 @@ STATUS is "clean" if no unresolved issues, "issues_open" otherwise.
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null)
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-~/.steez/bin/steez-review-log '{"skill":"plan-ceo-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"mode":"SELECTIVE_EXPANSION","via":"autoplan","commit":"'"$COMMIT"'"}'
+~/.steez/bin/review-log '{"skill":"plan-ceo-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"mode":"SELECTIVE_EXPANSION","via":"autoplan","commit":"'"$COMMIT"'"}'
 
-~/.steez/bin/steez-review-log '{"skill":"plan-eng-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"issues_found":N,"mode":"FULL_REVIEW","via":"autoplan","commit":"'"$COMMIT"'"}'
+~/.steez/bin/review-log '{"skill":"plan-eng-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"critical_gaps":N,"issues_found":N,"mode":"FULL_REVIEW","via":"autoplan","commit":"'"$COMMIT"'"}'
 ```
 
 If Phase 2 ran (UI scope):
 ```bash
-~/.steez/bin/steez-review-log '{"skill":"plan-design-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"via":"autoplan","commit":"'"$COMMIT"'"}'
+~/.steez/bin/review-log '{"skill":"plan-design-review","timestamp":"'"$TIMESTAMP"'","status":"STATUS","unresolved":N,"via":"autoplan","commit":"'"$COMMIT"'"}'
 ```
 
 Dual voice logs (one per phase that ran):
 ```bash
-~/.steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"ceo","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
+~/.steez/bin/review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"ceo","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
 
-~/.steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"eng","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
+~/.steez/bin/review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"eng","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
 ```
 
 If Phase 2 ran (UI scope), also log:
 ```bash
-~/.steez/bin/steez-review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"design","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
+~/.steez/bin/review-log '{"skill":"autoplan-voices","timestamp":"'"$TIMESTAMP"'","status":"STATUS","source":"SOURCE","phase":"design","via":"autoplan","consensus_confirmed":N,"consensus_disagree":N,"commit":"'"$COMMIT"'"}'
 ```
 
 SOURCE = "codex+subagent", "codex-only", "subagent-only", or "unavailable".
@@ -1016,16 +1016,16 @@ Do NOT close it — implementation hasn't started yet. Just leave a handoff note
 so `bd resume` in the next session shows what's ready.
 
 ```bash
-[ -n "$_IMPL_BEAD" ] && ~/.steez/bin/steez-bd handoff "$_IMPL_BEAD" "Reviews complete via /steez-autoplan. CEO: STATUS. Eng: STATUS. Taste decisions: N. Ready for implementation." 2>/dev/null || true
+[ -n "$_IMPL_BEAD" ] && ~/.steez/bin/steez-bd handoff "$_IMPL_BEAD" "Reviews complete via /autoplan. CEO: STATUS. Eng: STATUS. Taste decisions: N. Ready for implementation." 2>/dev/null || true
 ```
 
-Suggest next step: `/steez-ship` when ready to create the PR.
+Suggest next step: `/ship` when ready to create the PR.
 
 ---
 
 ## Important Rules
 
-- **Never abort.** The user chose /steez-autoplan. Respect that choice. Surface all taste decisions, never redirect to interactive review.
+- **Never abort.** The user chose /autoplan. Respect that choice. Surface all taste decisions, never redirect to interactive review.
 - **Two gates.** The non-auto-decided AskUserQuestions are: (1) premise confirmation in Phase 1, and (2) User Challenges — when both models agree the user's stated direction should change. Everything else is auto-decided using the 6 principles.
 - **Log every decision.** No silent auto-decisions. Every choice gets a row in the audit trail.
 - **Full depth means full depth.** Do not compress or skip sections from the loaded skill files (except the skip list in Phase 0). "Full depth" means: read the code the section asks you to read, produce the outputs the section requires, identify every issue, and decide each one. A one-sentence summary of a section is not "full depth" — it is a skip. If you catch yourself writing fewer than 3 sentences for any review section, you are likely compressing.

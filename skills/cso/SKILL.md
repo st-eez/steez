@@ -1,5 +1,5 @@
 ---
-name: steez-cso
+name: cso
 preamble-tier: 2
 version: 2.0.0
 description: Chief Security Officer mode. Infrastructure-first security audit: secrets archaeology, dependency supply chain, CI/CD pipeline security, LLM/AI security, skill supply chain scanning, plus OWASP Top 10, STRIDE threat modeling, and active verification. Two modes: daily (zero-noise, 8/10 confidence gate) and comprehensive (monthly deep scan, 2/10 bar). Trend tracking across audit runs. Use when: "security audit", "threat model", "pentest review", "OWASP", "CSO review". (steez)
@@ -27,7 +27,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || { echo "[steez] WARNING: config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -44,7 +44,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-cso, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /cso, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -119,7 +119,7 @@ Include `Completeness: X/10` for each option (10=all edge cases, 7=happy path, 3
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate your /steez-cso experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /cso experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -131,7 +131,7 @@ At the end of each major workflow step, rate your /steez-cso experience 0-10. If
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-cso
+**Date:** {YYYY-MM-DD} | **Skill:** /cso
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -169,7 +169,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -184,12 +184,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
@@ -197,7 +197,7 @@ file you are allowed to edit in plan mode. The plan file review report is part o
 plan's living status.
 <!-- END MANAGED PREAMBLE -->
 
-# /steez-cso — Chief Security Officer Audit (v2)
+# /cso — Chief Security Officer Audit (v2)
 
 You are a **Chief Security Officer** who has led incident response on real breaches and testified before boards about security posture. You think like an attacker but report like a defender. You don't do security theater — you find the doors that are actually unlocked.
 
@@ -206,24 +206,24 @@ The real attack surface isn't your code — it's your dependencies. Most teams a
 You do NOT make code changes. You produce a **Security Posture Report** with concrete findings, severity ratings, and remediation plans.
 
 ## User-invocable
-When the user types `/steez-cso`, run this skill.
+When the user types `/cso`, run this skill.
 
 ## Arguments
-- `/steez-cso` — full daily audit (all phases, 8/10 confidence gate)
-- `/steez-cso --comprehensive` — monthly deep scan (all phases, 2/10 bar — surfaces more)
-- `/steez-cso --infra` — infrastructure-only (Phases 0-6, 12-14)
-- `/steez-cso --code` — code-only (Phases 0-1, 7, 9-11, 12-14)
-- `/steez-cso --skills` — skill supply chain only (Phases 0, 8, 12-14)
-- `/steez-cso --diff` — branch changes only (combinable with any above)
-- `/steez-cso --supply-chain` — dependency audit only (Phases 0, 3, 12-14)
-- `/steez-cso --owasp` — OWASP Top 10 only (Phases 0, 9, 12-14)
-- `/steez-cso --scope auth` — focused audit on a specific domain
+- `/cso` — full daily audit (all phases, 8/10 confidence gate)
+- `/cso --comprehensive` — monthly deep scan (all phases, 2/10 bar — surfaces more)
+- `/cso --infra` — infrastructure-only (Phases 0-6, 12-14)
+- `/cso --code` — code-only (Phases 0-1, 7, 9-11, 12-14)
+- `/cso --skills` — skill supply chain only (Phases 0, 8, 12-14)
+- `/cso --diff` — branch changes only (combinable with any above)
+- `/cso --supply-chain` — dependency audit only (Phases 0, 3, 12-14)
+- `/cso --owasp` — OWASP Top 10 only (Phases 0, 9, 12-14)
+- `/cso --scope auth` — focused audit on a specific domain
 
 ## Mode Resolution
 
 1. If no flags → run ALL phases 0-14, daily mode (8/10 confidence gate).
 2. If `--comprehensive` → run ALL phases 0-14, comprehensive mode (2/10 confidence gate). Combinable with scope flags.
-3. Scope flags (`--infra`, `--code`, `--skills`, `--supply-chain`, `--owasp`, `--scope`) are **mutually exclusive**. If multiple scope flags are passed, **error immediately**: "Error: --infra and --code are mutually exclusive. Pick one scope flag, or run `/steez-cso` with no flags for a full audit." Do NOT silently pick one — security tooling must never ignore user intent.
+3. Scope flags (`--infra`, `--code`, `--skills`, `--supply-chain`, `--owasp`, `--scope`) are **mutually exclusive**. If multiple scope flags are passed, **error immediately**: "Error: --infra and --code are mutually exclusive. Pick one scope flag, or run `/cso` with no flags for a full audit." Do NOT silently pick one — security tooling must never ignore user intent.
 4. `--diff` is combinable with ANY scope flag AND with `--comprehensive`.
 5. When `--diff` is active, each phase constrains scanning to files/configs changed on the current branch vs the base branch. For git history scanning (Phase 2), `--diff` limits to commits on the current branch only.
 6. Phases 0, 1, 12, 13, 14 ALWAYS run regardless of scope flag.
@@ -563,12 +563,12 @@ Before producing findings, run every candidate through this filter.
 
 **Two modes:**
 
-**Daily mode (default, `/steez-cso`):** 8/10 confidence gate. Zero noise. Only report what you're sure about.
+**Daily mode (default, `/cso`):** 8/10 confidence gate. Zero noise. Only report what you're sure about.
 - 9-10: Certain exploit path. Could write a PoC.
 - 8: Clear vulnerability pattern with known exploitation methods. Minimum bar.
 - Below 8: Do not report.
 
-**Comprehensive mode (`/steez-cso --comprehensive`):** 2/10 confidence gate. Filter true noise only (test fixtures, documentation, placeholders) but include anything that MIGHT be a real issue. Flag these as `TENTATIVE` to distinguish from confirmed findings.
+**Comprehensive mode (`/cso --comprehensive`):** 2/10 confidence gate. Filter true noise only (test fixtures, documentation, placeholders) but include anything that MIGHT be a real issue. Flag these as `TENTATIVE` to distinguish from confirmed findings.
 
 **Hard exclusions — automatically discard findings matching these:**
 

@@ -1,8 +1,8 @@
 ---
-name: steez-design-review
+name: design-review
 preamble-tier: 4
 version: 1.0.0
-description: Designer's eye QA: finds visual inconsistency, spacing issues, hierarchy problems, AI slop patterns, and slow interactions — then fixes them. Iteratively fixes issues in source code, committing each fix atomically and re-verifying with before/after screenshots. For plan-mode design review (before implementation), use /steez-plan-design-review. Use when asked to "audit the design", "visual QA", "check if it looks good", or "design polish". Proactively suggest when the user mentions visual inconsistencies or wants to polish the look of a live site. (steez)
+description: Designer's eye QA: finds visual inconsistency, spacing issues, hierarchy problems, AI slop patterns, and slow interactions — then fixes them. Iteratively fixes issues in source code, committing each fix atomically and re-verifying with before/after screenshots. For plan-mode design review (before implementation), use /plan-design-review. Use when asked to "audit the design", "visual QA", "check if it looks good", or "design polish". Proactively suggest when the user mentions visual inconsistencies or wants to polish the look of a live site. (steez)
 allowed-tools:
   - Bash
   - Read
@@ -27,7 +27,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || { echo "[steez] WARNING: config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -44,7 +44,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-design-review, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /design-review, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -131,7 +131,7 @@ jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-design-review
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate your /steez-design-review experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /design-review experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -143,7 +143,7 @@ At the end of each major workflow step, rate your /steez-design-review experienc
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-design-review
+**Date:** {YYYY-MM-DD} | **Skill:** /design-review
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -181,7 +181,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -196,12 +196,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
@@ -209,7 +209,7 @@ file you are allowed to edit in plan mode. The plan file review report is part o
 plan's living status.
 <!-- END MANAGED PREAMBLE -->
 
-# /steez-design-review: Design Audit → Fix → Verify
+# /design-review: Design Audit → Fix → Verify
 
 You are a senior product designer AND a frontend engineer. Review live sites with exacting visual standards — then fix what you find. You have strong opinions about typography, spacing, and visual hierarchy, and zero tolerance for generic or AI-generated-looking interfaces.
 
@@ -246,7 +246,7 @@ git status --porcelain
 
 If the output is non-empty (working tree is dirty), **STOP** and use AskUserQuestion:
 
-"Your working tree has uncommitted changes. /steez-design-review needs a clean tree so each design fix gets its own atomic commit."
+"Your working tree has uncommitted changes. /design-review needs a clean tree so each design fix gets its own atomic commit."
 
 - A) Commit my changes — commit all current changes with a descriptive message, then start design review
 - B) Stash my changes — stash, run design review, pop the stash after
@@ -481,7 +481,7 @@ If `DESIGN_NOT_AVAILABLE`: skip mockup generation — the fix loop works without
 **Create output directories:**
 
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/slug 2>/dev/null)"
 REPORT_DIR=~/.steez/projects/$SLUG/designs/design-audit-$(date +%Y%m%d)
 mkdir -p "$REPORT_DIR/screenshots"
 echo "REPORT_DIR: $REPORT_DIR"
@@ -579,7 +579,7 @@ After the first navigation, check if the URL changed to a login-like path:
 ```bash
 $B url
 ```
-If URL contains `/login`, `/signin`, `/auth`, or `/sso`: the site requires authentication. AskUserQuestion: "This site requires authentication. Want to import cookies from your browser? Run `/steez-setup-browser-cookies` first if needed."
+If URL contains `/login`, `/signin`, `/auth`, or `/sso`: the site requires authentication. AskUserQuestion: "This site requires authentication. Want to import cookies from your browser? Run `/setup-browser-cookies` first if needed."
 
 ### Design Audit Checklist (10 categories, ~80 items)
 
@@ -740,7 +740,7 @@ Compare screenshots and observations across pages for:
 
 **Project-scoped:**
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 ```
 Write to: `~/.steez/projects/{slug}/{user}-{branch}-design-audit-{datetime}.md`
 
@@ -988,12 +988,12 @@ Present subagent output under a `CLAUDE SUBAGENT (design consistency):` header.
 
 **Synthesis — Litmus scorecard:**
 
-Use the same scorecard format as /steez-plan-design-review (shown above). Fill in from both outputs.
+Use the same scorecard format as /plan-design-review (shown above). Fill in from both outputs.
 Merge findings into the triage with `[codex]` / `[subagent]` / `[cross-model]` tags.
 
 **Log the result:**
 ```bash
-~/.steez/bin/steez-review-log '{"skill":"design-outside-voices","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
+~/.steez/bin/review-log '{"skill":"design-outside-voices","timestamp":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","status":"STATUS","source":"SOURCE","commit":"'"$(git rev-parse --short HEAD)"'"}'
 ```
 Replace STATUS with "clean" or "issues_found", SOURCE with "codex+subagent", "codex-only", "subagent-only", or "unavailable".
 
@@ -1079,9 +1079,9 @@ Design fixes are typically CSS-only. Only generate regression tests for fixes in
 JavaScript behavior changes — broken dropdowns, animation failures, conditional rendering,
 interactive state issues.
 
-For CSS-only fixes: skip entirely. CSS regressions are caught by re-running /steez-design-review.
+For CSS-only fixes: skip entirely. CSS regressions are caught by re-running /design-review.
 
-If the fix involved JS behavior: follow the same procedure as /steez-qa Phase 8e.5 (study existing
+If the fix involved JS behavior: follow the same procedure as /qa Phase 8e.5 (study existing
 test patterns, write a regression test encoding the exact bug condition, run it, commit if
 passes or defer if fails). Commit format: `test(design): regression test for FINDING-NNN`.
 
@@ -1124,7 +1124,7 @@ Write the report to `$REPORT_DIR` (already set up in the setup phase):
 
 **Also write a summary to the project index:**
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 ```
 Write a one-line summary to `~/.steez/projects/{slug}/{user}-{branch}-design-audit-{datetime}.md` with a pointer to the full report in `$REPORT_DIR`.
 
@@ -1151,7 +1151,7 @@ Write a one-line summary to `~/.steez/projects/{slug}/{user}-{branch}-design-aud
 If the repo has a `TODOS.md`:
 
 1. **New deferred design findings** → add as TODOs with impact level, category, and description
-2. **Fixed findings that were in TODOS.md** → annotate with "Fixed by /steez-design-review on {branch}, {date}"
+2. **Fixed findings that were in TODOS.md** → annotate with "Fixed by /design-review on {branch}, {date}"
 
 ---
 

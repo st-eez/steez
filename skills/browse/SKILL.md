@@ -1,5 +1,5 @@
 ---
-name: steez-browse
+name: browse
 version: 1.0.0
 description: Fast headless browser for QA testing and site dogfooding. Navigate any URL, interact with elements, verify page state, diff before/after actions, take annotated screenshots, check responsive layouts, test forms and uploads, handle dialogs, and assert element states. ~100ms per command. Use when you need to test a feature, verify a deployment, dogfood a user flow, or file a bug with evidence. Use when asked to "open in browser", "test the site", "take a screenshot", or "dogfood this". (steez)
 allowed-tools:
@@ -21,7 +21,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || echo "true")
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || echo "true")
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -38,7 +38,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-browse, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /browse, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -64,7 +64,7 @@ At the end of each major workflow step, rate your steez-browse experience 0-10. 
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-browse
+**Date:** {YYYY-MM-DD} | **Skill:** /browse
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -103,7 +103,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 ```bash
-~/.steez/bin/steez-review-read
+~/.steez/bin/review-read
 ```
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -118,9 +118,9 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | `/steez-plan-ceo-review` | Scope & strategy | 0 | — | — |
-| Eng Review | `/steez-plan-eng-review` | Architecture & tests (required) | 0 | — | — |
-| Code Review | `/steez-review` | Pre-landing review | 0 | — | — |
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 0 | — | — |
+| Code Review | `/review` | Pre-landing review | 0 | — | — |
 
 **VERDICT:** NO REVIEWS YET — run individual reviews above.
 ```

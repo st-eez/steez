@@ -6,11 +6,11 @@ Upstream version: 0.13.0.0
 ## Scripts (from gstack bin/)
 | File | Upstream source | Patches |
 |------|----------------|---------|
-| steez-config | bin/gstack-config | Renamed, STATE_DIR → ~/.steez/ |
-| steez-slug | bin/gstack-slug | Renamed, added empty slug fallback |
-| steez-review-log | bin/gstack-review-log | Renamed, GSTACK_HOME → ~/.steez/, internal calls renamed |
-| steez-review-read | bin/gstack-review-read | Renamed, GSTACK_HOME → ~/.steez/, internal calls renamed |
-| steez-diff-scope | bin/gstack-diff-scope | Renamed only |
+| config | bin/gstack-config | Renamed, STATE_DIR → ~/.steez/ |
+| slug | bin/gstack-slug | Renamed, added empty slug fallback |
+| review-log | bin/gstack-review-log | Renamed, GSTACK_HOME → ~/.steez/, internal calls renamed |
+| review-read | bin/gstack-review-read | Renamed, GSTACK_HOME → ~/.steez/, internal calls renamed |
+| diff-scope | bin/gstack-diff-scope | Renamed only |
 
 ## Skills (from gstack skill dirs/)
 | File | Upstream source | Patches |

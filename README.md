@@ -8,7 +8,7 @@ Forked from [gstack](https://github.com/garrytan/gstack) (v0.13.0.0), stripped t
 
 ```
 You:    I want to add OAuth login to my side project.
-You:    /steez-office-hours
+You:    /office-hours
 
 Claude: Before we build anything — who is logging in, and what
         are they protecting? You said "OAuth" but let me push
@@ -16,25 +16,25 @@ Claude: Before we build anything — who is logging in, and what
         [six forcing questions about the real problem]
         [writes design doc → saved to ~/.steez/projects/]
 
-You:    /steez-plan-ceo-review
+You:    /plan-ceo-review
         [reads design doc, challenges scope, rates 10 dimensions]
         "Hold scope. OAuth is the right call, but drop the admin
         dashboard from v1 — ship login first, learn from usage."
 
-You:    /steez-plan-eng-review
+You:    /plan-eng-review
         [ASCII diagrams for auth flow, token refresh, error paths]
         [test matrix, security concerns, edge cases]
 
 You:    Approve plan. Build it.
         [writes 1,800 lines across 9 files]
 
-You:    /steez-review
+You:    /review
         [AUTO-FIXED] 1 issue. [ASK] Token expiry edge case → you approve fix.
 
-You:    /steez-qa https://localhost:3000
+You:    /qa https://localhost:3000
         [opens real browser, tests login flow, finds redirect bug, fixes it]
 
-You:    /steez-ship
+You:    /ship
         Tests: 28 → 34 (+6 new). PR: github.com/you/app/pull/17
 ```
 
@@ -46,31 +46,31 @@ steez is a process, not a toolbox. The skills run in the order a sprint runs:
 
 **Think → Plan → Build → Review → Test → Ship → Reflect**
 
-Each skill feeds into the next. `/steez-office-hours` writes a design doc that `/steez-plan-ceo-review` reads. `/steez-plan-eng-review` writes a test plan that `/steez-qa` picks up. `/steez-review` catches bugs that `/steez-ship` verifies are fixed. Nothing falls through the cracks because every step knows what came before it.
+Each skill feeds into the next. `/office-hours` writes a design doc that `/plan-ceo-review` reads. `/plan-eng-review` writes a test plan that `/qa` picks up. `/review` catches bugs that `/ship` verifies are fixed. Nothing falls through the cracks because every step knows what came before it.
 
 | Skill | Your specialist | What they do |
 |-------|----------------|--------------|
-| `/steez-office-hours` | **Product Strategist** | Start here. Six forcing questions that reframe the problem before you write code. Two modes: Startup (diagnostic) and Builder (brainstorm). Writes a design doc that feeds every downstream skill. |
-| `/steez-plan-ceo-review` | **CEO / Founder** | Rethink the problem. Find the 10-star product hiding inside the request. Four modes: Expansion, Selective Expansion, Hold Scope, Reduction. |
-| `/steez-plan-eng-review` | **Eng Manager** | Lock in architecture, data flow, edge cases, test coverage. ASCII diagrams. Forces hidden assumptions into the open. |
-| `/steez-plan-design-review` | **Senior Designer** | Rates each design dimension 0-10, explains what a 10 looks like, then edits the plan to get there. AI slop detection. |
-| `/steez-design-consultation` | **Design Partner** | Build a complete design system from scratch. Researches the landscape, proposes creative risks, generates realistic mockups. Writes `DESIGN.md`. |
-| `/steez-design-shotgun` | **Design Explorer** | Generate multiple AI design variants, open a comparison board, iterate until you approve a direction. Taste memory biases toward your preferences. |
-| `/steez-review` | **Staff Engineer** | Pre-landing PR review. SQL safety, LLM trust boundaries, conditional side effects, completeness gaps. Auto-fixes the obvious ones. |
-| `/steez-investigate` | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without investigation. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
-| `/steez-design-review` | **Designer Who Codes** | Visual audit — spacing, hierarchy, AI slop patterns — then fixes what it finds. Atomic commits, before/after screenshots. |
-| `/steez-qa` | **QA Lead** | Test your app in a real browser, find bugs, fix them with atomic commits, re-verify. Generates regression tests for every fix. |
-| `/steez-qa-only` | **QA Reporter** | Same methodology as `/steez-qa` but report only. Pure bug report, no code changes. |
-| `/steez-cso` | **Chief Security Officer** | OWASP Top 10 + STRIDE threat model. Zero-noise: confidence gate, independent verification. Concrete exploit scenarios. |
-| `/steez-ship` | **Release Engineer** | Sync base branch, run tests, audit coverage, push, open PR. Review Readiness Dashboard shows which reviews have run. |
-| `/steez-land-and-deploy` | **Release Engineer** | Merge the PR, wait for CI and deploy, verify production health via canary checks. One command from "approved" to "verified in production." |
-| `/steez-canary` | **SRE** | Post-deploy monitoring. Watches for console errors, performance regressions, and page failures using the browse daemon. |
-| `/steez-document-release` | **Technical Writer** | Update all project docs to match what shipped. Reads every doc, cross-references the diff, catches stale READMEs automatically. |
-| `/steez-retro` | **Eng Manager** | Weekly retro. Per-person breakdowns, shipping streaks, test health trends, growth opportunities. |
-| `/steez-browse` | **QA Engineer** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
-| `/steez-autoplan` | **Review Pipeline** | One command, fully reviewed plan. Runs CEO → design → eng review automatically with encoded decision principles. Surfaces only taste decisions for your approval. |
-| `/steez-codex` | **Second Opinion** | Independent review from OpenAI Codex CLI. Three modes: code review (pass/fail gate), adversarial challenge, and open consultation. Cross-model analysis when both `/steez-review` and `/steez-codex` have run. |
-| `/steez-setup-deploy` | **Deploy Configurator** | One-time setup for `/steez-land-and-deploy`. Detects your platform, production URL, and deploy commands. |
+| `/office-hours` | **Product Strategist** | Start here. Six forcing questions that reframe the problem before you write code. Two modes: Startup (diagnostic) and Builder (brainstorm). Writes a design doc that feeds every downstream skill. |
+| `/plan-ceo-review` | **CEO / Founder** | Rethink the problem. Find the 10-star product hiding inside the request. Four modes: Expansion, Selective Expansion, Hold Scope, Reduction. |
+| `/plan-eng-review` | **Eng Manager** | Lock in architecture, data flow, edge cases, test coverage. ASCII diagrams. Forces hidden assumptions into the open. |
+| `/plan-design-review` | **Senior Designer** | Rates each design dimension 0-10, explains what a 10 looks like, then edits the plan to get there. AI slop detection. |
+| `/design-consultation` | **Design Partner** | Build a complete design system from scratch. Researches the landscape, proposes creative risks, generates realistic mockups. Writes `DESIGN.md`. |
+| `/design-shotgun` | **Design Explorer** | Generate multiple AI design variants, open a comparison board, iterate until you approve a direction. Taste memory biases toward your preferences. |
+| `/review` | **Staff Engineer** | Pre-landing PR review. SQL safety, LLM trust boundaries, conditional side effects, completeness gaps. Auto-fixes the obvious ones. |
+| `/investigate` | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without investigation. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
+| `/design-review` | **Designer Who Codes** | Visual audit — spacing, hierarchy, AI slop patterns — then fixes what it finds. Atomic commits, before/after screenshots. |
+| `/qa` | **QA Lead** | Test your app in a real browser, find bugs, fix them with atomic commits, re-verify. Generates regression tests for every fix. |
+| `/qa-only` | **QA Reporter** | Same methodology as `/qa` but report only. Pure bug report, no code changes. |
+| `/cso` | **Chief Security Officer** | OWASP Top 10 + STRIDE threat model. Zero-noise: confidence gate, independent verification. Concrete exploit scenarios. |
+| `/ship` | **Release Engineer** | Sync base branch, run tests, audit coverage, push, open PR. Review Readiness Dashboard shows which reviews have run. |
+| `/land-and-deploy` | **Release Engineer** | Merge the PR, wait for CI and deploy, verify production health via canary checks. One command from "approved" to "verified in production." |
+| `/canary` | **SRE** | Post-deploy monitoring. Watches for console errors, performance regressions, and page failures using the browse daemon. |
+| `/document-release` | **Technical Writer** | Update all project docs to match what shipped. Reads every doc, cross-references the diff, catches stale READMEs automatically. |
+| `/retro` | **Eng Manager** | Weekly retro. Per-person breakdowns, shipping streaks, test health trends, growth opportunities. |
+| `/browse` | **QA Engineer** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
+| `/autoplan` | **Review Pipeline** | One command, fully reviewed plan. Runs CEO → design → eng review automatically with encoded decision principles. Surfaces only taste decisions for your approval. |
+| `/codex` | **Second Opinion** | Independent review from OpenAI Codex CLI. Three modes: code review (pass/fail gate), adversarial challenge, and open consultation. Cross-model analysis when both `/review` and `/codex` have run. |
+| `/setup-deploy` | **Deploy Configurator** | One-time setup for `/land-and-deploy`. Detects your platform, production URL, and deploy commands. |
 
 ### Helper scripts
 
@@ -78,14 +78,14 @@ Bash scripts in `shared/steez/bin/` that skills call at runtime via `~/.steez/bi
 
 | Script | Purpose |
 |--------|---------|
-| `steez-config` | Read/write `~/.steez/config` (YAML key-value) |
-| `steez-slug` | Extract `owner-repo` slug from git remote (with non-git fallback) |
-| `steez-review-log` | Append JSON review entries to `~/.steez/projects/$SLUG/` |
-| `steez-review-read` | Read review log + config for Review Readiness Dashboard |
-| `steez-diff-scope` | Categorize diff as frontend/backend/prompts/tests/docs/config |
+| `config` | Read/write `~/.steez/config` (YAML key-value) |
+| `slug` | Extract `owner-repo` slug from git remote (with non-git fallback) |
+| `review-log` | Append JSON review entries to `~/.steez/projects/$SLUG/` |
+| `review-read` | Read review log + config for Review Readiness Dashboard |
+| `diff-scope` | Categorize diff as frontend/backend/prompts/tests/docs/config |
 | `steez-bd` | Beads integration (session brief, claim work, emit findings, handoff) |
-| `steez-agent-state` | Detect AI agent state in tmux panes |
-| `steez-agent-history` | Parse structured transcript from tmux pane |
+| `agent-state` | Detect AI agent state in tmux panes |
+| `agent-history` | Parse structured transcript from tmux pane |
 
 ## Install
 
@@ -148,8 +148,8 @@ Skills write session data and analytics to `~/.steez/` (not in the repo):
     {slug}.md
   projects/
     {slug}/
-      *-design-*.md              # design docs from /steez-office-hours
-      *-reviews.jsonl            # review logs from /steez-review, /steez-ship
+      *-design-*.md              # design docs from /office-hours
+      *-reviews.jsonl            # review logs from /review, /ship
   browse/                        # browse daemon state
     auth.json                    # NS credentials (chmod 600, slot-keyed for multi-agent)
     locks/                       # account lock files (auto-managed, PID + 2h TTL)
@@ -184,8 +184,8 @@ All behavioral sections: Voice, AskUserQuestion format, Completeness Principle, 
 
 - Voice: "senior engineering partner — CTO-level operator" (not Garry Tan / GStack identity)
 - Data: `~/.steez/` (not `~/.gstack/`)
-- Binaries: `~/.steez/bin/steez-*` (not `~/.claude/skills/gstack/bin/gstack-*`)
-- Chaining: all `/steez-*` (not `/gstack-*`)
+- Binaries: `~/.steez/bin/` (not `~/.claude/skills/gstack/bin/gstack-*`)
+- Chaining: all skills under `~/.claude/skills/` (not `/gstack-*`)
 - Config: `~/.steez/config` (not `~/.gstack/config.yaml`)
 
 ## Docs

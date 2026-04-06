@@ -105,7 +105,7 @@ Every SKILL.md follows the same structure:
 
 ```
 ┌─ YAML frontmatter ─────────────────────────┐
-│ name: steez-{skill}                        │
+│ name: {skill}                        │
 │ description: ...                           │
 │ allowed-tools: [Bash, Read, ...]           │
 └────────────────────────────────────────────┘
@@ -139,7 +139,7 @@ Every skill preamble sets these variables:
 |----------|--------|---------|
 | `STEEZ_HOME` | `${STEEZ_HOME:-$HOME/.steez}` | Runtime state directory (override for testing) |
 | `_BRANCH` | `git branch --show-current` | Current branch |
-| `_PROACTIVE` | `steez-config get proactive` | Auto-suggest skills |
+| `_PROACTIVE` | `config get proactive` | Auto-suggest skills |
 | `REPO_MODE` | Hardcoded `solo` | Always solo |
 
 Skill analytics are tracked via a PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`),
@@ -151,22 +151,22 @@ not inline telemetry. The hook fires mechanically on every Skill tool invocation
 Skills communicate through the filesystem, not through shared memory:
 
 ```
-/steez-office-hours
+/office-hours
   writes → ~/.steez/projects/{slug}/{user}-{branch}-design-{ts}.md
            │
-/steez-plan-ceo-review
+/plan-ceo-review
   reads  ← design doc
-  writes → review log entry (via steez-review-log)
+  writes → review log entry (via review-log)
            │
-/steez-plan-eng-review
+/plan-eng-review
   reads  ← design doc + prior review logs
   writes → review log entry
            │
-/steez-review
-  reads  ← diff + review logs (via steez-review-read)
+/review
+  reads  ← diff + review logs (via review-read)
   writes → review log entry
            │
-/steez-ship
+/ship
   reads  ← review logs → renders Review Readiness Dashboard
   writes → final review log entry
   creates → PR
@@ -174,7 +174,7 @@ Skills communicate through the filesystem, not through shared memory:
 
 ### Review Readiness Dashboard
 
-`steez-review-read` outputs three sections that `/steez-ship` and `/steez-review` use:
+`review-read` outputs three sections that `/ship` and `/review` use:
 
 ```
 {branch}-reviews.jsonl entries    ← review history
@@ -187,13 +187,13 @@ Skills communicate through the filesystem, not through shared memory:
 ### Helper script dependencies
 
 ```
-steez-slug ← steez-review-log (needs SLUG for file path)
-           ← steez-review-read (needs SLUG for file path)
+slug ← review-log (needs SLUG for file path)
+     ← review-read (needs SLUG for file path)
 
-steez-config ← steez-review-read (reads skip_eng_review)
+config ← review-read (reads skip_eng_review)
              ← all skills (reads proactive in preamble)
 
-steez-diff-scope — standalone, no dependencies
+diff-scope — standalone, no dependencies
 ```
 
 ## Browse integration
@@ -257,7 +257,7 @@ This means crashed sessions don't permanently block accounts. The next agent to 
 Skill errors are for the AI agent, not for humans. Every error message should be actionable — tell Claude what went wrong and what to do next. This principle is inherited from gstack's browse server (which rewrites Playwright errors through `wrapError()`) and applied to skill design:
 
 - If a config value is missing, the preamble falls back to a sensible default
-- If a design doc isn't found, the skill tells the agent to run `/steez-office-hours` first
+- If a design doc isn't found, the skill tells the agent to run `/office-hours` first
 - If a review log is empty, the Review Readiness Dashboard says "no reviews found" instead of erroring
 
 ## What's intentionally not here
@@ -288,7 +288,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 
 ### Adding a new skill
 
-1. Create `dotfiles/claude/.claude/skills/steez-{name}/SKILL.md`
+1. Create `dotfiles/claude/.claude/skills/{name}/SKILL.md`
 2. Copy the preamble from any existing skill (change `SKILL_NAME`)
 3. Stow deploys it automatically (directory folding)
 
@@ -314,6 +314,6 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 ### Updating from upstream
 
 1. Check gstack version: `cat ~/.claude/skills/gstack/VERSION`
-2. Diff per-skill: `diff ~/.claude/skills/gstack/{skill}/SKILL.md dotfiles/claude/.claude/skills/steez-{skill}/SKILL.md`
+2. Diff per-skill: `diff ~/.claude/skills/gstack/{skill}/SKILL.md dotfiles/claude/.claude/skills/{skill}/SKILL.md`
 3. Cherry-pick functional changes (skip template/onboarding diffs)
 4. Update FORK_MANIFEST.md with new upstream version

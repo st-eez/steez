@@ -1,8 +1,8 @@
 ---
-name: steez-office-hours
+name: office-hours
 preamble-tier: 3
 version: 2.0.0
-description: Office Hours — two modes. Startup mode: six forcing questions that expose demand reality, status quo, desperate specificity, narrowest wedge, observation, and future-fit. Builder mode: design thinking brainstorming for side projects, hackathons, learning, and open source. Saves a design doc. Use when asked to "brainstorm this", "I have an idea", "help me think through this", "office hours", or "is this worth building". Proactively suggest when the user describes a new product idea or is exploring whether something is worth building — before any code is written. Use before /steez-plan-ceo-review or /steez-plan-eng-review. (steez)
+description: Office Hours — two modes. Startup mode: six forcing questions that expose demand reality, status quo, desperate specificity, narrowest wedge, observation, and future-fit. Builder mode: design thinking brainstorming for side projects, hackathons, learning, and open source. Saves a design doc. Use when asked to "brainstorm this", "I have an idea", "help me think through this", "office hours", or "is this worth building". Proactively suggest when the user describes a new product idea or is exploring whether something is worth building — before any code is written. Use before /plan-ceo-review or /plan-eng-review. (steez)
 allowed-tools:
   - Bash
   - Read
@@ -27,7 +27,7 @@ find "$STEEZ_HOME/sessions" -mmin +120 -type f -delete 2>/dev/null || true
 _BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
 echo "BRANCH: $_BRANCH"
 # Config
-_PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[steez] WARNING: steez-config failed, defaulting proactive=true" >&2; echo "true"; })
+_PROACTIVE=$(~/.steez/bin/config get proactive 2>/dev/null || { echo "[steez] WARNING: config failed, defaulting proactive=true" >&2; echo "true"; })
 echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
@@ -44,7 +44,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /steez-office-hours, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /office-hours, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -131,7 +131,7 @@ jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-office-hours"
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate your /steez-office-hours experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /office-hours experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -143,7 +143,7 @@ At the end of each major workflow step, rate your /steez-office-hours experience
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /steez-office-hours
+**Date:** {YYYY-MM-DD} | **Skill:** /office-hours
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -181,7 +181,7 @@ When you are in plan mode and about to call ExitPlanMode:
 3. If it does NOT — run this command:
 
 \`\`\`bash
-~/.steez/bin/steez-review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
+~/.steez/bin/review-read 2>/dev/null || echo "[steez] WARNING: review-read failed" >&2
 \`\`\`
 
 Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
@@ -196,12 +196,12 @@ Then write a `## STEEZ REVIEW REPORT` section to the end of the plan file:
 
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
-| CEO Review | \`/steez-plan-ceo-review\` | Scope & strategy | 0 | — | — |
-| Codex Review | \`/steez-codex review\` | Independent 2nd opinion | 0 | — | — |
-| Eng Review | \`/steez-plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
-| Design Review | \`/steez-plan-design-review\` | UI/UX gaps | 0 | — | — |
+| CEO Review | \`/plan-ceo-review\` | Scope & strategy | 0 | — | — |
+| Codex Review | \`/codex review\` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | \`/plan-eng-review\` | Architecture & tests (required) | 0 | — | — |
+| Design Review | \`/plan-design-review\` | UI/UX gaps | 0 | — | — |
 
-**VERDICT:** NO REVIEWS YET — run \`/steez-autoplan\` for full review pipeline, or individual reviews above.
+**VERDICT:** NO REVIEWS YET — run \`/autoplan\` for full review pipeline, or individual reviews above.
 \`\`\`
 
 **PLAN MODE EXCEPTION — ALWAYS RUN:** This writes to the plan file, which is the one
@@ -243,7 +243,7 @@ You are a **YC office hours partner**. Your job is to ensure the problem is unde
 Understand the project and the area the user wants to change.
 
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/slug 2>/dev/null)"
 ```
 
 1. Read `CLAUDE.md`, `TODOS.md` (if they exist).
@@ -709,7 +709,7 @@ Generating visual mockups of the proposed design... (say "skip" if you don't nee
 **Step 1: Set up the design directory**
 
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)"
+eval "$(~/.steez/bin/slug 2>/dev/null)"
 _DESIGN_DIR=~/.steez/projects/$SLUG/designs/mockup-$(date +%Y%m%d)
 mkdir -p "$_DESIGN_DIR"
 echo "DESIGN_DIR: $_DESIGN_DIR"
@@ -819,7 +819,7 @@ If they approve or say "good enough," proceed.
 
 Reference the wireframe screenshot in the design doc's "Recommended Approach" section.
 The screenshot file at `/tmp/steez-sketch.png` can be referenced by downstream skills
-(`/steez-plan-design-review`, `/steez-design-review`) to see what was originally envisioned.
+(`/plan-design-review`, `/design-review`) to see what was originally envisioned.
 
 **Step 6: Outside design voices** (optional)
 
@@ -876,7 +876,7 @@ When writing "What I noticed about how you think" in Phase 5, use these signals 
 Write the design document to the project directory.
 
 ```bash
-eval "$(~/.steez/bin/steez-slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
+eval "$(~/.steez/bin/slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
 USER=$(whoami)
 DATETIME=$(date +%Y%m%d-%H%M%S)
 ```
@@ -895,7 +895,7 @@ Write to `~/.steez/projects/{slug}/{user}-{branch}-design-{datetime}.md`:
 ```markdown
 # Design: {title}
 
-Generated by /steez-office-hours on {date}
+Generated by /office-hours on {date}
 Branch: {branch}
 Repo: {owner/repo}
 Status: DRAFT
@@ -958,7 +958,7 @@ Supersedes: {prior filename — omit this line if first design on this branch}
 ```markdown
 # Design: {title}
 
-Generated by /steez-office-hours on {date}
+Generated by /office-hours on {date}
 Branch: {branch}
 Repo: {owner/repo}
 Status: DRAFT
@@ -1143,9 +1143,9 @@ Use the founder signals from Phase 4.5 to ground this — reference the specific
 
 Suggest the next step based on what the design doc needs:
 
-- **`/steez-plan-ceo-review`** for ambitious features (EXPANSION mode) — rethink the problem, find the 10-star product
-- **`/steez-plan-eng-review`** for well-scoped implementation planning — lock in architecture, tests, edge cases
-- **`/steez-plan-design-review`** for visual/UX design review
+- **`/plan-ceo-review`** for ambitious features (EXPANSION mode) — rethink the problem, find the 10-star product
+- **`/plan-eng-review`** for well-scoped implementation planning — lock in architecture, tests, edge cases
+- **`/plan-design-review`** for visual/UX design review
 
 The design doc at `~/.steez/projects/` is automatically discoverable by downstream skills — they will read it during their pre-review system audit.
 

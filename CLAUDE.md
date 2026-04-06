@@ -37,22 +37,22 @@ make install               # install to ~/go/bin/steez
 make clean                 # remove local binary
 
 # Helper scripts (shared/steez/bin/)
-steez-config get <key>           # read config value
-steez-config set <key> <value>   # write config value
-steez-slug                       # git remote → owner-repo slug
-steez-diff-scope                 # categorize diff as frontend/backend/prompts/tests/docs/config
-steez-review-log                 # append JSON review entry to project log
-steez-review-read                # read review log + config for Review Readiness Dashboard
+config get <key>                 # read config value
+config set <key> <value>         # write config value
+slug                             # git remote → owner-repo slug
+diff-scope                       # categorize diff as frontend/backend/prompts/tests/docs/config
+review-log                       # append JSON review entry to project log
+review-read                      # read review log + config for Review Readiness Dashboard
 steez-bd resume                  # session brief: current bead, suggested skill, ready work
 steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
-steez-agent-state <pane>             # detect AI agent state in a tmux pane
-steez-agent-state --all [--detail]   # scan all panes for AI agents
-steez-agent-history <pane>           # parse structured transcript from tmux pane
-steez-agent-history --all            # parse transcripts from all agent panes
-steez-upstream-diff <skill>          # diff a steez skill against gstack upstream
-steez-upstream-diff --all            # show divergence summary for all skills
+agent-state <pane>               # detect AI agent state in a tmux pane
+agent-state --all [--detail]     # scan all panes for AI agents
+agent-history <pane>             # parse structured transcript from tmux pane
+agent-history --all              # parse transcripts from all agent panes
+upstream-diff <skill>            # diff a steez skill against gstack upstream
+upstream-diff --all              # show divergence summary for all skills
 ```
 
 `bun test` runs before every commit to browse source. Both core and NS tests
@@ -65,15 +65,15 @@ network calls, no credentials.
 steez/                                    # repo root
 ├── shared/steez/                         # shared runtime
 │   ├── bin/                              # 9 bash helper scripts
-│   │   ├── steez-config                  # read/write ~/.steez/config
-│   │   ├── steez-slug                    # git remote → owner-repo slug
-│   │   ├── steez-diff-scope              # categorize diff scopes
-│   │   ├── steez-review-log              # append review entries
-│   │   ├── steez-review-read             # read review log + config
-│   │   ├── steez-bd                      # beads integration
-│   │   ├── steez-agent-state             # detect AI agent state in tmux panes
-│   │   ├── steez-agent-history          # parse structured transcript from tmux pane
-│   │   └── steez-upstream-diff           # diff skill against gstack upstream
+│   │   ├── config                        # read/write ~/.steez/config
+│   │   ├── slug                          # git remote → owner-repo slug
+│   │   ├── diff-scope                    # categorize diff scopes
+│   │   ├── review-log                    # append review entries
+│   │   ├── review-read                   # read review log + config
+│   │   ├── steez-bd                      # beads integration (keeps prefix)
+│   │   ├── agent-state                   # detect AI agent state in tmux panes
+│   │   ├── agent-history                 # parse structured transcript from tmux pane
+│   │   └── upstream-diff                 # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
 │   │   │   ├── core/                     # CLI + server + commands (~3,800 lines)
@@ -108,14 +108,14 @@ steez/                                    # repo root
 ~/.steez/
 ├── repo -> <user's checkout>             # installer-managed symlink
 ├── bin/                                  # installer-managed symlinks
-│   ├── steez-config -> ~/.steez/repo/shared/steez/bin/steez-config
-│   ├── steez-slug -> ~/.steez/repo/shared/steez/bin/steez-slug
-│   ├── steez-diff-scope -> ~/.steez/repo/shared/steez/bin/steez-diff-scope
-│   ├── steez-review-log -> ~/.steez/repo/shared/steez/bin/steez-review-log
-│   ├── steez-review-read -> ~/.steez/repo/shared/steez/bin/steez-review-read
+│   ├── config -> ~/.steez/repo/shared/steez/bin/config
+│   ├── slug -> ~/.steez/repo/shared/steez/bin/slug
+│   ├── diff-scope -> ~/.steez/repo/shared/steez/bin/diff-scope
+│   ├── review-log -> ~/.steez/repo/shared/steez/bin/review-log
+│   ├── review-read -> ~/.steez/repo/shared/steez/bin/review-read
 │   ├── steez-bd -> ~/.steez/repo/shared/steez/bin/steez-bd
-│   ├── steez-agent-state -> ~/.steez/repo/shared/steez/bin/steez-agent-state
-│   ├── steez-agent-history -> ~/.steez/repo/shared/steez/bin/steez-agent-history
+│   ├── agent-state -> ~/.steez/repo/shared/steez/bin/agent-state
+│   ├── agent-history -> ~/.steez/repo/shared/steez/bin/agent-history
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
 ├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
@@ -125,7 +125,7 @@ steez/                                    # repo root
 ├── skill-reports/                        # Skill Self-Report bug reports ({slug}.md)
 ├── projects/{slug}/
 │   ├── {branch}-reviews.jsonl            # review logs per branch
-│   └── *-design-*.md                     # design docs from /steez-office-hours
+│   └── *-design-*.md                     # design docs from /office-hours
 └── browse/
     ├── chromium-profile/                 # persistent Chromium state (login sessions, cache)
     └── sidebar-sessions/                 # sidebar daemon sessions
@@ -140,12 +140,12 @@ includes session tracking, analytics, voice, and completion protocol sections.
 ## Upstream Relationship
 
 steez is a fork of gstack. Skills are owned directly in `skills/`. To check what
-gstack has changed upstream: `steez-upstream-diff <skill>` or `--all` for a summary.
+gstack has changed upstream: `upstream-diff <skill>` or `--all` for a summary.
 The gstack repo is at `~/Projects/Personal/gstack`. Cherry-pick improvements manually.
 
 ## Install Model
 
-Skills are installed as symlinks: `~/.claude/skills/steez-{name}` -> `repo/skills/{name}/`
+Skills are installed as symlinks: `~/.claude/skills/{name}` -> `repo/skills/{name}/`
 Shared runtime is accessed via installer-managed symlinks under `~/.steez/bin/` and `~/.steez/repo`.
 Install registry lives at `~/.steez/installed.json`.
 Updates are live mutation: `git pull` in-place, symlinks already point at checkout.
@@ -166,14 +166,14 @@ Every skill preamble sets these variables:
 |----------|--------|---------|
 | `STEEZ_HOME` | `${STEEZ_HOME:-$HOME/.steez}` | Runtime state directory |
 | `_BRANCH` | `git branch --show-current` | Current branch |
-| `_PROACTIVE` | `~/.steez/bin/steez-config get proactive` | Auto-suggest skills |
+| `_PROACTIVE` | `~/.steez/bin/config get proactive` | Auto-suggest skills |
 | `REPO_MODE` | Hardcoded `solo` | Always solo |
 
 Skill analytics are tracked via a PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`),
 not inline telemetry. The hook fires mechanically on every Skill tool invocation and writes to
 `~/.steez/analytics/skill-usage.jsonl`.
 
-Executables use hardcoded paths: `~/.steez/bin/steez-config`, `~/.steez/bin/browse`.
+Executables use hardcoded paths: `~/.steez/bin/config`, `~/.steez/bin/browse`.
 Documents use repo symlink: `~/.steez/repo/ETHOS.md`.
 
 ## Compiled Binaries
@@ -192,7 +192,7 @@ provides Windows/Node.js compatibility.
 ## Browser Interaction
 
 When you need to interact with a browser (QA, dogfooding, cookie setup), use
-the `/steez-browse` skill or run the browse binary directly via `$B <command>`.
+the `/browse` skill or run the browse binary directly via `$B <command>`.
 
 Skills resolve `$B` with:
 ```bash
@@ -207,13 +207,13 @@ persist between blocks. Use prose to carry state, not shell variables.
 ## Helper Script Dependencies
 
 ```
-steez-slug ← steez-review-log (needs SLUG for file path)
-           ← steez-review-read (needs SLUG for file path)
+slug ← review-log (needs SLUG for file path)
+     ← review-read (needs SLUG for file path)
 
-steez-config ← steez-review-read (reads skip_eng_review)
-             ← all skills (reads proactive in preamble)
+config ← review-read (reads skip_eng_review)
+         ← all skills (reads proactive in preamble)
 
-steez-diff-scope — standalone, no dependencies
+diff-scope — standalone, no dependencies
 
 steez-bd ← all skills (beads context in preamble, non-blocking)
          ← office-hours (chain creation after design doc approved)
@@ -222,10 +222,10 @@ steez-bd ← all skills (beads context in preamble, non-blocking)
          ← ship (handoff at completion, emit-finding for issues)
   Depends on: bd CLI (beads), jq (macOS system binary)
 
-steez-agent-state — standalone (tmux, ps, python3)
+agent-state — standalone (tmux, ps, python3)
   Used by: tmux skill, claude-spawn skill
 
-steez-agent-history — standalone (tmux, steez-agent-state)
+agent-history — standalone (tmux, agent-state)
   Used by: tmux skill, claude-spawn skill
 ```
 
