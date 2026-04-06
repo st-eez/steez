@@ -80,9 +80,8 @@ func cmdInfo(args []string) int {
 	// Check installed status.
 	reg, _ := config.LoadRegistry()
 	installedStatus := "not installed"
-	symlinkName := "steez-" + skill.Name
 	for _, s := range reg.Symlinks {
-		if s.Name == symlinkName {
+		if s.Name == skill.Name {
 			if err := installer.ValidateSymlink(s.Target); err != nil {
 				installedStatus = "installed (broken symlink)"
 			} else {

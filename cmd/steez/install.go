@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/st-eez/steez/internal/config"
@@ -121,15 +120,26 @@ func cmdInstall(args []string) int {
 	}
 
 	binSymlinks := []struct{ name, relPath string }{
-		{"steez-config", "shared/steez/bin/steez-config"},
-		{"steez-slug", "shared/steez/bin/steez-slug"},
-		{"steez-diff-scope", "shared/steez/bin/steez-diff-scope"},
-		{"steez-review-log", "shared/steez/bin/steez-review-log"},
-		{"steez-review-read", "shared/steez/bin/steez-review-read"},
+		{"config", "shared/steez/bin/config"},
+		{"slug", "shared/steez/bin/slug"},
+		{"diff-scope", "shared/steez/bin/diff-scope"},
+		{"review-log", "shared/steez/bin/review-log"},
+		{"review-read", "shared/steez/bin/review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
-		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
+		{"agent-state", "shared/steez/bin/agent-state"},
+		{"agent-history", "shared/steez/bin/agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
+	}
+	// Remove old steez-prefixed bin symlinks from before the rename.
+	if !*dryRun {
+		oldBinNames := []string{
+			"steez-config", "steez-slug", "steez-diff-scope",
+			"steez-review-log", "steez-review-read",
+			"steez-agent-state", "steez-agent-history",
+		}
+		for _, old := range oldBinNames {
+			_ = installer.RemoveSymlink(filepath.Join(binDir, old))
+		}
 	}
 	for _, bs := range binSymlinks {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -192,15 +202,21 @@ func cmdInstall(args []string) int {
 	// Install each skill.
 	for _, name := range skillNames {
 		source := filepath.Join(repoPath, "skills", name)
-		target := filepath.Join(skillsTarget, "steez-"+name)
-		symlinkName := "steez-" + name
+		target := filepath.Join(skillsTarget, name)
+
+		// Remove old steez-prefixed skill symlink if it exists.
+		if !*dryRun {
+			oldTarget := filepath.Join(skillsTarget, "steez-"+name)
+			_ = installer.RemoveSymlink(oldTarget)
+			config.RemoveFromRegistry(reg, "steez-"+name)
+		}
 
 		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
 			fmt.Fprintf(os.Stderr, "  error: %s: %v\n", name, err)
 			failed++
 		} else {
 			if !*dryRun {
-				config.AddToRegistry(reg, symlinkName, source, target)
+				config.AddToRegistry(reg, name, source, target)
 			}
 			installed++
 		}
@@ -283,11 +299,7 @@ func cmdUninstall(args []string) int {
 		}
 	} else {
 		for _, arg := range fs.Args() {
-			name := arg
-			if !strings.HasPrefix(name, "steez-") && name != "steez" {
-				name = "steez-" + name
-			}
-			toRemove = append(toRemove, name)
+			toRemove = append(toRemove, arg)
 		}
 	}
 
