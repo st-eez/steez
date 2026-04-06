@@ -22,11 +22,7 @@ echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-# Local usage logging (no remote telemetry)
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"claude-spawn","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Analytics tracked via PostToolUse hook (skill-analytics.sh) — no in-skill telemetry needed.
 ```
 
 ## Beads Context
@@ -107,6 +103,7 @@ Parse these three fields **independently**, then combine into script args:
   - If N is the caller's current window → no `--target` needed
   - If N is a different window → use `--target <session>:N.1` (first pane in that window)
 - "pane N.M", explicit `session:window.pane` → use `--target` with exact address
+- Chaining from a previous spawn's output → use `--target %N` (the pane_id from `TARGET=...`)
 - Parenthetical numbers like `(2)` are **identifiers** — the user naming which window they mean. They are NOT requests to create a new window.
 
 ### 3. Combine into script args
@@ -116,7 +113,7 @@ Parse these three fields **independently**, then combine into script args:
 | `split-h` | current pane | `spawn.sh split-h` |
 | `split-h` | window N (same as current) | `spawn.sh split-h` |
 | `split-h` | window N (different) | `spawn.sh split-h --target <session>:N.1` |
-| `split-h` | exact pane | `spawn.sh split-h --target <pane-addr>` |
+| `split-h` | exact pane or chained | `spawn.sh split-h --target <pane-addr or %N>` |
 | `split-v` | (same patterns) | `spawn.sh split-v [--target ...]` |
 | `new-window` | — | `spawn.sh new-window` |
 | `new-session` | — | `spawn.sh new-session [--session <name>]` |
@@ -148,7 +145,7 @@ Parse these three fields **independently**, then combine into script args:
 Run the `spawn.sh` script in a **single Bash call**. The script handles everything: tmux validation, pane ID detection, directory resolution (zoxide-backed), Claude launch, and readiness polling.
 
 ```bash
-$HOME/.claude/skills/claude-spawn/spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>]
+~/.steez/repo/skills/claude-spawn/spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>]
 ```
 
 **Target types:** `split-h`, `split-v`, `new-window`, `new-session`
@@ -157,21 +154,21 @@ $HOME/.claude/skills/claude-spawn/spawn.sh <target-type> [--dir <name-or-path>] 
 - `--dir <name-or-path>` — working directory (resolved via zoxide cascade)
 - `--session <name>` — session name (for `new-session` only)
 - `--prompt <text>` — initial prompt to send after Claude starts
-- `--target <pane>` — for `split-h`/`split-v`: split this pane instead of self. Use `session:window.pane` format (e.g., `mac:5.1`). **Critical for multi-agent spawns** — without this, splits always happen in the caller's window.
+- `--target <pane>` — for `split-h`/`split-v`: split this pane instead of self. Use pane_id (`%N`, e.g., `%5`) or `session:window.pane` (e.g., `mac:5.1`). **Critical for multi-agent spawns** — without this, splits always happen in the caller's window. When chaining spawns, always use the pane_id from the previous spawn's `TARGET=` output.
 
 **Examples:**
 ```bash
 # Simple spawn beside current pane
-$HOME/.claude/skills/claude-spawn/spawn.sh split-h
+~/.steez/repo/skills/claude-spawn/spawn.sh split-h
 
 # Spawn in a specific directory with a task
-$HOME/.claude/skills/claude-spawn/spawn.sh new-window --dir scratchpad --prompt "fix the failing tests"
+~/.steez/repo/skills/claude-spawn/spawn.sh new-window --dir scratchpad --prompt "fix the failing tests"
 
 # Spawn in a new session
-$HOME/.claude/skills/claude-spawn/spawn.sh new-session --session agent-1 --prompt "run the test suite"
+~/.steez/repo/skills/claude-spawn/spawn.sh new-session --session agent-1 --prompt "run the test suite"
 
 # Split a REMOTE pane (not self) — use TARGET from a previous spawn
-$HOME/.claude/skills/claude-spawn/spawn.sh split-h --target mac:5.1 --dir other-project --prompt "run linter"
+~/.steez/repo/skills/claude-spawn/spawn.sh split-h --target %5 --dir other-project --prompt "run linter"
 ```
 
 **Multi-agent pattern** (2+ agents in a new window):
@@ -179,20 +176,20 @@ $HOME/.claude/skills/claude-spawn/spawn.sh split-h --target mac:5.1 --dir other-
 When spawning multiple agents side-by-side in a new window, you MUST use `--target` on the second spawn. Otherwise the split happens in YOUR window, not the new one.
 
 ```bash
-# Step 1: Create new window with first agent → returns TARGET=mac:5.1
-$HOME/.claude/skills/claude-spawn/spawn.sh new-window --dir project-a --prompt "task A"
+# Step 1: Create new window with first agent → returns TARGET=%5
+~/.steez/repo/skills/claude-spawn/spawn.sh new-window --dir project-a --prompt "task A"
 
-# Step 2: Split THAT pane to add second agent → returns TARGET=mac:5.2
-$HOME/.claude/skills/claude-spawn/spawn.sh split-h --target mac:5.1 --dir project-b --prompt "task B"
+# Step 2: Split THAT pane to add second agent → returns TARGET=%7
+~/.steez/repo/skills/claude-spawn/spawn.sh split-h --target %5 --dir project-b --prompt "task B"
 ```
 
-Parse the `TARGET=...` value from step 1's output and pass it as `--target` in step 2.
+Parse the `TARGET=...` pane_id from step 1's output and pass it as `--target` in step 2. Pane IDs (`%N`) are stable, so they stay valid even if other panes are killed or moved.
 
 **Reading the output:**
 
 The script outputs structured key=value lines:
 - `RESOLVED=/full/path METHOD=zoxide` — directory was resolved (method: literal, local, zoxide, or find)
-- `SELF=mac:4.1 TARGET=mac:4.2` — pane addresses
+- `SELF=%0 TARGET=%5` — stable pane IDs (never shift when panes are killed or moved)
 - `READY` — Claude is up and accepting input
 - `PROMPT_SENT` — initial prompt was delivered
 
@@ -212,10 +209,11 @@ The script outputs structured key=value lines:
 ## Step 3 — Report
 
 After spawning, report:
-- The tmux target address (e.g., `work:2.0`)
+- The tmux pane_id (e.g., `%5`)
 - The working directory
 - Whether an initial prompt was sent
 - How to check on it: `tmux capture-pane -t <target> -p | tail -20`
 - How to switch to it: `tmux select-window -t <target>` or `tmux switch-client -t <target>`
 
 In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't use AskUserQuestion — just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
+

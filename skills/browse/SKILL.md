@@ -26,11 +26,7 @@ echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-# Local usage logging (no remote telemetry)
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"steez-browse","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
+# Analytics tracked via PostToolUse hook (skill-analytics.sh)
 ```
 
 ## Beads Context
@@ -97,17 +93,6 @@ ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
 
-## Telemetry (run last)
-
-After the skill workflow completes (success, error, or abort), log the session.
-
-```bash
-_TEL_END=$(date +%s)
-_TEL_DUR=$(( _TEL_END - _TEL_START ))
-echo '{"skill":"steez-browse","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"true","session":"'"$_SESSION_ID"'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
-```
-
-Replace `OUTCOME` with success/error/abort based on the workflow result.
 
 ## Plan Status Footer
 

@@ -27,10 +27,7 @@ _PROACTIVE=$(~/.steez/bin/steez-config get proactive 2>/dev/null || { echo "[ste
 echo "PROACTIVE: $_PROACTIVE"
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"steez-autoplan","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","repo":"'"$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")"'"}' >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Analytics tracked via PostToolUse hook (skill-analytics.sh)
 ```
 
 ## Beads Context
@@ -170,26 +167,6 @@ ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
 
-## Telemetry (run last)
-
-After the skill workflow completes (success, error, or abort), log the telemetry event.
-Determine the outcome from the workflow result (success if completed normally, error
-if it failed, abort if the user interrupted).
-
-**PLAN MODE EXCEPTION — ALWAYS RUN:** This command writes telemetry to
-`~/.steez/analytics/` (user config directory, not project files).
-
-Run this bash:
-
-```bash
-_TEL_END=$(date +%s)
-_TEL_DUR=$(( _TEL_END - _TEL_START ))
-# Local analytics only (no remote telemetry)
-echo '{"skill":"steez-autoplan","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"USED_BROWSE","session":"'"$_SESSION_ID"'","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}' >> ~/.steez/analytics/skill-usage.jsonl 2>/dev/null || echo "[steez] WARNING: telemetry write failed" >&2
-```
-
-Replace `OUTCOME` with success/error/abort, and `USED_BROWSE` with true/false.
-
 ## Plan Status Footer
 
 When you are in plan mode and about to call ExitPlanMode:
@@ -290,7 +267,7 @@ Say: "Running /steez-office-hours inline. Once the design doc is ready, I'll pic
 the review right where we left off."
 
 Read the office-hours skill file from disk using the Read tool:
-`~/.claude/skills/steez-office-hours/SKILL.md`
+`~/.steez/repo/skills/office-hours/SKILL.md`
 
 Follow it inline, **skipping these sections** (already handled by the parent skill):
 - Preamble (run first)
@@ -299,7 +276,6 @@ Follow it inline, **skipping these sections** (already handled by the parent ski
 - Search Before Building
 - Skill Self-Report
 - Completion Status Protocol
-- Telemetry (run last)
 
 If the Read fails (file not found), say:
 "Could not load /steez-office-hours — proceeding with standard review."
@@ -480,9 +456,9 @@ Then prepend a one-line HTML comment to the plan file:
 ### Step 3: Load skill files from disk
 
 Read each file using the Read tool:
-- `~/.claude/skills/steez-plan-ceo-review/SKILL.md`
-- `~/.claude/skills/steez-plan-design-review/SKILL.md` (only if UI scope detected)
-- `~/.claude/skills/steez-plan-eng-review/SKILL.md`
+- `~/.steez/repo/skills/plan-ceo-review/SKILL.md`
+- `~/.steez/repo/skills/plan-design-review/SKILL.md` (only if UI scope detected)
+- `~/.steez/repo/skills/plan-eng-review/SKILL.md`
 
 **Section skip list — when following a loaded skill file, SKIP these sections
 (they are already handled by /steez-autoplan):**
@@ -492,7 +468,6 @@ Read each file using the Read tool:
 - Search Before Building
 - Skill Self-Report
 - Completion Status Protocol
-- Telemetry (run last)
 - Step 0: Detect base branch
 - Review Readiness Dashboard
 - Plan File Review Report

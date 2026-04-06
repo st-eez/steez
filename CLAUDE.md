@@ -77,6 +77,7 @@ steez/                                    # repo root
 │   │   ├── scripts/                      # build-node-server.sh (Windows compat layer)
 │   │   ├── dist/                         # compiled binaries (gitignored)
 │   │   └── package.json                  # scripts: build, test, dev
+│   ├── hooks/                             # Claude Code hooks (symlinked to ~/.claude/hooks/)
 │   └── package.json                      # ecosystem tests
 ├── skills/                               # skill directories
 │   ├── browse/SKILL.md                   # browse skill definition
@@ -156,8 +157,10 @@ Every skill preamble sets these variables:
 | `_BRANCH` | `git branch --show-current` | Current branch |
 | `_PROACTIVE` | `~/.steez/bin/steez-config get proactive` | Auto-suggest skills |
 | `REPO_MODE` | Hardcoded `solo` | Always solo |
-| `_TEL_START` | `date +%s` | Session start time |
-| `_SESSION_ID` | `$$-$(date +%s)` | Unique session identifier |
+
+Skill analytics are tracked via a PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`),
+not inline telemetry. The hook fires mechanically on every Skill tool invocation and writes to
+`~/.steez/analytics/skill-usage.jsonl`.
 
 Executables use hardcoded paths: `~/.steez/bin/steez-config`, `~/.steez/bin/browse`.
 Documents use repo symlink: `~/.steez/repo/ETHOS.md`.

@@ -22,11 +22,14 @@ echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-# Local usage logging (no remote telemetry)
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"jira","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Analytics tracked via PostToolUse hook (skill-analytics.sh) — no in-skill telemetry needed.
+```
+
+## Beads Context
+
+```bash
+# Beads context — shows current bead, suggested skill, ready work (non-blocking)
+~/.steez/bin/steez-bd resume 2>/dev/null || true
 ```
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
@@ -34,6 +37,41 @@ auto-invoke skills based on conversation context. Only run skills the user expli
 types (e.g., /jira, /steez-ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
+
+## Writing Rules
+
+- No em dashes. Use commas, periods, or "..." instead.
+- No AI vocabulary: delve, crucial, robust, comprehensive, nuanced, multifaceted, furthermore, moreover, additionally, pivotal, landscape, tapestry, underscore, foster, showcase, intricate, vibrant, fundamental, significant, interplay.
+- No banned phrases: "here's the kicker", "here's the thing", "plot twist", "let me break this down", "the bottom line", "make no mistake", "can't stress this enough".
+- Short paragraphs. Mix one-sentence paragraphs with 2-3 sentence runs.
+- Name specifics. Real file names, real function names, real numbers.
+- Be direct about quality. Don't dance around judgments.
+- End with what to do. Give the action.
+
+## Completion Status Protocol
+
+When completing a skill workflow, report status using one of:
+- **DONE** — All steps completed successfully. Evidence provided for each claim.
+- **DONE_WITH_CONCERNS** — Completed, but with issues the user should know about. List each concern.
+- **BLOCKED** — Cannot proceed. State what is blocking and what was tried.
+- **NEEDS_CONTEXT** — Missing information required to continue. State exactly what you need.
+
+### Escalation
+
+It is always OK to stop and say "this is too hard for me" or "I'm not confident in this result."
+
+Bad work is worse than no work. You will not be penalized for escalating.
+- If you have attempted a task 3 times without success, STOP and escalate.
+- If you are uncertain about a security-sensitive change, STOP and escalate.
+- If the scope of work exceeds what you can verify, STOP and escalate.
+
+Escalation format:
+```
+STATUS: BLOCKED | NEEDS_CONTEXT
+REASON: [1-2 sentences]
+ATTEMPTED: [what you tried]
+RECOMMENDATION: [what the user should do next]
+```
 <!-- END MANAGED PREAMBLE -->
 
 # Jira
@@ -61,12 +99,3 @@ When showing the agent's results to the user:
 
 Keep it scannable. No preamble, no "here are your results" filler. Tables and one-liners.
 
-## Telemetry (run last)
-
-```bash
-_TEL_END=$(date +%s)
-_TEL_DUR=$(( _TEL_END - _TEL_START ))
-echo '{"skill":"jira","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"false","session":"'"$_SESSION_ID"'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> ~/.steez/analytics/skill-usage.jsonl 2>/dev/null || echo "[steez] WARNING: telemetry write failed" >&2
-```
-
-Replace `OUTCOME` with success/error/abort based on the agent's result.

@@ -22,11 +22,7 @@ echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-# Local usage logging (no remote telemetry)
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"loop-prompt","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Analytics tracked via PostToolUse hook (skill-analytics.sh) — no in-skill telemetry needed.
 ```
 
 ## Beads Context
@@ -131,3 +127,4 @@ Present the complete draft to the user and ask if they want to adjust anything b
 ## Step 4 — Write prompt.md
 
 Once the user confirms (or after incorporating their tweaks), write the final prompt to `prompt.md` in the current working directory.
+

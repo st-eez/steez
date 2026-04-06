@@ -141,8 +141,10 @@ Every skill preamble sets these variables:
 | `_BRANCH` | `git branch --show-current` | Current branch |
 | `_PROACTIVE` | `steez-config get proactive` | Auto-suggest skills |
 | `REPO_MODE` | Hardcoded `solo` | Always solo |
-| `_TEL_START` | `date +%s` | Session start time |
-| `_SESSION_ID` | `$$-$(date +%s)` | Unique session identifier |
+
+Skill analytics are tracked via a PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`),
+not inline telemetry. The hook fires mechanically on every Skill tool invocation and writes to
+`~/.steez/analytics/skill-usage.jsonl`.
 
 ## Data flow
 

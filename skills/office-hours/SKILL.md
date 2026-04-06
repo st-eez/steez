@@ -32,11 +32,7 @@ echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-# Local usage logging (no remote telemetry)
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"steez-office-hours","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Analytics tracked via PostToolUse hook (skill-analytics.sh) — no in-skill telemetry needed.
 ```
 
 ## Beads Context
@@ -175,29 +171,6 @@ REASON: [1-2 sentences]
 ATTEMPTED: [what you tried]
 RECOMMENDATION: [what the user should do next]
 ```
-
-## Telemetry (run last)
-
-After the skill workflow completes (success, error, or abort), log the telemetry event.
-Determine the outcome from the workflow result (success if completed normally, error
-if it failed, abort if the user interrupted).
-
-**PLAN MODE EXCEPTION — ALWAYS RUN:** This command writes telemetry to
-`~/.steez/analytics/` (user config directory, not project files). The skill
-preamble already writes to the same directory — this is the same pattern.
-Skipping this command loses session duration and outcome data.
-
-Run this bash:
-
-```bash
-_TEL_END=$(date +%s)
-_TEL_DUR=$(( _TEL_END - _TEL_START ))
-# Local analytics only (no remote telemetry)
-echo '{"skill":"steez-office-hours","duration_s":"'"$_TEL_DUR"'","outcome":"OUTCOME","browse":"USED_BROWSE","session":"'"$_SESSION_ID"'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' >> ~/.steez/analytics/skill-usage.jsonl 2>/dev/null || echo "[steez] WARNING: telemetry write failed" >&2
-```
-
-Replace `OUTCOME` with success/error/abort, and `USED_BROWSE` with true/false based
-on whether `$B` was used. If you cannot determine the outcome, use "unknown".
 
 ## Plan Status Footer
 
@@ -880,9 +853,9 @@ Error handling: all non-blocking. On failure, skip and continue.
 
 ---
 
-## Phase 4.5: Founder Signal Synthesis
+## Phase 4.5: Signal Synthesis
 
-Before writing the design doc, synthesize the founder signals you observed during the session. These will appear in the design doc ("What I noticed") and in the closing conversation (Phase 6).
+Before writing the design doc, synthesize the builder signals you observed during the session. These directly inform the "What I noticed about how you think" section of the design doc.
 
 Track which of these signals appeared during the session:
 - Articulated a **real problem** someone actually has (not hypothetical)
@@ -894,7 +867,7 @@ Track which of these signals appeared during the session:
 - Showed **agency** — actually building, not just planning
 - **Defended premise with reasoning** against cross-model challenge (kept original premise when Codex disagreed AND articulated specific reasoning for why — dismissal without reasoning does not count)
 
-Count the signals. You'll use this count in Phase 6 to determine which tier of closing message to use.
+When writing "What I noticed about how you think" in Phase 5, use these signals as structure — reference specific moments from the session that triggered each signal. Quote the user's words back to them. Signals that didn't fire get omitted, not mentioned as absent.
 
 ---
 
@@ -977,7 +950,7 @@ Supersedes: {prior filename — omit this line if first design on this branch}
 {one concrete real-world action the founder should take next — not "go build it"}
 
 ## What I noticed about how you think
-{observational, mentor-like reflections referencing specific things the user said during the session. Quote their words back to them — don't characterize their behavior. 2-4 bullets.}
+{from Phase 4.5 signals — one bullet per signal that fired, referencing the specific moment it appeared. Quote the user's words. 2-4 bullets, skip signals that didn't fire.}
 ```
 
 ### Builder mode design doc template:
@@ -1030,7 +1003,7 @@ Supersedes: {prior filename — omit this line if first design on this branch}
 {concrete build tasks — what to implement first, second, third}
 
 ## What I noticed about how you think
-{observational, mentor-like reflections referencing specific things the user said during the session. Quote their words back to them — don't characterize their behavior. 2-4 bullets.}
+{from Phase 4.5 signals — one bullet per signal that fired, referencing the specific moment it appeared. Quote the user's words. 2-4 bullets, skip signals that didn't fire.}
 ```
 
 ---

@@ -27,7 +27,6 @@ var preambleHeadings = map[string]bool{
 	"## Skill Self-Report":                   true,
 	"## Completion Status Protocol":          true,
 	"### Escalation":                         true,
-	"## Telemetry (run last)":                true,
 	"## Plan Status Footer":                  true,
 }
 

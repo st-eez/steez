@@ -22,11 +22,7 @@ echo "PROACTIVE: $_PROACTIVE"
 # Repo mode (hardcoded — always solo)
 REPO_MODE=solo
 echo "REPO_MODE: $REPO_MODE"
-# Local usage logging (no remote telemetry)
-_TEL_START=$(date +%s)
-_SESSION_ID="$$-$(date +%s)"
-mkdir -p "$STEEZ_HOME/analytics"
-echo '{"skill":"tmux","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","repo":"'$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "unknown")'"}'  >> "$STEEZ_HOME/analytics/skill-usage.jsonl" 2>/dev/null || true
+# Analytics tracked via PostToolUse hook (skill-analytics.sh) — no in-skill telemetry needed.
 ```
 
 ## Beads Context
@@ -88,31 +84,31 @@ Use tmux from the command line to inspect panes, send input, and capture output.
 2. Before `send-keys`, inspect `#{pane_current_command}` for the target pane. A shell such as `zsh` or `bash` accepts commands; a TUI such as `vim`, `node`, or `python` may treat the text as raw keystrokes.
 3. For chat-like panes, use the delayed one-command submission pattern shown below. Do not use a single `send-keys` invocation that includes both the text and `Enter`.
 4. Use `capture-pane -p` when reading output. Without `-p`, tmux writes to an internal paste buffer instead of stdout.
-5. Prefer explicit `session:window.pane` targets for any operation that affects another pane or window.
+5. Prefer explicit pane targets for any operation that affects another pane or window. Use pane_id (`%N`) when the target was dynamically created. Use `session:window.pane` when targeting by position.
 6. Never put literal `\n` sequences inside the `send-keys` text payload. tmux sends them as the characters `\` and `n`, not as real line breaks.
 7. If the target pane is an interactive app or chat-like composer rather than a shell prompt, verify after every send that the text was submitted and is not still sitting in the input box.
-8. After `split-window`, use `list-panes` to confirm the new pane index — indices renumber when a pane is inserted between existing ones.
+8. After `split-window`, capture the new pane's `pane_id` (`%N`) for future targeting. Do not rely on `pane_index` as indices renumber when panes are added, removed, or moved.
 
 ## Target Format
 
-All tmux targets use `-t session:window.pane`.
+tmux accepts two target formats:
 
-- `session`: tmux session name such as `work`
-- `window`: window index such as `1`
-- `pane`: pane index within the window such as `2`
+- **Pane ID** (`%N`, e.g., `%0`, `%5`) — assigned at creation, never changes even when panes are moved or killed. **Preferred for dynamically created panes.**
+- **Address** (`session:window.pane`, e.g., `work:1.2`) — positional. Pane indices shift when panes are added, removed, or moved. Use only for ad-hoc targeting by position.
 
-Example:
+Examples:
 
 ```bash
-tmux capture-pane -t work:1.2 -p
+tmux capture-pane -t %5 -p         # by pane_id (stable)
+tmux capture-pane -t work:1.2 -p   # by address (positional)
 ```
 
 ## Discovering Layout
 
-Start by finding the pane that is running your process:
+Start by finding your own pane_id:
 
 ```bash
-SELF=$(tmux list-panes -a -F "#{pane_id} #{session_name}:#{window_index}.#{pane_index}" | grep "^$TMUX_PANE " | awk '{print $2}')
+SELF="$TMUX_PANE"  # e.g., %0 — stable, never changes
 echo "I am running in: $SELF"
 ```
 
@@ -121,13 +117,13 @@ Then inspect the tmux layout:
 ```bash
 tmux list-sessions
 tmux list-windows -a
-tmux list-panes -a -F "#{session_name}:#{window_index}.#{pane_index}  #{pane_current_command}  #{pane_width}x#{pane_height}"
+tmux list-panes -a -F "#{pane_id}  #{session_name}:#{window_index}.#{pane_index}  #{pane_current_command}  #{pane_width}x#{pane_height}"
 ```
 
 **Before any `send-keys`, verify your target is correct:**
 
-1. Run the `SELF` command above to know which pane is yours
-2. Confirm the target pane index differs from your own
+1. Your own pane_id is `$TMUX_PANE`
+2. Confirm the target pane_id differs from your own
 3. Check `#{pane_current_command}` on the target to verify it is the pane you expect
 
 Do not skip this. Sending text to your own pane or the wrong agent session is the most common tmux failure mode.
@@ -209,7 +205,16 @@ tmux new-window -t work
 tmux new-window -t work -n "servers"
 ```
 
-After splitting, the new pane becomes active. Use `list-panes` to confirm its index.
+After splitting, the new pane becomes active. Capture its `pane_id` for stable targeting:
+
+```bash
+# Snapshot before split
+BEFORE=$(tmux list-panes -t work:1 -F "#{pane_id}" | sort)
+tmux split-window -t work:1 -v
+# The new pane_id is the one that wasn't there before
+NEW_PANE=$(comm -13 <(echo "$BEFORE") <(tmux list-panes -t work:1 -F "#{pane_id}" | sort))
+echo "New pane: $NEW_PANE"  # e.g., %7
+```
 
 ## Resizing Panes
 
@@ -225,10 +230,11 @@ Available directions: `-U`, `-D`, `-L`, `-R`.
 Run a command in a new pane and capture its output later:
 
 ```bash
+BEFORE=$(tmux list-panes -t work:1 -F "#{pane_id}" | sort)
 tmux split-window -t work:1 -v
-NEW_PANE=$(tmux list-panes -t work:1 -F "#{pane_index}" | tail -1)
-tmux send-keys -t "work:1.$NEW_PANE" "pytest tests/" \; run-shell -d 0.3 "tmux send-keys -t work:1.$NEW_PANE Enter"
-tmux capture-pane -t "work:1.$NEW_PANE" -p -S -200
+NEW_PANE=$(comm -13 <(echo "$BEFORE") <(tmux list-panes -t work:1 -F "#{pane_id}" | sort))
+tmux send-keys -t "$NEW_PANE" "pytest tests/" \; run-shell -d 0.3 "tmux send-keys -t $NEW_PANE Enter"
+tmux capture-pane -t "$NEW_PANE" -p -S -200
 ```
 
 Stop a process, then start a replacement command:
@@ -238,3 +244,4 @@ tmux send-keys -t work:1.2 C-c
 sleep 1
 tmux send-keys -t work:1.2 "npm run dev" \; run-shell -d 0.3 'tmux send-keys -t work:1.2 Enter'
 ```
+
