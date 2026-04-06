@@ -74,7 +74,7 @@ Each skill feeds into the next. `/steez-office-hours` writes a design doc that `
 
 ### Helper scripts
 
-Six bash scripts in `shared/steez/bin/` that skills call at runtime via `~/.steez/bin/`:
+Bash scripts in `shared/steez/bin/` that skills call at runtime via `~/.steez/bin/`:
 
 | Script | Purpose |
 |--------|---------|
@@ -84,6 +84,8 @@ Six bash scripts in `shared/steez/bin/` that skills call at runtime via `~/.stee
 | `steez-review-read` | Read review log + config for Review Readiness Dashboard |
 | `steez-diff-scope` | Categorize diff as frontend/backend/prompts/tests/docs/config |
 | `steez-bd` | Beads integration (session brief, claim work, emit findings, handoff) |
+| `steez-agent-state` | Detect AI agent state in tmux panes |
+| `steez-agent-history` | Parse structured transcript from tmux pane |
 
 ## Install
 

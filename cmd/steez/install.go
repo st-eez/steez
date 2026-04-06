@@ -128,6 +128,7 @@ func cmdInstall(args []string) int {
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
 		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
+		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	}
 	for _, bs := range binSymlinks {

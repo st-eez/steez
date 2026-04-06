@@ -49,6 +49,8 @@ steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
 steez-agent-state <pane>             # detect AI agent state in a tmux pane
 steez-agent-state --all [--detail]   # scan all panes for AI agents
+steez-agent-history <pane>           # parse structured transcript from tmux pane
+steez-agent-history --all            # parse transcripts from all agent panes
 steez-upstream-diff <skill>          # diff a steez skill against gstack upstream
 steez-upstream-diff --all            # show divergence summary for all skills
 ```
@@ -62,7 +64,7 @@ network calls, no credentials.
 ```
 steez/                                    # repo root
 ├── shared/steez/                         # shared runtime
-│   ├── bin/                              # 8 bash helper scripts
+│   ├── bin/                              # 9 bash helper scripts
 │   │   ├── steez-config                  # read/write ~/.steez/config
 │   │   ├── steez-slug                    # git remote → owner-repo slug
 │   │   ├── steez-diff-scope              # categorize diff scopes
@@ -70,6 +72,7 @@ steez/                                    # repo root
 │   │   ├── steez-review-read             # read review log + config
 │   │   ├── steez-bd                      # beads integration
 │   │   ├── steez-agent-state             # detect AI agent state in tmux panes
+│   │   ├── steez-agent-history          # parse structured transcript from tmux pane
 │   │   └── steez-upstream-diff           # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
@@ -112,6 +115,7 @@ steez/                                    # repo root
 │   ├── steez-review-read -> ~/.steez/repo/shared/steez/bin/steez-review-read
 │   ├── steez-bd -> ~/.steez/repo/shared/steez/bin/steez-bd
 │   ├── steez-agent-state -> ~/.steez/repo/shared/steez/bin/steez-agent-state
+│   ├── steez-agent-history -> ~/.steez/repo/shared/steez/bin/steez-agent-history
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
 ├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
@@ -219,6 +223,9 @@ steez-bd ← all skills (beads context in preamble, non-blocking)
   Depends on: bd CLI (beads), jq (macOS system binary)
 
 steez-agent-state — standalone (tmux, ps, python3)
+  Used by: tmux skill, claude-spawn skill
+
+steez-agent-history — standalone (tmux, steez-agent-state)
   Used by: tmux skill, claude-spawn skill
 ```
 

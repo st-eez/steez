@@ -67,6 +67,7 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
 		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
+		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -166,6 +167,7 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
 		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
+		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		source := filepath.Join(repoSymlink, bs.relPath)

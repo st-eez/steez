@@ -137,7 +137,7 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 	expected := []string{
 		"steez-config", "steez-slug", "steez-diff-scope",
 		"steez-review-log", "steez-review-read", "steez-bd",
-		"steez-agent-state", "browse",
+		"steez-agent-state", "steez-agent-history", "browse",
 	}
 
 	var results []CheckResult

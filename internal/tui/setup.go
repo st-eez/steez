@@ -437,6 +437,8 @@ func (m *setupModel) runInstall() {
 		{"steez-review-log", "shared/steez/bin/steez-review-log"},
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
+		{"steez-agent-history", "shared/steez/bin/steez-agent-history"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	}
 	for _, bs := range binSymlinks {
