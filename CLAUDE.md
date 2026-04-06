@@ -223,10 +223,10 @@ steez-bd ← all skills (beads context in preamble, non-blocking)
   Depends on: bd CLI (beads), jq (macOS system binary)
 
 agent-state — standalone (tmux, ps, python3)
-  Used by: tmux skill, claude-spawn skill
+  Used by: tmux skill, agent-spawn skill
 
 agent-history — standalone (tmux, agent-state)
-  Used by: tmux skill, claude-spawn skill
+  Used by: tmux skill, agent-spawn skill
 ```
 
 ## Search Before Building

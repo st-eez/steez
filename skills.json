@@ -53,8 +53,8 @@
     "tmux": {
       "description": "Tmux safety rules and patterns — prevents sending to wrong pane"
     },
-    "claude-spawn": {
-      "description": "Spawn and orchestrate Claude Code agents across tmux panes"
+    "agent-spawn": {
+      "description": "Spawn and orchestrate AI agents (Prometheus, Claude, Codex) across tmux panes"
     },
     "reminders": {
       "description": "Manage Apple Reminders via remindctl — create, complete, reschedule"
@@ -83,7 +83,7 @@
     "infrastructure": {
       "label": "Infrastructure",
       "description": "Debugging, security, and orchestration tools",
-      "skills": ["investigate", "cso", "tmux", "claude-spawn", "audit"]
+      "skills": ["investigate", "cso", "tmux", "agent-spawn", "audit"]
     },
     "design": {
       "label": "Design",

@@ -296,7 +296,7 @@ is working fine, say so.
 ## Step 4: Independent critique
 
 Spawn a separate Claude instance in the repo where the skill lives.
-Use /claude-spawn to open an interactive session in a tmux split.
+Use /agent-spawn to open an interactive session in a tmux split.
 
 Give the critic the proposals and this directive:
 
