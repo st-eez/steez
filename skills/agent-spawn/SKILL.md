@@ -21,13 +21,6 @@ echo "REPO_MODE: $REPO_MODE"
 # Analytics tracked via PostToolUse hook (skill-analytics.sh) — no in-skill telemetry needed.
 ```
 
-## Beads Context
-
-```bash
-# Beads context — shows current bead, suggested skill, ready work (non-blocking)
-~/.steez/bin/steez-bd resume 2>/dev/null || true
-```
-
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
 types (e.g., /agent-spawn, /ship). If you would have auto-invoked a skill, instead briefly say:
@@ -147,25 +140,29 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 
 ## Layout Orchestration
 
-When topology is **dynamic** (no explicit layout cue), spawn agents in the current window. The orchestrator stays leftmost. Before spawning, count agent panes: `tmux list-panes -F "#{pane_id}"` minus your own `$TMUX_PANE`.
+When topology is **dynamic** (no explicit layout cue), spawn agents in the current window using predefined recipes. The orchestrator stays leftmost. Pick the recipe matching the total number of agents requested, not the current count.
 
-| Agents | Next spawn | Self width |
-|--------|-----------|------------|
-| 0 | `split-h` from self | 50% |
-| 1-2 | `split-v --target <bottom-agent>` (stack in right half) | 50% |
-| 3 | `split-h --target <top-agent>` (creates 2nd column), resize self to 33% | 33% |
-| 4-5 | `split-v --target` in column with fewer panes | 33% |
-| 6+ | Propose layout to user before spawning | — |
+Columns must be created before stacking. tmux splits are per-pane, so splitting a pane vertically then splitting one of those horizontally only affects that cell, not the whole column.
 
-Splitting a pane does not interrupt the agent running in it.
+**Equalize after stacking:** Repeated vertical splits produce uneven heights. After stacking N agents in a column, resize all but the last pane to `window_height / N`. The last pane absorbs the remainder from border lines.
 
-**From scratch, 6 agents:**
-1. `spawn.sh split-h` → %A1
-2. `spawn.sh split-h --target %A1` → %A4 (creates right column, pushes %A1 to middle)
+**Recipe 1 (1 agent):** `split-h` from self. Self keeps 50%.
+
+**Recipe 2 (2 agents):** `split-h` from self → A1. `split-v --target A1` → A2. Self keeps 50%.
+
+**Recipe 3 (3 agents):** `split-h` from self → A1. `split-v --target A1` → A2. `split-v --target A2` → A3. Equalize column. Self keeps 50%.
+
+**Recipe 4-6 (4-6 agents):** Two full-height columns, then stack within each.
+1. `split-h` from self → COL1
+2. `split-h --target COL1` → COL2 (pushes COL1 to middle)
 3. `tmux resize-pane -t $TMUX_PANE -x 33%`
-4. `split-v --target %A1` twice, `split-v --target %A4` twice
+4. Equalize column widths: `COL_W = (window_width - self_width) / 2`, resize COL1 to COL_W
+5. Stack agents vertically in each column (left column fills first)
+6. Equalize each column's heights independently
 
-After all spawns, verify orchestrator width: `tmux resize-pane -t $TMUX_PANE -x 50%` (1-3 agents) or `-x 33%` (4-6).
+Distribution: 4 agents = 2+2, 5 agents = 3+2, 6 agents = 3+3.
+
+**7+ agents:** Window is full. Ask the user: "6 agents fills this window. Want the next ones in a new window or a new session?"
 
 ## Step 2 — Spawn via helper script
 
