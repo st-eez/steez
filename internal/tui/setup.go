@@ -495,6 +495,9 @@ func (m *setupModel) runInstall() {
 	}
 	config.Save(cfg)
 
+	// Check if settings.json needs the Skill hook registered.
+	installer.CheckHookRegistration(home)
+
 	m.installDone = true
 }
 

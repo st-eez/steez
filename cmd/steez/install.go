@@ -211,6 +211,11 @@ func cmdInstall(args []string) int {
 		fmt.Println(" Run steez doctor to verify.")
 	}
 
+	// Check if settings.json needs the Skill hook registered.
+	if !*dryRun {
+		installer.CheckHookRegistration(home)
+	}
+
 	// Build browse binary if requested.
 	if *browse && !*dryRun {
 		fmt.Println("\nBuilding browse binary...")
