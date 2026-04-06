@@ -109,7 +109,7 @@
     }
   },
   "shared_infra": {
-    "bin": ["steez-bd", "steez-config", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-slug"],
+    "bin": ["steez-agent-state", "steez-bd", "steez-config", "steez-diff-scope", "steez-review-log", "steez-review-read", "steez-slug"],
     "runtime_dir": "~/.steez",
     "browse_binary": "skills/browse/dist/browse"
   }

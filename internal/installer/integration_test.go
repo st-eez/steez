@@ -66,6 +66,7 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		{"steez-review-log", "shared/steez/bin/steez-review-log"},
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -164,6 +165,7 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 		{"steez-review-log", "shared/steez/bin/steez-review-log"},
 		{"steez-review-read", "shared/steez/bin/steez-review-read"},
 		{"steez-bd", "shared/steez/bin/steez-bd"},
+		{"steez-agent-state", "shared/steez/bin/steez-agent-state"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		source := filepath.Join(repoSymlink, bs.relPath)
@@ -176,6 +178,7 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	os.MkdirAll(hookDir, 0o755)
 	for _, hs := range []struct{ name, relPath string }{
 		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
+		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
 	} {
 		source := filepath.Join(repoSymlink, hs.relPath)
 		target := filepath.Join(hookDir, hs.name)

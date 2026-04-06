@@ -136,7 +136,8 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 	binDir := filepath.Join(steezHome, "bin")
 	expected := []string{
 		"steez-config", "steez-slug", "steez-diff-scope",
-		"steez-review-log", "steez-review-read", "steez-bd", "browse",
+		"steez-review-log", "steez-review-read", "steez-bd",
+		"steez-agent-state", "browse",
 	}
 
 	var results []CheckResult
@@ -196,6 +197,7 @@ func checkHookSymlinks(home string) []CheckResult {
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	expected := []string{
 		"steez-skill-analytics.sh",
+		"steez-session-start.sh",
 	}
 
 	var results []CheckResult
