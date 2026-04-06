@@ -357,7 +357,7 @@ The output includes a `"content"` field with the full visible pane text. Combine
 **Add `--layout` for a visual box diagram** showing pane splits and agent states:
 
 ```bash
-~/.steez/bin/agent-state --all --layout
+~/.steez/bin/agent-state --layout
 ```
 
 Renders proportionally-scaled ASCII art of each window's pane layout with box-drawing characters. Merged cells (panes spanning multiple splits) render correctly. Only windows containing at least one agent are shown; non-agent panes appear within those windows for spatial context. ANSI colors indicate state (green for working, yellow for blocked, dim for idle) when outputting to a terminal.
