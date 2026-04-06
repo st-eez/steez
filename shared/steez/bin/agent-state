@@ -404,12 +404,12 @@ def render_window(win):
                     line += txt[:w].ljust(w)
                 elif is_top_left and content_row == 1 and pane.get('agent') != 'shell':
                     agent, state = pane.get('agent', ''), pane.get('state', '')
-                    plain = f" {agent} \u00b7 {state}"
-                    line += f" {state_color(state)}{agent} \u00b7 {state}{RESET}" + ' ' * max(0, w - len(plain))
+                    plain = f" {agent} \u00b7 {state}"[:w]
+                    line += f"{state_color(state)}{plain}{RESET}" + ' ' * (w - len(plain))
                 elif is_top_left and content_row == 1 and pane.get('agent') == 'shell':
                     name = pane.get('name', 'shell')
-                    plain = f" ({name})"
-                    line += f" {DIM}({name}){RESET}" + ' ' * max(0, w - len(plain))
+                    plain = f" ({name})"[:w]
+                    line += f"{DIM}{plain}{RESET}" + ' ' * (w - len(plain))
                 else:
                     line += ' ' * w
             line += '\u2502' if has_v_border(r, num_cols) else ' '
