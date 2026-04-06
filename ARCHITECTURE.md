@@ -83,7 +83,7 @@ gstack supports opt-in remote telemetry via Supabase — anonymous usage data (s
 
 **Why:** steez runs in a public dotfiles repo. Embedding remote endpoints in committed files is a maintenance burden and a trust issue. Local analytics provide the same signal — which skills get used, how long they take, what fails — without any network dependency.
 
-**How it works:** Every skill appends a JSON line to `~/.steez/analytics/skill-usage.jsonl` at session end. This is a local file, never synced. The eureka log (`eureka.jsonl`) captures first-principles insights from the Search Before Building pattern.
+**How it works:** A PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`) appends a JSON line to `~/.steez/analytics/skill-usage.jsonl` on every skill invocation. This is a local file, never synced. The eureka log (`eureka.jsonl`) captures first-principles insights from the Search Before Building pattern.
 
 ## Why no onboarding
 
@@ -121,7 +121,7 @@ Every SKILL.md follows the same structure:
 │ AskUserQuestion format                     │
 │ Completeness Principle (Boil the Lake)     │
 │ Search Before Building (→ ETHOS.md)        │
-│ Skill Self-Report, Telemetry footer        │
+│ Skill Self-Report                          │
 │ STEEZ REVIEW REPORT                        │
 └────────────────────────────────────────────┘
          │

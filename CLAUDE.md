@@ -109,7 +109,7 @@ steez/                                    # repo root
 ├── config                                # key-value config (proactive: true)
 ├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
 ├── analytics/
-│   ├── skill-usage.jsonl                 # every skill invocation (start + end events)
+│   ├── skill-usage.jsonl                 # skill invocations (written by PostToolUse hook)
 │   └── spec-review.jsonl                 # spec/review analytics
 ├── skill-reports/                        # Skill Self-Report bug reports ({slug}.md)
 ├── projects/{slug}/
