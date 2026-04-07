@@ -1,6 +1,6 @@
 # steez
 
-Your AI agent is only as good as the instructions you give it. steez turns Claude Code into a 21-specialist engineering team — planners, reviewers, testers, security auditors, and a release engineer — all living in your dotfiles, deployed with a single `steez install` command, zero external dependencies.
+Your AI agent is only as good as the instructions you give it. steez turns Claude Code into a 22-specialist engineering team — thinking partners, planners, reviewers, testers, security auditors, and orchestrators — all living in your dotfiles, deployed with a single `steez install` command, zero external dependencies.
 
 Forked from [gstack](https://github.com/garrytan/gstack) (v0.13.0.0), stripped to the studs, and rebuilt for a solo operator who wants the full sprint pipeline without the team overhead.
 
@@ -8,69 +8,75 @@ Forked from [gstack](https://github.com/garrytan/gstack) (v0.13.0.0), stripped t
 
 ```
 You:    I want to add OAuth login to my side project.
-You:    /office-hours
+You:    /workshop
 
-Claude: Before we build anything — who is logging in, and what
-        are they protecting? You said "OAuth" but let me push
-        back on the framing...
-        [six forcing questions about the real problem]
+Claude: Before you build anything — is this actually an auth
+        problem, or is it "I have no users and auth feels
+        like productive work"? [five lenses fire, carry-cost
+        lands hardest] Build it, but keep scope to just login.
+        Drops a bead.
+
+You:    /office-hours
+        [six forcing questions on the committed product]
         [writes design doc → saved to ~/.steez/projects/]
 
-You:    /plan-ceo-review
-        [reads design doc, challenges scope, rates 10 dimensions]
-        "Hold scope. OAuth is the right call, but drop the admin
-        dashboard from v1 — ship login first, learn from usage."
-
-You:    /plan-eng-review
-        [ASCII diagrams for auth flow, token refresh, error paths]
-        [test matrix, security concerns, edge cases]
+You:    /autoplan
+        [runs /plan-ceo-review, /plan-design-review,
+        /plan-eng-review in sequence, surfaces only taste
+        decisions for approval]
 
 You:    Approve plan. Build it.
         [writes 1,800 lines across 9 files]
 
-You:    /review
-        [AUTO-FIXED] 1 issue. [ASK] Token expiry edge case → you approve fix.
-
 You:    /qa https://localhost:3000
-        [opens real browser, tests login flow, finds redirect bug, fixes it]
+        [opens real browser, tests login flow, finds
+        redirect bug, fixes it, re-verifies]
 
-You:    /ship
-        Tests: 28 → 34 (+6 new). PR: github.com/you/app/pull/17
+You:    /cso
+        [OWASP Top 10 + STRIDE threat model. Catches JWT
+        token storage in localStorage → moves to httpOnly cookie]
+
+You:    /codex review
+        [OpenAI Codex second opinion. Flags one edge case
+        in token refresh, fixed.]
+
+        All green. Ready to merge.
 ```
 
-You said "OAuth login." The agent said "who is logging in and what are they protecting?" — because it listened to the pain, not the feature request. Six commands, design doc to merged PR. Every skill reads what the previous one wrote — the design doc, the test plan, the review log — so nothing falls through the cracks.
+You said "OAuth login." `/workshop` said "is this actually an auth problem, or productive work that feels like progress?" — because it listened to the pain, not the feature request. Seven commands, fuzzy hunch to merge-ready code. Every skill reads what the previous one wrote — the workshop bead, the design doc, the test plan — so nothing falls through the cracks.
 
 ## The sprint
 
 steez is a process, not a toolbox. The skills run in the order a sprint runs:
 
-**Think → Plan → Build → Review → Test → Ship → Reflect**
+**Think → Plan → Build → Test → Review**
 
-Each skill feeds into the next. `/office-hours` writes a design doc that `/plan-ceo-review` reads. `/plan-eng-review` writes a test plan that `/qa` picks up. `/review` catches bugs that `/ship` verifies are fixed. Nothing falls through the cracks because every step knows what came before it.
+Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit the plan pipeline. `/office-hours` writes a design doc that `/plan-ceo-review` reads. `/plan-eng-review` writes a test plan that `/qa` picks up. `/codex review` and `/cso` catch issues before you merge. Nothing falls through the cracks because every step knows what came before it.
 
 | Skill | Your specialist | What they do |
 |-------|----------------|--------------|
-| `/office-hours` | **Product Strategist** | Start here. Six forcing questions that reframe the problem before you write code. Two modes: Startup (diagnostic) and Builder (brainstorm). Writes a design doc that feeds every downstream skill. |
+| `/workshop` | **Thinking Partner** | Start here for fuzzy ideas. Five lenses (XY check, carry cost, pre-mortem, landscape check, smallest disprover) to chew on half-formed thoughts until they dispose into a bead, a memory entry, a kill, or a graduation to `/office-hours`. |
+| `/office-hours` | **Product Strategist** | Six forcing questions that reframe the problem before you write code. Two modes: Startup (diagnostic) and Builder (brainstorm). Writes a design doc that feeds every downstream skill. |
 | `/plan-ceo-review` | **CEO / Founder** | Rethink the problem. Find the 10-star product hiding inside the request. Four modes: Expansion, Selective Expansion, Hold Scope, Reduction. |
 | `/plan-eng-review` | **Eng Manager** | Lock in architecture, data flow, edge cases, test coverage. ASCII diagrams. Forces hidden assumptions into the open. |
 | `/plan-design-review` | **Senior Designer** | Rates each design dimension 0-10, explains what a 10 looks like, then edits the plan to get there. AI slop detection. |
-| `/design-consultation` | **Design Partner** | Build a complete design system from scratch. Researches the landscape, proposes creative risks, generates realistic mockups. Writes `DESIGN.md`. |
-| `/design-shotgun` | **Design Explorer** | Generate multiple AI design variants, open a comparison board, iterate until you approve a direction. Taste memory biases toward your preferences. |
-| `/review` | **Staff Engineer** | Pre-landing PR review. SQL safety, LLM trust boundaries, conditional side effects, completeness gaps. Auto-fixes the obvious ones. |
-| `/investigate` | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without investigation. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
-| `/design-review` | **Designer Who Codes** | Visual audit — spacing, hierarchy, AI slop patterns — then fixes what it finds. Atomic commits, before/after screenshots. |
+| `/autoplan` | **Review Pipeline** | One command, fully reviewed plan. Runs CEO → design → eng review automatically with encoded decision principles. Surfaces only taste decisions for your approval. |
+| `/agenda` | **Morning Planner** | Structured morning triage. Overdue tasks, inbox, daily slate — the ritual that turns a pile of open loops into a day's work. |
+| `/jira` | **Jira Operator** | Manage Jira tickets — search, create, update, transition, log time. |
+| `/browse` | **Browser Operator** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
 | `/qa` | **QA Lead** | Test your app in a real browser, find bugs, fix them with atomic commits, re-verify. Generates regression tests for every fix. |
 | `/qa-only` | **QA Reporter** | Same methodology as `/qa` but report only. Pure bug report, no code changes. |
+| `/design-review` | **Designer Who Codes** | Visual audit — spacing, hierarchy, AI slop patterns — then fixes what it finds. Atomic commits, before/after screenshots. |
+| `/investigate` | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without root cause. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
 | `/cso` | **Chief Security Officer** | OWASP Top 10 + STRIDE threat model. Zero-noise: confidence gate, independent verification. Concrete exploit scenarios. |
-| `/ship` | **Release Engineer** | Sync base branch, run tests, audit coverage, push, open PR. Review Readiness Dashboard shows which reviews have run. |
-| `/land-and-deploy` | **Release Engineer** | Merge the PR, wait for CI and deploy, verify production health via canary checks. One command from "approved" to "verified in production." |
-| `/canary` | **SRE** | Post-deploy monitoring. Watches for console errors, performance regressions, and page failures using the browse daemon. |
-| `/document-release` | **Technical Writer** | Update all project docs to match what shipped. Reads every doc, cross-references the diff, catches stale READMEs automatically. |
-| `/retro` | **Eng Manager** | Weekly retro. Per-person breakdowns, shipping streaks, test health trends, growth opportunities. |
-| `/browse` | **QA Engineer** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
-| `/autoplan` | **Review Pipeline** | One command, fully reviewed plan. Runs CEO → design → eng review automatically with encoded decision principles. Surfaces only taste decisions for your approval. |
-| `/codex` | **Second Opinion** | Independent review from OpenAI Codex CLI. Three modes: code review (pass/fail gate), adversarial challenge, and open consultation. Cross-model analysis when both `/review` and `/codex` have run. |
-| `/setup-deploy` | **Deploy Configurator** | One-time setup for `/land-and-deploy`. Detects your platform, production URL, and deploy commands. |
+| `/audit` | **Code Auditor** | Deep codebase audit — security, quality, architecture, error handling. Pre-release sweep for the whole repo, not just the diff. |
+| `/tmux` | **Tmux Operator** | Safety rules and patterns that prevent sending keys to the wrong pane. The muscle memory you wish you had before you nuked a running session. |
+| `/agent-spawn` | **Orchestrator** | Spawn and orchestrate AI agents (Prometheus, Claude, Codex) across tmux panes. Parallel work, without the step on each other's toes problem. |
+| `/design-consultation` | **Design Partner** | Build a complete design system from scratch. Researches the landscape, proposes creative risks, generates realistic mockups. Writes `DESIGN.md`. |
+| `/codex` | **Second Opinion** | Independent review from OpenAI Codex CLI. Three modes: code review (pass/fail gate), adversarial challenge, and open consultation. Cross-model analysis when both `/codex` and a steez review have run. |
+| `/reminders` | **Reminder Manager** | Manage Apple Reminders via `remindctl` — create, complete, reschedule. Native macOS integration, no third-party app. |
+| `/loop-prompt` | **Loop Generator** | Generate Ralph-style loop prompts for automated coding sessions. For when you want an agent to iterate on its own output without your attention. |
+| `/sharpen-skill` | **Skill Improver** | Evaluate and improve skills via multi-agent research and critique. The meta-skill that sharpens the rest of the team. |
 
 ### Helper scripts
 
@@ -112,11 +118,11 @@ steez update          # Pull latest and re-link
 
 | Category | Skills | Description |
 |---|---|---|
-| **Workflow** | office-hours, plan-ceo-review, plan-eng-review, plan-design-review, review, ship | Sprint pipeline: Think, Plan, Build, Review, Ship |
-| **QA & Testing** | browse, qa, qa-only, design-review, canary, benchmark | Browser-based testing, visual QA, canary monitoring |
-| **Infrastructure** | investigate, cso, connect-chrome, setup-browser-cookies | Debugging, security, and browser connectivity |
-| **Design** | design-consultation, design-shotgun, design-html | Design system creation, variants, HTML generation |
-| **Meta** | codex, autoplan, document-release, land-and-deploy, setup-deploy, retro | Automation, docs, deployment, retrospectives |
+| **Workflow** | workshop, office-hours, plan-ceo-review, plan-eng-review, plan-design-review, agenda, jira | Sprint pipeline: Think, Plan, Build |
+| **QA & Testing** | browse, qa, qa-only, design-review | Browser-based testing and visual QA |
+| **Infrastructure** | investigate, cso, tmux, agent-spawn, audit | Debugging, security, and orchestration |
+| **Design** | design-consultation | Design system creation |
+| **Meta** | codex, autoplan, reminders, loop-prompt, sharpen-skill | Automation, AI consult, and skill improvement |
 
 ## Profiles
 
@@ -149,7 +155,7 @@ Skills write session data and analytics to `~/.steez/` (not in the repo):
   projects/
     {slug}/
       *-design-*.md              # design docs from /office-hours
-      *-reviews.jsonl            # review logs from /review, /ship
+      *-reviews.jsonl            # review logs from /plan-ceo-review, /plan-eng-review, /plan-design-review
   browse/                        # browse daemon state
     auth.json                    # NS credentials (chmod 600, slot-keyed for multi-agent)
     locks/                       # account lock files (auto-managed, PID + 2h TTL)

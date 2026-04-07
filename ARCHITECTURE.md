@@ -4,9 +4,9 @@ This document explains **why** steez is built the way it is. For the skill catal
 
 ## The core idea
 
-steez is 21 Markdown files that turn Claude Code into a structured engineering team. No build step, no runtime dependencies, no server — just SKILL.md files that Claude reads when you invoke a slash command.
+steez is 22 Markdown files that turn Claude Code into a structured engineering team. No build step for the skills, no runtime dependencies, no server — just SKILL.md files that Claude reads when you invoke a slash command.
 
-The key insight: AI agents don't need frameworks, they need **opinionated instructions**. A well-written SKILL.md with clear phases, explicit voice, and filesystem-based data flow produces better results than a sophisticated template engine. steez proves this by running the same sprint pipeline as gstack — Think → Plan → Build → Review → Test → Ship → Reflect — with zero infrastructure beyond stow and git.
+The key insight: AI agents don't need frameworks, they need **opinionated instructions**. A well-written SKILL.md with clear phases, explicit voice, and filesystem-based data flow produces better results than a sophisticated template engine. steez adapts gstack's sprint pipeline — Think → Plan → Build → Test → Review — with a Go CLI installer for symlink management and git for version control.
 
 ## Where everything lives
 
@@ -17,18 +17,18 @@ steez spans two locations: the dotfiles repo (git-backed, deployed via stow) and
 ```
 dotfiles/claude/.claude/skills/
   steez/                              # shared home
-    bin/                              # 5 helper scripts
+    bin/                              # 8 helper scripts
     browse/                           # headless browser (Playwright + Chromium)
     ETHOS.md                          # builder philosophy
     FORK_MANIFEST.md                  # upstream provenance
     README.md                         # ecosystem docs
     ARCHITECTURE.md                   # this file
-  steez-office-hours/SKILL.md         # ─┐
-  steez-plan-ceo-review/SKILL.md      #  │
-  steez-plan-eng-review/SKILL.md      #  │
-  steez-plan-design-review/SKILL.md   #  │ 21 workflow skills
-  steez-review/SKILL.md + checklists  #  │ each in its own directory
-  steez-ship/SKILL.md                 #  │
+  workshop/SKILL.md                   # ─┐
+  office-hours/SKILL.md               #  │
+  plan-ceo-review/SKILL.md            #  │
+  plan-eng-review/SKILL.md            #  │ 22 skills total
+  plan-design-review/SKILL.md         #  │ each in its own directory
+  agenda/SKILL.md                     #  │
   ...                                 # ─┘
 ```
 
@@ -64,10 +64,10 @@ steez doesn't use templates. Each SKILL.md is hand-edited directly.
 
 **Why this works:**
 - **No build step.** Edit a SKILL.md, it's live immediately. No `bun run gen:skill-docs`, no stale generated output.
-- **21 skills is manageable.** The preamble pattern is ~30 lines. Updating 21 files manually takes 5 minutes with search-and-replace. At 50+ skills, this would break down.
+- **22 skills is manageable.** The preamble pattern is ~30 lines. Updating 22 files manually takes 5 minutes with search-and-replace. At 50+ skills, this would break down.
 - **No template/generated drift.** gstack's template system solves a real problem — but it introduces its own: the generated SKILL.md can be stale if someone forgets to regenerate. steez has no generated files to go stale.
 
-**The tradeoff:** shared-section updates (preamble, voice, AskUserQuestion format) must be applied to all 21 files manually. This is acceptable friction for a single maintainer.
+**The tradeoff:** shared-section updates (preamble, voice, AskUserQuestion format) must be applied to all 22 files manually. This is acceptable friction for a single maintainer.
 
 ## Why hardcoded solo
 
@@ -158,23 +158,20 @@ Skills communicate through the filesystem, not through shared memory:
   reads  ← design doc
   writes → review log entry (via review-log)
            │
-/plan-eng-review
+/plan-design-review
   reads  ← design doc + prior review logs
   writes → review log entry
            │
-/review
-  reads  ← diff + review logs (via review-read)
+/plan-eng-review
+  reads  ← design doc + prior review logs
   writes → review log entry
-           │
-/ship
-  reads  ← review logs → renders Review Readiness Dashboard
-  writes → final review log entry
-  creates → PR
 ```
+
+`/autoplan` runs the three plan reviews sequentially. `/workshop` sits upstream of this chain but communicates through beads (one bead per session, `--label=workshop`) rather than filesystem artifacts.
 
 ### Review Readiness Dashboard
 
-`review-read` outputs three sections that `/ship` and `/review` use:
+`review-read` outputs three sections that the Plan Status Footer instruction (injected via preamble) renders into plan files during plan mode:
 
 ```
 {branch}-reviews.jsonl entries    ← review history
@@ -262,7 +259,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 
 ## What's intentionally not here
 
-- **No template system.** 21 skills is manageable by hand. The build step complexity isn't justified. See "Why no templates" above.
+- **No template system.** 22 skills is manageable by hand. The build step complexity isn't justified. See "Why no templates" above.
 - **No multi-user support.** `REPO_MODE=solo` is hardcoded. No contributor detection, no collaborative review workflows.
 - **No remote telemetry.** All analytics are local JSONL files. No Supabase, no network calls.
 - **No onboarding flow.** Config is pre-seeded. No first-run prompts, no opt-in gates.
@@ -281,7 +278,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 | Onboarding | First-run prompts | None (pre-seeded) |
 | Contributor Mode | Gated behind flag | Skill Self-Report (always on) |
 | Voice | Garry Tan / GStack identity | "Senior engineering partner — CTO-level operator" |
-| Skill count | 29 skills | 21 skills |
+| Skill count | 29 skills | 22 skills |
 | Update mechanism | `/gstack-upgrade` self-updater | `git pull` in dotfiles |
 
 ## Extending steez
