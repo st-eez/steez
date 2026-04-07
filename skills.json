@@ -1,6 +1,9 @@
 {
   "version": "1.0.0",
   "skills": {
+    "workshop": {
+      "description": "Thinking partner for fuzzy ideas — five lenses, one bead per session"
+    },
     "office-hours": {
       "description": "Brainstorm ideas with forcing questions and design thinking sessions"
     },
@@ -73,7 +76,7 @@
     "workflow": {
       "label": "Workflow",
       "description": "Sprint pipeline: Think → Plan → Build → QA",
-      "skills": ["office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "agenda", "jira"]
+      "skills": ["workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "agenda", "jira"]
     },
     "qa": {
       "label": "QA & Testing",
@@ -99,7 +102,7 @@
   "profiles": {
     "starter": {
       "label": "Starter Kit (recommended)",
-      "description": "6 workflow skills — the sprint pipeline spine",
+      "description": "7 workflow skills — the sprint pipeline spine",
       "categories": ["workflow"]
     },
     "all": {

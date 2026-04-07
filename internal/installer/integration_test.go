@@ -46,8 +46,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		t.Fatalf("resolving profile: %v", err)
 	}
 
-	if len(skills) != 6 {
-		t.Fatalf("starter profile has %d skills, want 6", len(skills))
+	if len(skills) != 7 {
+		t.Fatalf("starter profile has %d skills, want 7", len(skills))
 	}
 
 	// Create repo symlink.
@@ -86,9 +86,9 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		config.AddToRegistry(reg, name, source, target)
 	}
 
-	// Verify 6 entries (6 skills, repo/bin symlinks not in registry).
-	if len(reg.Symlinks) != 6 {
-		t.Errorf("registry has %d entries, want 6", len(reg.Symlinks))
+	// Verify 7 entries (7 skills, repo/bin symlinks not in registry).
+	if len(reg.Symlinks) != 7 {
+		t.Errorf("registry has %d entries, want 7", len(reg.Symlinks))
 	}
 
 	// Save and reload registry to verify persistence.
@@ -97,8 +97,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading registry: %v", err)
 	}
-	if len(loaded.Symlinks) != 6 {
-		t.Errorf("loaded registry has %d entries, want 6", len(loaded.Symlinks))
+	if len(loaded.Symlinks) != 7 {
+		t.Errorf("loaded registry has %d entries, want 7", len(loaded.Symlinks))
 	}
 
 	// Verify all symlinks resolve.

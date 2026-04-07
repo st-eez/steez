@@ -101,7 +101,7 @@ steez setup     # interactive TUI
 
 ```sh
 steez setup           # Interactive TUI — pick skills to install
-steez install starter # Install the starter kit (6 workflow skills)
+steez install starter # Install the starter kit (7 workflow skills)
 steez install all     # Install everything
 steez list            # Show installed skills
 steez doctor          # Validate install health
@@ -120,7 +120,7 @@ steez update          # Pull latest and re-link
 
 ## Profiles
 
-- **Starter Kit** — 6 workflow skills (the sprint pipeline spine). Recommended for new users.
+- **Starter Kit** — 7 workflow skills (the sprint pipeline spine). Recommended for new users.
 - **All** — Everything available.
 
 ## Development
