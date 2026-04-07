@@ -10,27 +10,44 @@ The key insight: AI agents don't need frameworks, they need **opinionated instru
 
 ## Where everything lives
 
-steez spans two locations: the dotfiles repo (git-backed, deployed via stow) and a runtime state directory (local-only, never committed).
+steez spans two locations: the source repo (git-backed, wherever you cloned it) and a runtime state directory at `~/.steez/` (installer-managed, never committed).
 
-### Repo (dotfiles)
+### Repo
 
 ```
-dotfiles/claude/.claude/skills/
-  steez/                              # shared home
-    bin/                              # 8 helper scripts
-    browse/                           # headless browser (Playwright + Chromium)
-    ETHOS.md                          # builder philosophy
-    FORK_MANIFEST.md                  # upstream provenance
-    README.md                         # ecosystem docs
-    ARCHITECTURE.md                   # this file
-  workshop/SKILL.md                   # ─┐
-  office-hours/SKILL.md               #  │
-  plan-ceo-review/SKILL.md            #  │
-  plan-eng-review/SKILL.md            #  │ 22 skills total
-  plan-design-review/SKILL.md         #  │ each in its own directory
-  agenda/SKILL.md                     #  │
-  ...                                 # ─┘
+steez/                                # repo root
+├── cmd/steez/                        # Go CLI entrypoint
+├── internal/                         # Go packages
+│   ├── installer/                    # symlink management, manifest parsing
+│   ├── config/                       # ~/.steez/installed.json loader
+│   ├── tui/                          # Bubble Tea setup flow
+│   └── updater/                      # git-based update logic
+├── skills/                           # 22 skill directories, each {name}/SKILL.md
+├── skills.json                       # manifest: skills + categories + profiles
+├── preamble/                         # managed preamble system
+│   ├── sections/                     # section templates
+│   └── tiers.json                    # tier → sections mapping
+├── shared/steez/                     # shared runtime (deployed via symlinks)
+│   ├── bin/                          # 9 bash helper scripts
+│   │   ├── config                    # read/write ~/.steez/config
+│   │   ├── slug                      # git remote → owner-repo slug
+│   │   ├── diff-scope                # categorize diff scopes
+│   │   ├── review-log                # append review entries
+│   │   ├── review-read               # read review log + config
+│   │   ├── steez-bd                  # beads integration
+│   │   ├── agent-state               # detect AI agent state in tmux panes
+│   │   ├── agent-history             # parse structured transcript from tmux pane
+│   │   └── upstream-diff             # diff skill against gstack upstream
+│   ├── browse/                       # headless browser (Playwright + Chromium)
+│   └── hooks/                        # SessionStart + skill-analytics hooks
+├── ETHOS.md                          # builder philosophy
+├── ARCHITECTURE.md                   # this file
+├── FORK_MANIFEST.md                  # upstream gstack provenance
+├── CLAUDE.md                         # repo conventions for Claude Code
+└── README.md                         # ecosystem docs
 ```
+
+The Go CLI under `cmd/steez/` and `internal/` is the install machinery. Skills under `skills/` are pure data — Markdown files Claude reads at runtime. The shared runtime under `shared/steez/` is everything skills depend on at execution time (helper scripts, the browse binary, Claude Code hooks). Keeping these three concerns in distinct top-level directories is intentional: it lets the installer reason about each as a unit and lets contributors find things by role rather than by file type.
 
 ### Runtime (`~/.steez/`)
 
@@ -48,13 +65,15 @@ dotfiles/claude/.claude/skills/
     locks/                            # account lock files (PID + TTL)
 ```
 
-### Stow deployment
+### Install model
 
-The `claude` package uses directory folding. After `stow --restow claude`, `~/.claude/skills/` is a symlink to `dotfiles/claude/.claude/skills/`. This means:
+steez ships as a Go CLI (`cmd/steez/`) that manages a symlink-based install. Each installed skill becomes a per-directory symlink at `~/.claude/skills/{name}` pointing back to `repo/skills/{name}/`. Shared runtime is reached the same way: `~/.steez/repo` symlinks to the user's checkout, and `~/.steez/bin/` holds installer-managed symlinks to each helper script and the `browse` binary. The install registry at `~/.steez/installed.json` is the source of truth for what's currently installed and where it points.
 
-- Editing files in the repo edits them live in `~/.claude/skills/`
-- New skill directories created in the repo appear immediately
-- Helper scripts are accessible via installer-managed symlinks at `~/.steez/bin/`
+**Why symlinks instead of copies:** updates are live mutation. `git pull` in the source checkout updates every installed skill instantly because the symlinks already point at the live tree. There is no rebuild step, no resync command, no version drift between what's in the repo and what Claude reads at runtime. Edit a SKILL.md in the repo, the next slash-command invocation sees the change.
+
+**Why per-skill symlinks instead of one parent symlink:** users opt into a subset of skills via `skills.json` profiles, and `~/.claude/skills/` may already contain skills installed from other sources. Per-skill symlinks let the installer reconcile only the steez-managed entries without touching anything else in that directory. The Go installer reads `skills.json`, computes the desired set against `installed.json`, and adds/removes symlinks accordingly.
+
+**Why a Go CLI instead of a shell script:** the installer needs to manage state across two locations (the source checkout and `~/.steez/`), parse a manifest, reconcile a registry, and handle the TUI for first-time setup. A few hundred lines of Go is more maintainable than the equivalent bash, and the binary has zero runtime dependencies once compiled.
 
 ## Why no templates
 
@@ -73,7 +92,7 @@ steez doesn't use templates. Each SKILL.md is hand-edited directly.
 
 gstack detects whether a repo is solo or collaborative based on contributor count and adapts behavior — review depth, PR format, communication style. steez hardcodes `REPO_MODE=solo` in every preamble.
 
-**Why:** This is personal tooling deployed from dotfiles. There is no multi-user scenario. The detection logic is dead code, and dead code is a liability — it adds lines that Claude reads, costs tokens, and can confuse the agent about whether it should behave differently.
+**Why:** This is personal tooling installed from a single user's checkout. There is no multi-user scenario. The detection logic is dead code, and dead code is a liability — it adds lines that Claude reads, costs tokens, and can confuse the agent about whether it should behave differently.
 
 **How to apply:** Every skill preamble sets `REPO_MODE=solo` as a constant. No conditional branches, no contributor detection.
 
@@ -81,7 +100,7 @@ gstack detects whether a repo is solo or collaborative based on contributor coun
 
 gstack supports opt-in remote telemetry via Supabase — anonymous usage data (skill name, duration, success/fail) sent to a hosted database. steez strips all remote telemetry.
 
-**Why:** steez runs in a public dotfiles repo. Embedding remote endpoints in committed files is a maintenance burden and a trust issue. Local analytics provide the same signal — which skills get used, how long they take, what fails — without any network dependency.
+**Why:** steez is a public repo. Embedding remote endpoints in committed files is a maintenance burden and a trust issue. Local analytics provide the same signal — which skills get used, how long they take, what fails — without any network dependency.
 
 **How it works:** A PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`) appends a JSON line to `~/.steez/analytics/skill-usage.jsonl` on every skill invocation. This is a local file, never synced. The eureka log (`eureka.jsonl`) captures first-principles insights from the Search Before Building pattern.
 
@@ -263,14 +282,14 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 - **No multi-user support.** `REPO_MODE=solo` is hardcoded. No contributor detection, no collaborative review workflows.
 - **No remote telemetry.** All analytics are local JSONL files. No Supabase, no network calls.
 - **No onboarding flow.** Config is pre-seeded. No first-run prompts, no opt-in gates.
-- **No self-updater.** steez is git-backed. `git pull` in dotfiles is the update mechanism.
+- **No self-updater.** steez is git-backed. `steez update` (or `git pull` in the source checkout) is the update mechanism — symlinks already point at the live tree.
 - **No shared command reference generation.** Unlike gstack's `{{COMMAND_REFERENCE}}` template placeholders, browse command docs are maintained directly in the browse SKILL.md.
 
 ## Key differences from gstack
 
 | Aspect | gstack | steez |
 |--------|--------|-------|
-| Deployment | `git clone` + `./setup` | stow from dotfiles |
+| Deployment | `git clone` + `./setup` | Go CLI installer (symlinks) |
 | Template system | `.tmpl` → `gen-skill-docs.ts` → `SKILL.md` | hand-edited SKILL.md |
 | Config file | `~/.gstack/config.yaml` | `~/.steez/config` (no extension) |
 | Repo mode | Detected per-repo | Hardcoded solo |
@@ -279,20 +298,22 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 | Contributor Mode | Gated behind flag | Skill Self-Report (always on) |
 | Voice | Garry Tan / GStack identity | "Senior engineering partner — CTO-level operator" |
 | Skill count | 29 skills | 22 skills |
-| Update mechanism | `/gstack-upgrade` self-updater | `git pull` in dotfiles |
+| Update mechanism | `/gstack-upgrade` self-updater | `git pull` in source checkout (live via symlinks) |
 
 ## Extending steez
 
 ### Adding a new skill
 
-1. Create `dotfiles/claude/.claude/skills/{name}/SKILL.md`
-2. Copy the preamble from any existing skill (change `SKILL_NAME`)
-3. Stow deploys it automatically (directory folding)
+1. Create `skills/{name}/SKILL.md` in the source repo
+2. Add `<!-- BEGIN MANAGED PREAMBLE -->` / `<!-- END MANAGED PREAMBLE -->` markers and a `preamble-tier` field to the YAML frontmatter
+3. Add an entry to `skills.json` (`name`, `category`, `description` ≤80 chars)
+4. Run `steez sync` to populate the managed preamble block from `preamble/sections/`
+5. Run `steez install {name}` to symlink it into `~/.claude/skills/`
 
 ### Porting from gstack
 
-1. `mkdir -p` the skill directory + `cp` source SKILL.md
-2. YAML frontmatter `name:` → `steez-*`
+1. `mkdir -p skills/{name}` + `cp` the gstack `SKILL.md` into it
+2. Strip the `gstack-` prefix from the YAML frontmatter `name:` field (steez skills use bare names — `qa`, not `steez-qa`)
 3. Remove auto-generated comments (template artifact markers)
 4. Replace preamble with steez pattern (`STEEZ_HOME`, hardcoded `~/.steez/bin/` paths, `REPO_MODE=solo`, local JSONL)
 5. Strip onboarding conditionals (`LAKE_INTRO`, `TEL_PROMPTED`, `PROACTIVE_PROMPTED`) — keep only the `PROACTIVE` check
@@ -310,7 +331,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 
 ### Updating from upstream
 
-1. Check gstack version: `cat ~/.claude/skills/gstack/VERSION`
-2. Diff per-skill: `diff ~/.claude/skills/gstack/{skill}/SKILL.md dotfiles/claude/.claude/skills/{skill}/SKILL.md`
-3. Cherry-pick functional changes (skip template/onboarding diffs)
-4. Update FORK_MANIFEST.md with new upstream version
+1. Check what's diverged: `upstream-diff --all` (or `upstream-diff <skill>` for one skill)
+2. Cherry-pick functional changes manually from `~/Projects/Personal/gstack/`
+3. Skip template, onboarding, and contributor-mode diffs — those are intentional steez removals
+4. Update `FORK_MANIFEST.md` with the new upstream commit if doing a major sync
