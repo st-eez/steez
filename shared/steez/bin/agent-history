@@ -3,10 +3,10 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: agent-history [<pane|path>] <mode> [--agent claude|codex|prometheus]
+Usage: agent-history [<pane|path>] <mode> [--agent claude|codex|prometheus|ren]
        agent-history --all <mode>
 
-Read structured conversation data from Claude Code or Codex CLI transcripts.
+Read structured conversation data from Claude Code, Ren, or Codex CLI transcripts.
 
 Modes:
   --last         Last human prompt + assistant response
