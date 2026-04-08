@@ -1,7 +1,7 @@
 ---
 name: spawn-agent
 preamble-tier: 1
-description: "REQUIRED for spawning, launching, or orchestrating AI coding agents (claude, codex, prometheus). Use this skill, not tmux, whenever the user wants to spawn, launch, start, or orchestrate an agent or instance. Triggers include spawn an agent, launch prometheus, spin up a claude, fire up codex, start an agent in a new pane, or put an agent in a worktree. Even when tmux panes or windows are mentioned, if the user wants to CREATE an agent there, use this skill."
+description: "REQUIRED for spawning, prompting, reading from, and communicating with AI coding agents (claude, codex, prometheus) across tmux panes. Use this skill, not tmux, whenever the user wants to spawn, launch, start, orchestrate, message, query, or check on an agent. Spawn triggers: spawn an agent, launch prometheus, spin up a claude, fire up codex, start an agent in a new pane, put an agent in a worktree. Post-spawn triggers: send the agent a message, ask the other agent, query the previous session, check what that agent is doing, read the agent's response, wait for the agent to finish. Even when tmux panes or windows are mentioned, if the operation involves an AI agent in a pane, use this skill."
 ---
 
 <!-- BEGIN MANAGED PREAMBLE -->
@@ -247,3 +247,111 @@ The `agent-state` command returns structured JSON with the agent's current state
 
 In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't use AskUserQuestion — just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
 
+## Post-Spawn Operations
+
+Once an agent is running in a pane, you interact with it through three helper scripts: `agent-send` to push input, `agent-state` to check what it is doing, and `agent-history` to read what it produced. Use these instead of raw tmux primitives. The scripts encapsulate the recipes; this section teaches when and why to reach for each one.
+
+### Sending Input to a Running Agent
+
+Use `~/.steez/bin/agent-send <pane> "message"` to deliver a message to a running agent.
+
+```bash
+~/.steez/bin/agent-send %5 "what's blocking the test suite?"
+```
+
+The script wraps the chat-pane footgun (Enter must arrive as a separate keystroke after a brief pause, otherwise the message sits in the composer unsubmitted), so callers do not need to know the underlying tmux primitives. It also uses tmux paste-buffers for verbatim byte delivery, so backticks, dollar signs, and quotes survive unmangled.
+
+This is pure fire-and-forget. The script returns as soon as the message is submitted. It does not wait, does not poll, does not read the response. If you want to know what the agent did, read separately on your own clock using the sections below.
+
+The pane argument accepts a pane id (`%N`, preferred) or `session:window.pane`. The pane must be a recognized AI agent (claude or codex); otherwise the script exits with code 2.
+
+### Waiting For An Agent To Finish
+
+`pane_current_command` does NOT work for agent panes. The process name stays `claude` or `node` whether the agent is thinking, blocked, or idle. Use `~/.steez/bin/agent-state <pane>` instead, which parses agent-specific signals (title prefixes, prompt patterns) to distinguish the real states.
+
+State enum:
+
+- `working` ... agent is thinking, streaming, or executing tools
+- `idle` ... turn complete, ready for input
+- `blocked:question` ... waiting on a user-facing question
+- `blocked:permission` ... waiting on permission approval
+- `blocked:unknown` ... blocked on an unrecognized prompt type (fallback)
+
+The canonical (and only) wait pattern is a polling loop on `agent-state`:
+
+```bash
+~/.steez/bin/agent-send %5 "run the test suite"
+while true; do
+  STATE=$(~/.steez/bin/agent-state %5 | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('state',''))")
+  [[ "$STATE" == "working" ]] || break
+  sleep 3
+done
+echo "Agent finished (state: $STATE)"
+```
+
+**Warning: this blocks the parent agent.** While the loop runs, the parent cannot do anything else. Use it sparingly. The default usage model is async, like email: send the message, walk away, read the response when convenient. Only block when the next step genuinely depends on the result.
+
+If the loop exits with `STATE` set to `blocked:question` or `blocked:permission`, the agent will not finish on its own. Use `agent-history --blocked` to see what it needs before deciding how to respond.
+
+### Reading Agent Output
+
+`~/.steez/bin/agent-history` is the canonical reader for agent panes. It parses the structured JSONL transcript and returns turn-aware data, so you get the actual prompt and response rather than whatever happens to be on screen.
+
+**Last prompt and response:**
+
+```bash
+~/.steez/bin/agent-history %5 --last
+```
+
+```json
+{"agent":"claude","prompt":"fix the login bug","response":"I found the issue in auth.ts..."}
+```
+
+**What is blocking the agent:**
+
+```bash
+~/.steez/bin/agent-history %5 --blocked
+```
+
+Returns the pending tool call that has no result yet. For `AskUserQuestion`, the top-level `question` field extracts the first question text for convenience.
+
+**Recent conversation history:**
+
+```bash
+~/.steez/bin/agent-history %5 --history 3
+```
+
+Returns the last N prompt/response pairs in chronological order.
+
+**Fallback: raw scrollback when the structured reader cannot resolve the transcript.**
+
+`agent-history` needs the agent's `@session_id` pane variable and a readable transcript file. If the pane variable is missing, the transcript file has rotated or moved, or the pane is not recognized as a known agent, fall back to raw scrollback:
+
+```bash
+tmux capture-pane -t %5 -p -S -
+```
+
+The structured reader is preferred because it gives you turn-aware data instead of whatever happens to be visible. The raw capture always works. Reach for it when the structured reader returns nothing.
+
+### Multi-Agent Overview
+
+Scan all panes for running agents:
+
+```bash
+~/.steez/bin/agent-state --all
+```
+
+```json
+[
+  {"pane":"%2","agent":"claude","state":"working","name":"steez"},
+  {"pane":"%5","agent":"codex","state":"idle","name":"api-server"}
+]
+```
+
+Only agent panes are included. Non-agent panes are filtered out.
+
+Useful flag combinations:
+
+- `--detail` adds session id, working directory, and transcript path. Useful for routing decisions or for passing a transcript path to `agent-history`.
+- `--read` adds visible pane content (equivalent to `capture-pane -p -S -`). Combine with `--detail` for content and metadata in one call.
+- `--layout` renders a proportionally-scaled ASCII box diagram of each window's pane layout with state colors. Only windows containing at least one agent are shown.
