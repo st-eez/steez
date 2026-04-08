@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage: agent-history [<pane|path>] <mode> [--agent claude|codex|prometheus]
+       agent-history --all <mode>
 
 Read structured conversation data from Claude Code or Codex CLI transcripts.
 
@@ -18,8 +19,9 @@ Input:
   (none)         Uses $TMUX_PANE if set
 
 Options:
+  --all                             Scan every tmux agent pane, return JSON array
   --agent claude|codex|prometheus   Override agent type inference
-  -h, --help             Show this help
+  -h, --help                        Show this help
 EOF
   exit 0
 }
@@ -34,6 +36,7 @@ TARGET=""
 MODE=""
 HISTORY_N=""
 AGENT_OVERRIDE=""
+ALL_MODE="false"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +48,7 @@ while [[ $# -gt 0 ]]; do
       [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]] || { echo "error: --history requires a number" >&2; exit 1; }
       HISTORY_N="$1"; shift
       ;;
+    --all)     ALL_MODE="true"; shift ;;
     --agent)
       shift
       [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex" || "$1" == "prometheus") ]] || { echo "error: --agent requires claude, codex, or prometheus" >&2; exit 1; }
@@ -57,6 +61,81 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$MODE" ]] || { echo "error: specify a mode (--last, --blocked, or --history N)" >&2; exit 1; }
+
+# --- --all scan mode: iterate every agent pane, emit a JSON array ---
+if [[ "$ALL_MODE" == "true" ]]; then
+  [[ -z "$TARGET" ]] || { echo "error: --all cannot be combined with a target" >&2; exit 1; }
+  [[ -z "$AGENT_OVERRIDE" ]] || { echo "error: --all cannot be combined with --agent" >&2; exit 1; }
+
+  mode_args=()
+  case "$MODE" in
+    last)    mode_args=(--last) ;;
+    blocked) mode_args=(--blocked) ;;
+    history) mode_args=(--history "$HISTORY_N") ;;
+  esac
+
+  panes_raw=$("$HOME/.steez/bin/agent-state" --all --json 2>/dev/null) || {
+    echo "error: agent-state --all failed" >&2; exit 1
+  }
+
+  # unit separator (0x1f) — pane titles can contain tabs but won't contain this
+  US=$'\x1f'
+
+  # Newline-delimited "pane<US>name" for every AI agent pane (skip shell/unknown)
+  panes_list=$(printf '%s' "$panes_raw" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for item in data:
+    if item.get('agent') in ('shell', 'unknown'): continue
+    print(item['pane'], item.get('name', ''), sep='\x1f')
+")
+
+  if [[ -z "$panes_list" ]]; then
+    echo '[]'
+    exit 0
+  fi
+
+  # Self-invoke per pane, compact each result to one line, tag with pane + name
+  tagged_results=""
+  while IFS="$US" read -r pane pane_name; do
+    [[ -z "$pane" ]] && continue
+    result=$("$0" "$pane" "${mode_args[@]}" 2>/dev/null || true)
+    if [[ -z "$result" ]]; then
+      compact='{"error":"no output"}'
+    else
+      compact=$(printf '%s' "$result" | python3 -c "
+import sys, json
+try:
+    print(json.dumps(json.loads(sys.stdin.read())))
+except Exception as e:
+    print(json.dumps({'error': 'parse failed: ' + str(e)}))
+" 2>/dev/null) || compact='{"error":"compact failed"}'
+    fi
+    tagged_results+="${pane}${US}${pane_name}${US}${compact}"$'\n'
+  done <<< "$panes_list"
+
+  # Assemble final JSON array — inject pane + name into each record
+  printf '%s' "$tagged_results" | python3 -c "
+import sys, json
+out = []
+for raw in sys.stdin:
+    raw = raw.rstrip('\n')
+    if not raw: continue
+    parts = raw.split('\x1f', 2)
+    if len(parts) < 3: continue
+    pane, name, body = parts
+    try:
+        obj = json.loads(body)
+    except Exception as e:
+        obj = {'error': 'parse failed: ' + str(e)}
+    obj['pane'] = pane
+    if name:
+        obj['name'] = name
+    out.append(obj)
+print(json.dumps(out, indent=2))
+"
+  exit 0
+fi
 
 # --- Input resolution ---
 TRANSCRIPT=""

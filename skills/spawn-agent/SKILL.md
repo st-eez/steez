@@ -323,6 +323,14 @@ Returns the pending tool call that has no result yet. For `AskUserQuestion`, the
 
 Returns the last N prompt/response pairs in chronological order.
 
+**Scan every agent pane at once:**
+
+```bash
+~/.steez/bin/agent-history --all --last
+```
+
+Returns a JSON array with one entry per agent pane, each tagged with `pane` and `name` so you can tell sessions apart. Works with any mode (`--all --last`, `--all --blocked`, `--all --history N`). Useful for orchestrator panes that need to check what every child is currently working on, find agents blocked on a question, or pull the last few turns from all sessions in one call. Incompatible with a pane target or `--agent` override — per-pane detection is authoritative.
+
 **Fallback: raw scrollback when the structured reader cannot resolve the transcript.**
 
 `agent-history` needs the agent's `@session_id` pane variable and a readable transcript file. If the pane variable is missing, the transcript file has rotated or moved, or the pane is not recognized as a known agent, fall back to raw scrollback:
