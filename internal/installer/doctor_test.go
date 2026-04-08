@@ -38,6 +38,7 @@ func setupDoctorHome(t *testing.T, repoPath string) string {
 		{"steez-bd", "shared/steez/bin/steez-bd"},
 		{"agent-state", "shared/steez/bin/agent-state"},
 		{"agent-history", "shared/steez/bin/agent-history"},
+		{"agent-send", "shared/steez/bin/agent-send"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	} {
 		os.Symlink(filepath.Join(repoSymlink, bs.relPath), filepath.Join(binDir, bs.name))
@@ -57,7 +58,7 @@ func TestDoctor_AllPass(t *testing.T) {
 	repoPath := filepath.Join(tmp, "repo")
 	// Create shared runtime structure so bin symlinks resolve.
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
-	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history"} {
+	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history", "agent-send"} {
 		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
 	}
 	// Create browse binary so that symlink resolves.
@@ -192,7 +193,7 @@ func TestDoctor_FixMode(t *testing.T) {
 func createSharedRuntime(t *testing.T, repoPath string) {
 	t.Helper()
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
-	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history"} {
+	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history", "agent-send"} {
 		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
 	}
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)

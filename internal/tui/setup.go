@@ -439,6 +439,7 @@ func (m *setupModel) runInstall() {
 		{"steez-bd", "shared/steez/bin/steez-bd"},
 		{"agent-state", "shared/steez/bin/agent-state"},
 		{"agent-history", "shared/steez/bin/agent-history"},
+		{"agent-send", "shared/steez/bin/agent-send"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	}
 	// Remove old steez-prefixed bin symlinks from before the rename.

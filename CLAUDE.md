@@ -51,6 +51,7 @@ agent-state <pane>               # detect AI agent state in a tmux pane
 agent-state --all [--detail]     # scan all panes for AI agents
 agent-history <pane>             # parse structured transcript from tmux pane
 agent-history --all              # parse transcripts from all agent panes
+agent-send <pane> "msg"          # send a message to a claude/codex pane (escape-safe + delayed Enter)
 upstream-diff <skill>            # diff a steez skill against gstack upstream
 upstream-diff --all              # show divergence summary for all skills
 ```
@@ -64,7 +65,7 @@ network calls, no credentials.
 ```
 steez/                                    # repo root
 ├── shared/steez/                         # shared runtime
-│   ├── bin/                              # 9 bash helper scripts
+│   ├── bin/                              # 10 bash helper scripts
 │   │   ├── config                        # read/write ~/.steez/config
 │   │   ├── slug                          # git remote → owner-repo slug
 │   │   ├── diff-scope                    # categorize diff scopes
@@ -73,6 +74,7 @@ steez/                                    # repo root
 │   │   ├── steez-bd                      # beads integration (keeps prefix)
 │   │   ├── agent-state                   # detect AI agent state in tmux panes
 │   │   ├── agent-history                 # parse structured transcript from tmux pane
+│   │   ├── agent-send                    # send messages to claude/codex panes (escape-safe)
 │   │   └── upstream-diff                 # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
@@ -116,6 +118,7 @@ steez/                                    # repo root
 │   ├── steez-bd -> ~/.steez/repo/shared/steez/bin/steez-bd
 │   ├── agent-state -> ~/.steez/repo/shared/steez/bin/agent-state
 │   ├── agent-history -> ~/.steez/repo/shared/steez/bin/agent-history
+│   ├── agent-send -> ~/.steez/repo/shared/steez/bin/agent-send
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
 ├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
@@ -226,6 +229,9 @@ agent-state — standalone (tmux, ps, python3)
   Used by: tmux skill, agent-spawn skill
 
 agent-history — standalone (tmux, agent-state)
+  Used by: tmux skill, agent-spawn skill
+
+agent-send — standalone (tmux, agent-state)
   Used by: tmux skill, agent-spawn skill
 ```
 

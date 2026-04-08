@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: agent-send <pane> "message"
+
+Send a message to a Claude Code or Codex CLI pane.
+
+Wraps the chat-pane delayed-Enter footgun: the composer needs Enter as a
+separate keystroke after a brief delay, otherwise the message sits in the
+input box unsubmitted. This script encodes the working pattern in one place
+so callers never need to know the recipe.
+
+Escape safety: messages are sent via tmux load-buffer + paste-buffer, which
+passes bytes verbatim — backticks, dollar signs, and quotes survive
+unmangled. Multi-line messages need real newlines in the quoted argument
+(backslash escapes like \n are sent literally, not interpreted).
+
+Pure fire-and-forget. Reading the response is the caller's job, using
+agent-state and `agent-history --last` on their own clock.
+
+Arguments:
+  <pane>     Pane id (%N preferred, also accepts session:window.pane)
+  <message>  Message body. For multi-line, embed real newlines in a quoted
+             string or use a heredoc.
+
+Exit codes:
+  0  Message submitted
+  1  Generic error (bad args, send failed)
+  2  Pane is not a recognized AI agent (claude or codex)
+EOF
+  exit 0
+}
+
+[[ $# -eq 0 ]] && { echo "error: missing arguments" >&2; exit 1; }
+case "$1" in -h|--help) usage ;; esac
+[[ $# -eq 2 ]] || { echo "error: usage: agent-send <pane> \"message\"" >&2; exit 1; }
+
+PANE="$1"
+MSG="$2"
+AGENT_STATE="$HOME/.steez/bin/agent-state"
+
+[[ -n "$MSG" ]] || { echo "error: message body is empty" >&2; exit 1; }
+
+# Validate the pane is running a recognized AI agent (claude or codex)
+"$AGENT_STATE" "$PANE" >/dev/null 2>&1 || {
+  echo "error: pane '$PANE' is not a recognized AI agent (claude or codex)" >&2
+  exit 2
+}
+
+# Resolve to canonical pane id (stable across subsequent tmux calls)
+PANE_ID=$(tmux display-message -t "$PANE" -p '#{pane_id}') || {
+  echo "error: pane '$PANE' not found" >&2; exit 1; }
+
+# Send via tmux buffer for escape-safe paste (verbatim bytes, no shell parsing)
+BUF="agent-send-$$"
+trap 'tmux delete-buffer -b "$BUF" 2>/dev/null || true' EXIT
+printf '%s' "$MSG" | tmux load-buffer -b "$BUF" -
+tmux paste-buffer -b "$BUF" -t "$PANE_ID" -d
+
+# Delayed Enter to submit the composer (the whole point of this script —
+# Enter must arrive as a separate keystroke after a brief pause, not bundled
+# into the send-keys call that delivered the message body)
+sleep 0.3
+tmux send-keys -t "$PANE_ID" Enter
+
+# Composer-clear retry: if the agent is still idle, the Enter didn't take
+# effect and the message is sitting in the composer. Send Enter again.
+# Belt-and-suspenders: pressing Enter on an empty composer is a no-op in
+# both Claude Code and Codex, so the retry is safe even if the first Enter
+# actually worked and the agent already finished responding.
+sleep 0.2
+if "$AGENT_STATE" "$PANE_ID" 2>/dev/null | grep -q '"state":"idle"'; then
+  tmux send-keys -t "$PANE_ID" Enter
+fi
