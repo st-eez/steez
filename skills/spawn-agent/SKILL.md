@@ -63,13 +63,13 @@ RECOMMENDATION: [what the user should do next]
 ```
 <!-- END MANAGED PREAMBLE -->
 
-# Agent Spawn — Tmux-based AI Agent Orchestrator
+# Agent Spawn: Tmux-based AI Agent Orchestrator
 
 Spawn an AI coding agent (Prometheus, Claude, or Codex) in a tmux target. This skill is project-agnostic.
 
-## Step 1 — Parse user intent
+## Step 1: Parse user intent
 
-Extract everything from what the user already said. The user's request IS the configuration — do not ask questions the user already answered or that have obvious defaults.
+Extract everything from what the user already said. The user's request IS the configuration. Do not ask questions the user already answered or that have obvious defaults.
 
 Parse these four fields **independently**, then combine into script args:
 
@@ -102,7 +102,7 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
   - If N is a different window → use `--target <session>:N.1` (first pane in that window)
 - "pane N.M", explicit `session:window.pane` → use `--target` with exact address
 - Chaining from a previous spawn's output → use `--target %N` (the pane_id from `TARGET=...`)
-- Parenthetical numbers like `(2)` are **identifiers** — the user naming which window they mean. They are NOT requests to create a new window.
+- Parenthetical numbers like `(2)` are **identifiers**, the user naming which window they mean. They are NOT requests to create a new window.
 
 ### 4. Combine into script args
 
@@ -127,12 +127,12 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 | "spawn an agent" (no locality) | `prometheus` | dynamic | current window | layout-aware (see below) |
 | "start codex below" | `codex` | `split-v` | current pane | `split-v --model codex` |
 
-**Working directory** — tmux inherits the cwd of the source pane on split/new-window, so skip this entirely unless the user explicitly mentions a different path or worktree. Rules:
+**Working directory.** tmux inherits the cwd of the source pane on split/new-window, so skip this entirely unless the user explicitly mentions a different path or worktree. Rules:
 - User mentions a specific path → cd to that path after creating the pane
 - User mentions a worktree → ask for the worktree name only if not provided
 - User says nothing about directory → **do nothing** (tmux handles it)
 
-**Initial prompt** — infer from the user's task description:
+**Initial prompt.** Infer from the user's task description:
 - User says "to fix the tests", "to work on X", "have it do Y" → that's the prompt
 - User says nothing about a task → no prompt, just open the agent
 
@@ -164,7 +164,7 @@ Distribution: 4 agents = 2+2, 5 agents = 3+2, 6 agents = 3+3.
 
 **7+ agents:** Window is full. Ask the user: "6 agents fills this window. Want the next ones in a new window or a new session?"
 
-## Step 2 — Spawn via helper script
+## Step 2: Spawn via helper script
 
 Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles everything: tmux validation, pane ID detection, directory resolution (zoxide-backed), agent launch, and readiness polling.
 
@@ -175,11 +175,11 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 **Target types:** `split-h`, `split-v`, `new-window`, `new-session`
 
 **Flags:**
-- `--model <name>` — which agent to launch: `prometheus` (default), `claude`, or `codex`
-- `--dir <name-or-path>` — working directory (resolved via zoxide cascade)
-- `--session <name>` — session name (for `new-session` only)
-- `--prompt <text>` — initial prompt to send after the agent starts
-- `--target <pane>` — for `split-h`/`split-v`: split this pane instead of self. Use pane_id (`%N`, e.g., `%5`) or `session:window.pane` (e.g., `mac:5.1`). **Critical for multi-agent spawns** — without this, splits always happen in the caller's window. When chaining spawns, always use the pane_id from the previous spawn's `TARGET=` output.
+- `--model <name>`: which agent to launch. `prometheus` (default), `claude`, or `codex`
+- `--dir <name-or-path>`: working directory (resolved via zoxide cascade)
+- `--session <name>`: session name (for `new-session` only)
+- `--prompt <text>`: initial prompt to send after the agent starts
+- `--target <pane>`: for `split-h`/`split-v`, split this pane instead of self. Use pane_id (`%N`, e.g., `%5`) or `session:window.pane` (e.g., `mac:5.1`). **Critical for multi-agent spawns.** Without this, splits always happen in the caller's window. When chaining spawns, always use the pane_id from the previous spawn's `TARGET=` output.
 
 **Examples:**
 ```bash
@@ -192,7 +192,7 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 # Spawn claude in a new session
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh new-session --model claude --session agent-1 --prompt "run the test suite"
 
-# Split a REMOTE pane (not self) — use TARGET from a previous spawn
+# Split a REMOTE pane (not self), using TARGET from a previous spawn
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --target %5 --dir other-project --prompt "run linter"
 ```
 
@@ -213,18 +213,18 @@ Parse the `TARGET=...` pane_id from step 1's output and pass it as `--target` in
 **Reading the output:**
 
 The script outputs structured key=value lines:
-- `RESOLVED=/full/path METHOD=zoxide` — directory was resolved (method: literal, local, zoxide, or find)
-- `SELF=%0 TARGET=%5` — stable pane IDs (never shift when panes are killed or moved)
-- `MODEL=prometheus` — which agent was launched
-- `PROMPT_SENT` — prompt was passed as a CLI argument at launch
-- `WORKING` — agent launched and is actively processing the prompt
-- `IDLE` — agent launched and is waiting for input (no prompt was sent, or it finished fast)
+- `RESOLVED=/full/path METHOD=zoxide`: directory was resolved (method: literal, local, zoxide, or find)
+- `SELF=%0 TARGET=%5`: stable pane IDs (never shift when panes are killed or moved)
+- `MODEL=prometheus`: which agent was launched
+- `PROMPT_SENT`: prompt was passed as a CLI argument at launch
+- `WORKING`: agent launched and is actively processing the prompt
+- `IDLE`: agent launched and is waiting for input (no prompt was sent, or it finished fast)
 
 **Error handling:**
 
-- `ERROR: ...` + exit 1 — something failed (not in tmux, split failed, directory not found, unknown model). No orphan panes are created if directory resolution fails.
-- `AMBIGUOUS=N` + `CANDIDATE=...` lines + exit 2 — multiple directory matches. Present the candidates to the user and re-run with the full path via `--dir /full/path/here`.
-- No `WORKING` or `IDLE` after 15 seconds — agent failed to start or is stuck. Check the target pane manually with `agent-state`.
+- `ERROR: ...` + exit 1. Something failed (not in tmux, split failed, directory not found, unknown model). No orphan panes are created if directory resolution fails.
+- `AMBIGUOUS=N` + `CANDIDATE=...` lines + exit 2. Multiple directory matches. Present the candidates to the user and re-run with the full path via `--dir /full/path/here`.
+- No `WORKING` or `IDLE` after 15 seconds. Agent failed to start or is stuck. Check the target pane manually with `agent-state`.
 
 **Directory resolution** uses a tiered cascade:
 1. Literal paths (`/foo`, `~/foo`, `./foo`) → used directly
@@ -233,7 +233,7 @@ The script outputs structured key=value lines:
 4. `find $HOME -maxdepth 4` exact name → depth-ranked, picks shallowest
 5. `find $HOME -maxdepth 4` glob → never auto-resolves, always returns candidates
 
-## Step 3 — Report
+## Step 3: Report
 
 After spawning, report:
 - The model launched (prometheus, claude, or codex)
@@ -245,7 +245,7 @@ After spawning, report:
 
 The `agent-state` command returns structured JSON with the agent's current state (idle, working, blocked:question, blocked:permission). For a visual overview of all agents across windows, use `~/.steez/bin/agent-state --layout`.
 
-In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't use AskUserQuestion — just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
+In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't use AskUserQuestion. Just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
 
 ## Post-Spawn Operations
 
