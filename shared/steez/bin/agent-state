@@ -14,7 +14,7 @@ Usage: agent-state <pane> [--read] [--detail]
        agent-state --all [--read] [--detail] [--json]
        agent-state --layout
 
-Detect the state of AI coding agents (Prometheus, Claude Code, Codex) in tmux panes.
+Detect the state of AI coding agents (Prometheus, Ren, Claude Code, Codex) in tmux panes.
 
 States:
   working              — agent is thinking, streaming, or executing tools
@@ -55,6 +55,12 @@ is_prometheus() {
   ps -E -p "$pid" 2>/dev/null | grep -q "PROMETHEUS_SESSION=1"
 }
 
+is_ren() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 1
+  ps -E -p "$pid" 2>/dev/null | grep -q "REN_SESSION=1"
+}
+
 detect_agent() {
   local shell_pid="$1"
   [[ -z "$shell_pid" ]] && { echo "unknown"; return; }
@@ -69,14 +75,20 @@ detect_agent() {
 
   case "$child_cmd" in
     claude)
-      if is_prometheus "$child_pid"; then echo "prometheus"; else echo "claude"; fi
+      if is_prometheus "$child_pid"; then echo "prometheus"
+      elif is_ren "$child_pid"; then echo "ren"
+      else echo "claude"
+      fi
       ;;
     codex)  echo "codex" ;;
     node)
       if [[ "$child_line" == *codex* ]]; then
         echo "codex"
       elif [[ "$child_line" == *claude* ]]; then
-        if is_prometheus "$child_pid"; then echo "prometheus"; else echo "claude"; fi
+        if is_prometheus "$child_pid"; then echo "prometheus"
+        elif is_ren "$child_pid"; then echo "ren"
+        else echo "claude"
+        fi
       else
         echo "unknown"
       fi
@@ -230,7 +242,10 @@ render_layout() {
         # pane_current_command is the foreground of the pane's shell, which
         # is the claude child itself. Need its pid to read env, not the shell pid.
         claude_pid=$(awk -v ppid="$pane_pid" '$2 == ppid { print $1; exit }' <<< "$_PS")
-        if is_prometheus "$claude_pid"; then agent="prometheus"; else agent="claude"; fi
+        if is_prometheus "$claude_pid"; then agent="prometheus"
+        elif is_ren "$claude_pid"; then agent="ren"
+        else agent="claude"
+        fi
         ;;
       codex)  agent="codex" ;;
       *)      agent=$(detect_agent "$pane_pid") ;;

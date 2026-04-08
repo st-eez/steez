@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: agent-send <pane> "message"
 
-Send a message to a Claude Code or Codex CLI pane.
+Send a message to a Claude Code, Ren, or Codex CLI pane.
 
 Wraps the chat-pane delayed-Enter footgun: the composer needs Enter as a
 separate keystroke after a brief delay, otherwise the message sits in the
@@ -28,7 +28,7 @@ Arguments:
 Exit codes:
   0  Message submitted
   1  Generic error (bad args, send failed)
-  2  Pane is not a recognized AI agent (prometheus, claude, or codex)
+  2  Pane is not a recognized AI agent (prometheus, ren, claude, or codex)
 EOF
   exit 0
 }
@@ -43,9 +43,9 @@ AGENT_STATE="$HOME/.steez/bin/agent-state"
 
 [[ -n "$MSG" ]] || { echo "error: message body is empty" >&2; exit 1; }
 
-# Validate the pane is running a recognized AI agent (prometheus, claude, or codex)
+# Validate the pane is running a recognized AI agent (prometheus, ren, claude, or codex)
 "$AGENT_STATE" "$PANE" >/dev/null 2>&1 || {
-  echo "error: pane '$PANE' is not a recognized AI agent (prometheus, claude, or codex)" >&2
+  echo "error: pane '$PANE' is not a recognized AI agent (prometheus, ren, claude, or codex)" >&2
   exit 2
 }
 
