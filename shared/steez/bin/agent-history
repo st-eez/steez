@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: agent-history [<pane|path>] <mode> [--agent claude|codex]
+Usage: agent-history [<pane|path>] <mode> [--agent claude|codex|prometheus]
 
 Read structured conversation data from Claude Code or Codex CLI transcripts.
 
@@ -18,7 +18,7 @@ Input:
   (none)         Uses $TMUX_PANE if set
 
 Options:
-  --agent claude|codex   Override agent type inference
+  --agent claude|codex|prometheus   Override agent type inference
   -h, --help             Show this help
 EOF
   exit 0
