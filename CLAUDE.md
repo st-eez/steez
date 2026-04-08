@@ -48,10 +48,10 @@ steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
 agent-state <pane>               # detect AI agent state in a tmux pane
-agent-state --all [--detail]     # scan all panes for AI agents
+agent-state --all [--json]       # scan all panes for AI agents (table by default)
 agent-history <pane>             # parse structured transcript from tmux pane
 agent-history --all              # parse transcripts from all agent panes
-agent-send <pane> "msg"          # send a message to a claude/codex pane (escape-safe + delayed Enter)
+agent-send <pane> "msg"          # send a message to a prometheus/claude/codex pane (escape-safe + delayed Enter)
 upstream-diff <skill>            # diff a steez skill against gstack upstream
 upstream-diff --all              # show divergence summary for all skills
 ```

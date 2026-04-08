@@ -341,12 +341,16 @@ Scan all panes for running agents:
 ~/.steez/bin/agent-state --all
 ```
 
-```json
-[
-  {"pane":"%2","agent":"claude","state":"working","name":"steez"},
-  {"pane":"%5","agent":"codex","state":"idle","name":"api-server"}
-]
 ```
+PANE  AGENT       STATE    NAME
+%2    prometheus  working  steez
+%5    codex       idle     api-server
+```
+
+The default output is a column-aligned table so you can pipe directly into
+`grep`, `awk`, or `wc` without a JSON parser. Add `--json` if you need the
+raw array, or `--detail`/`--read` to include session metadata or visible
+pane content (both force JSON since the extra fields don't fit in a table).
 
 Only agent panes are included. Non-agent panes are filtered out.
 

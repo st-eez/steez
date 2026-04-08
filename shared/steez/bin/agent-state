@@ -11,10 +11,10 @@ _init() {
 usage() {
   cat <<'EOF'
 Usage: agent-state <pane> [--read] [--detail]
-       agent-state --all [--read] [--detail]
+       agent-state --all [--read] [--detail] [--json]
        agent-state --layout
 
-Detect the state of AI coding agents (Claude Code, Codex) in tmux panes.
+Detect the state of AI coding agents (Prometheus, Claude Code, Codex) in tmux panes.
 
 States:
   working              — agent is thinking, streaming, or executing tools
@@ -24,10 +24,11 @@ States:
   idle                 — turn complete, ready for next task
 
 Options:
-  --all      Check all tmux panes for AI agents
+  --all      Check all tmux panes for AI agents (table format by default)
+  --json     With --all: emit a JSON array instead of the default table
   --layout   Visual box layout showing pane splits and agent states (implies --all)
-  --read     Include visible pane content in output
-  --detail   Include session metadata (session_id, cwd, transcript_path)
+  --read     Include visible pane content in output (forces JSON with --all)
+  --detail   Include session metadata (forces JSON with --all)
   -h         Show this help
 
 Setup (--detail):
@@ -431,6 +432,7 @@ main() {
   local read_content=false
   local detail=false
   local layout=false
+  local json_out=false
   local pane=""
 
   while [[ $# -gt 0 ]]; do
@@ -439,6 +441,7 @@ main() {
       --read) read_content=true; shift ;;
       --detail) detail=true; shift ;;
       --layout) layout=true; shift ;;
+      --json) json_out=true; shift ;;
       -h|--help) usage ;;
       -*) echo "error: unknown option '$1'" >&2; exit 1 ;;
       *) pane="$1"; shift ;;
@@ -461,22 +464,43 @@ main() {
     local pane_list
     pane_list=$(tmux list-panes -a -F $'#{pane_id}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}')
 
-    local first=true
-    printf '['
-    while IFS=$'\t' read -r pane_id pane_pid pane_title pane_cwd; do
-      local agent
-      agent=$(detect_agent "$pane_pid")
-      [[ "$agent" == "unknown" ]] && continue
+    # JSON output path — used when --json is explicit, or when --detail/--read
+    # ask for fields that don't fit cleanly in a table.
+    if [[ "$json_out" == "true" || "$detail" == "true" || "$read_content" == "true" ]]; then
+      local first=true
+      printf '['
+      while IFS=$'\t' read -r pane_id pane_pid pane_title pane_cwd; do
+        local agent
+        agent=$(detect_agent "$pane_pid")
+        [[ "$agent" == "unknown" ]] && continue
 
-      if [[ "$first" == "true" ]]; then
-        first=false
-      else
-        printf ','
-      fi
+        if [[ "$first" == "true" ]]; then
+          first=false
+        else
+          printf ','
+        fi
 
-      check_pane "$pane_id" "$pane_pid" "$pane_title" "$pane_cwd" "$agent" "$read_content" "$detail"
-    done <<< "$pane_list"
-    printf ']\n'
+        check_pane "$pane_id" "$pane_pid" "$pane_title" "$pane_cwd" "$agent" "$read_content" "$detail"
+      done <<< "$pane_list"
+      printf ']\n'
+    else
+      # Table output path — default for --all. Greppable, countable, readable
+      # without a JSON parser. Columns: PANE, AGENT, STATE, NAME.
+      {
+        printf 'PANE\tAGENT\tSTATE\tNAME\n'
+        while IFS=$'\t' read -r pane_id pane_pid pane_title pane_cwd; do
+          local agent
+          agent=$(detect_agent "$pane_pid")
+          [[ "$agent" == "unknown" ]] && continue
+          local tail_text result state name
+          tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
+          result=$(detect_state "$pane_title" "$tail_text" "$agent")
+          state="${result%%|*}"
+          name="${result#*|}"
+          printf '%s\t%s\t%s\t%s\n' "$pane_id" "$agent" "$state" "$name"
+        done <<< "$pane_list"
+      } | column -t -s $'\t'
+    fi
   else
     local pane_info
     pane_info=$(tmux display-message -t "$pane" -p $'#{pane_id}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}' 2>/dev/null)
