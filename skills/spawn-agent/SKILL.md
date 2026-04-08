@@ -1,7 +1,7 @@
 ---
-name: agent-spawn
+name: spawn-agent
 preamble-tier: 1
-description: "REQUIRED for spawning, launching, or orchestrating AI coding agents — takes priority over the tmux skill when the user's intent is to start a new agent instance. Use this skill (not tmux) whenever the user mentions 'claude', 'agent', 'codex', 'prometheus', or 'instance' in the context of spawning, launching, starting, or orchestrating. Trigger on: 'spawn an agent', 'launch prometheus', 'spin up a claude', 'fire up codex', 'start an agent in a new pane', 'send an agent to work on X', 'I need a claude working on Y', 'orchestrate agents', 'start an autonomous session', or 'put an agent in a worktree'. Even if the user mentions tmux panes, windows, or sessions, if they want to CREATE an AI agent there, this skill handles it — tmux is only for raw tmux operations without an agent involved."
+description: "REQUIRED for spawning, launching, or orchestrating AI coding agents (claude, codex, prometheus). Use this skill, not tmux, whenever the user wants to spawn, launch, start, or orchestrate an agent or instance. Triggers include spawn an agent, launch prometheus, spin up a claude, fire up codex, start an agent in a new pane, or put an agent in a worktree. Even when tmux panes or windows are mentioned, if the user wants to CREATE an agent there, use this skill."
 ---
 
 <!-- BEGIN MANAGED PREAMBLE -->
@@ -23,7 +23,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /agent-spawn, /ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /spawn-agent, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -108,13 +108,13 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 
 | Topology | Anchor | Script call |
 |----------|--------|-------------|
-| `split-h` | current pane | `spawn.sh split-h` |
-| `split-h` | window N (same as current) | `spawn.sh split-h` |
-| `split-h` | window N (different) | `spawn.sh split-h --target <session>:N.1` |
-| `split-h` | exact pane or chained | `spawn.sh split-h --target <pane-addr or %N>` |
-| `split-v` | (same patterns) | `spawn.sh split-v [--target ...]` |
-| `new-window` | — | `spawn.sh new-window` |
-| `new-session` | — | `spawn.sh new-session [--session <name>]` |
+| `split-h` | current pane | `scripts/spawn.sh split-h` |
+| `split-h` | window N (same as current) | `scripts/spawn.sh split-h` |
+| `split-h` | window N (different) | `scripts/spawn.sh split-h --target <session>:N.1` |
+| `split-h` | exact pane or chained | `scripts/spawn.sh split-h --target <pane-addr or %N>` |
+| `split-v` | (same patterns) | `scripts/spawn.sh split-v [--target ...]` |
+| `new-window` | — | `scripts/spawn.sh new-window` |
+| `new-session` | — | `scripts/spawn.sh new-session [--session <name>]` |
 
 **Examples of correct parsing:**
 
@@ -166,10 +166,10 @@ Distribution: 4 agents = 2+2, 5 agents = 3+2, 6 agents = 3+3.
 
 ## Step 2 — Spawn via helper script
 
-Run the `spawn.sh` script in a **single Bash call**. The script handles everything: tmux validation, pane ID detection, directory resolution (zoxide-backed), agent launch, and readiness polling.
+Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles everything: tmux validation, pane ID detection, directory resolution (zoxide-backed), agent launch, and readiness polling.
 
 ```bash
-~/.steez/repo/skills/agent-spawn/spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>] [--model <name>]
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>] [--model <name>]
 ```
 
 **Target types:** `split-h`, `split-v`, `new-window`, `new-session`
@@ -184,16 +184,16 @@ Run the `spawn.sh` script in a **single Bash call**. The script handles everythi
 **Examples:**
 ```bash
 # Spawn prometheus beside current pane (default model)
-~/.steez/repo/skills/agent-spawn/spawn.sh split-h
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h
 
 # Spawn codex in a specific directory with a task
-~/.steez/repo/skills/agent-spawn/spawn.sh new-window --model codex --dir scratchpad --prompt "fix the failing tests"
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh new-window --model codex --dir scratchpad --prompt "fix the failing tests"
 
 # Spawn claude in a new session
-~/.steez/repo/skills/agent-spawn/spawn.sh new-session --model claude --session agent-1 --prompt "run the test suite"
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh new-session --model claude --session agent-1 --prompt "run the test suite"
 
 # Split a REMOTE pane (not self) — use TARGET from a previous spawn
-~/.steez/repo/skills/agent-spawn/spawn.sh split-h --target %5 --dir other-project --prompt "run linter"
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --target %5 --dir other-project --prompt "run linter"
 ```
 
 **Multi-agent pattern** (2+ agents in a new window):
@@ -202,10 +202,10 @@ When spawning multiple agents side-by-side in a new window, you MUST use `--targ
 
 ```bash
 # Step 1: Create new window with first agent → returns TARGET=%5
-~/.steez/repo/skills/agent-spawn/spawn.sh new-window --dir project-a --prompt "task A"
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh new-window --dir project-a --prompt "task A"
 
 # Step 2: Split THAT pane with a codex agent → returns TARGET=%7
-~/.steez/repo/skills/agent-spawn/spawn.sh split-h --target %5 --model codex --dir project-b --prompt "task B"
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --target %5 --model codex --dir project-b --prompt "task B"
 ```
 
 Parse the `TARGET=...` pane_id from step 1's output and pass it as `--target` in step 2. Pane IDs (`%N`) are stable, so they stay valid even if other panes are killed or moved.

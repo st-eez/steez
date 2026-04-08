@@ -56,7 +56,7 @@
     "tmux": {
       "description": "Tmux safety rules and patterns — prevents sending to wrong pane"
     },
-    "agent-spawn": {
+    "spawn-agent": {
       "description": "Spawn and orchestrate AI agents (Prometheus, Claude, Codex) across tmux panes"
     },
     "reminders": {
@@ -86,7 +86,7 @@
     "infrastructure": {
       "label": "Infrastructure",
       "description": "Debugging, security, and orchestration tools",
-      "skills": ["investigate", "cso", "tmux", "agent-spawn", "audit"]
+      "skills": ["investigate", "cso", "tmux", "spawn-agent", "audit"]
     },
     "design": {
       "label": "Design",

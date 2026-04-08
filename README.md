@@ -71,7 +71,7 @@ Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit
 | `/cso` | **Chief Security Officer** | OWASP Top 10 + STRIDE threat model. Zero-noise: confidence gate, independent verification. Concrete exploit scenarios. |
 | `/audit` | **Code Auditor** | Deep codebase audit — security, quality, architecture, error handling. Pre-release sweep for the whole repo, not just the diff. |
 | `/tmux` | **Tmux Operator** | Safety rules and patterns that prevent sending keys to the wrong pane. The muscle memory you wish you had before you nuked a running session. |
-| `/agent-spawn` | **Orchestrator** | Spawn and orchestrate AI agents (Prometheus, Claude, Codex) across tmux panes. Parallel work, without the step on each other's toes problem. |
+| `/spawn-agent` | **Orchestrator** | Spawn and orchestrate AI agents (Prometheus, Claude, Codex) across tmux panes. Parallel work, without the step on each other's toes problem. |
 | `/design-consultation` | **Design Partner** | Build a complete design system from scratch. Researches the landscape, proposes creative risks, generates realistic mockups. Writes `DESIGN.md`. |
 | `/codex` | **Second Opinion** | Independent review from OpenAI Codex CLI. Three modes: code review (pass/fail gate), adversarial challenge, and open consultation. Cross-model analysis when both `/codex` and a steez review have run. |
 | `/reminders` | **Reminder Manager** | Manage Apple Reminders via `remindctl` — create, complete, reschedule. Native macOS integration, no third-party app. |
@@ -120,7 +120,7 @@ steez update          # Pull latest and re-link
 |---|---|---|
 | **Workflow** | workshop, office-hours, plan-ceo-review, plan-eng-review, plan-design-review, agenda, jira | Sprint pipeline: Think, Plan, Build |
 | **QA & Testing** | browse, steez-qa, steez-qa-only, design-review | Browser-based testing and visual QA |
-| **Infrastructure** | investigate, cso, tmux, agent-spawn, audit | Debugging, security, and orchestration |
+| **Infrastructure** | investigate, cso, tmux, spawn-agent, audit | Debugging, security, and orchestration |
 | **Design** | design-consultation | Design system creation |
 | **Meta** | codex, autoplan, reminders, loop-prompt, sharpen-skill | Automation, AI consult, and skill improvement |
 
