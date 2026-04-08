@@ -20,11 +20,11 @@
       "description": "Fast headless browser — navigate, interact, screenshot, verify state",
       "requires": ["browse-binary"]
     },
-    "qa": {
+    "steez-qa": {
       "description": "Systematically QA test a web app and iteratively fix bugs found",
       "requires": ["browse-binary"]
     },
-    "qa-only": {
+    "steez-qa-only": {
       "description": "Report-only QA — structured report with screenshots, no code changes",
       "requires": ["browse-binary"]
     },
@@ -81,7 +81,7 @@
     "qa": {
       "label": "QA & Testing",
       "description": "Browser-based testing and visual QA",
-      "skills": ["browse", "qa", "qa-only", "design-review"]
+      "skills": ["browse", "steez-qa", "steez-qa-only", "design-review"]
     },
     "infrastructure": {
       "label": "Infrastructure",

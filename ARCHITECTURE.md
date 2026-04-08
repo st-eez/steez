@@ -313,7 +313,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 ### Porting from gstack
 
 1. `mkdir -p skills/{name}` + `cp` the gstack `SKILL.md` into it
-2. Strip the `gstack-` prefix from the YAML frontmatter `name:` field (steez skills use bare names — `qa`, not `steez-qa`)
+2. Strip the `gstack-` prefix from the YAML frontmatter `name:` field (steez skills use bare names — `cso`, not `steez-cso`). Exception: when the bare name would shadow a built-in slash command via `/x` autocomplete (e.g., `/qa` shadows `/quit`), keep the `steez-` prefix to push it past the collision. `steez-qa` and `steez-qa-only` use this exception.
 3. Remove auto-generated comments (template artifact markers)
 4. Replace preamble with steez pattern (`STEEZ_HOME`, hardcoded `~/.steez/bin/` paths, `REPO_MODE=solo`, local JSONL)
 5. Strip onboarding conditionals (`LAKE_INTRO`, `TEL_PROMPTED`, `PROACTIVE_PROMPTED`) — keep only the `PROACTIVE` check

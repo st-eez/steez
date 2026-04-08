@@ -1,8 +1,8 @@
 ---
-name: qa-only
+name: steez-qa-only
 preamble-tier: 4
 version: 1.0.0
-description: Report-only QA testing. Systematically tests a web application and produces a structured report with health score, screenshots, and repro steps — but never fixes anything. Use when asked to "just report bugs", "qa report only", or "test but don't fix". For the full test-fix-verify loop, use /qa instead. Proactively suggest when the user wants a bug report without any code changes. (steez)
+description: Report-only QA testing. Systematically tests a web application and produces a structured report with health score, screenshots, and repro steps — but never fixes anything. Use when asked to "just report bugs", "qa report only", or "test but don't fix". For the full test-fix-verify loop, use /steez-qa instead. Proactively suggest when the user wants a bug report without any code changes. (steez)
 allowed-tools:
   - Bash
   - Read
@@ -41,7 +41,7 @@ echo "REPO_MODE: $REPO_MODE"
 
 If `PROACTIVE` is `"false"`, do not proactively suggest steez skills AND do not
 auto-invoke skills based on conversation context. Only run skills the user explicitly
-types (e.g., /qa-only, /ship). If you would have auto-invoked a skill, instead briefly say:
+types (e.g., /steez-qa-only, /ship). If you would have auto-invoked a skill, instead briefly say:
 "I think /skillname might help here — want me to run it?" and wait for confirmation.
 The user opted out of proactive behavior.
 
@@ -128,7 +128,7 @@ jq -n --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg skill "steez-qa-only" --ar
 
 ## Skill Self-Report
 
-At the end of each major workflow step, rate your /qa-only experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
+At the end of each major workflow step, rate your /steez-qa-only experience 0-10. If not a 10 and there's an actionable bug or improvement, file a field report.
 
 **File only:** steez tooling bugs where the input was reasonable but the skill failed. **Skip:** user app bugs, network errors, auth failures on user's site.
 
@@ -140,7 +140,7 @@ At the end of each major workflow step, rate your /qa-only experience 0-10. If n
 1. {step}
 ## What would make this a 10
 {one sentence}
-**Date:** {YYYY-MM-DD} | **Skill:** /qa-only
+**Date:** {YYYY-MM-DD} | **Skill:** /steez-qa-only
 ```
 Slug: lowercase hyphens, max 60 chars. Skip if exists. Max 3/session. File inline, don't stop.
 
@@ -206,7 +206,7 @@ file you are allowed to edit in plan mode. The plan file review report is part o
 plan's living status.
 <!-- END MANAGED PREAMBLE -->
 
-# /qa-only: Report-Only QA Testing
+# /steez-qa-only: Report-Only QA Testing
 
 You are a QA engineer. Test web applications like a real user — click everything, fill every form, check every state. Produce a structured report with evidence. **NEVER fix anything.**
 
@@ -275,7 +275,7 @@ Before falling back to git diff heuristics, check for richer test plan sources:
 
 ### Diff-aware (automatic when on a feature branch with no URL)
 
-This is the **primary mode** for developers verifying their work. When the user says `/qa-only` without a URL and the repo is on a feature branch, automatically:
+This is the **primary mode** for developers verifying their work. When the user says `/steez-qa-only` without a URL and the repo is on a feature branch, automatically:
 
 1. **Analyze the branch diff** to understand what changed:
    ```bash
@@ -291,7 +291,7 @@ This is the **primary mode** for developers verifying their work. When the user 
    - API endpoints → test them directly with `$B js "await fetch('/api/...')"`
    - Static pages (markdown, HTML) → navigate to them directly
 
-   **If no obvious pages/routes are identified from the diff:** Do not skip browser testing. The user invoked /qa-only because they want browser-based verification. Fall back to Quick mode — navigate to the homepage, follow the top 5 navigation targets, check console for errors, and test any interactive elements found. Backend, config, and infrastructure changes affect app behavior — always verify the app still works.
+   **If no obvious pages/routes are identified from the diff:** Do not skip browser testing. The user invoked /steez-qa-only because they want browser-based verification. Fall back to Quick mode — navigate to the homepage, follow the top 5 navigation targets, check console for errors, and test any interactive elements found. Backend, config, and infrastructure changes affect app behavior — always verify the app still works.
 
 3. **Detect the running app** — check common local dev ports:
    ```bash
@@ -336,7 +336,7 @@ Run full mode, then load `baseline.json` from a previous run. Diff: which issues
 
 1. Find browse binary (see Setup above)
 2. Create output directories
-3. Copy report template from `qa/templates/qa-report-template.md` to output dir
+3. Copy report template from `steez-qa/templates/qa-report-template.md` to output dir
 4. Start timer for duration tracking
 
 ### Phase 2: Authenticate (if needed)
@@ -392,7 +392,7 @@ $B snapshot -i -a -o "$REPORT_DIR/screenshots/page-name.png"
 $B console --errors
 ```
 
-Then follow the **per-page exploration checklist** (see `qa/references/issue-taxonomy.md`):
+Then follow the **per-page exploration checklist** (see `steez-qa/references/issue-taxonomy.md`):
 
 1. **Visual scan** — Look at the annotated screenshot for layout issues
 2. **Interactive elements** — Click buttons, links, controls. Do they work?
@@ -439,7 +439,7 @@ $B snapshot -D
 $B snapshot -i -a -o "$REPORT_DIR/screenshots/issue-002.png"
 ```
 
-**Write each issue to the report immediately** using the template format from `qa/templates/qa-report-template.md`.
+**Write each issue to the report immediately** using the template format from `steez-qa/templates/qa-report-template.md`.
 
 ### Phase 6: Wrap Up
 
@@ -547,7 +547,7 @@ Minimum 0 per category.
 9. **Never delete output files.** Screenshots and reports accumulate — that's intentional.
 10. **Use `snapshot -C` for tricky UIs.** Finds clickable divs that the accessibility tree misses.
 11. **Show screenshots to the user.** After every `$B screenshot`, `$B snapshot -a -o`, or `$B responsive` command, use the Read tool on the output file(s) so the user can see them inline. For `responsive` (3 files), Read all three. This is critical — without it, screenshots are invisible to the user.
-12. **Never refuse to use the browser.** When the user invokes /qa or /qa-only, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
+12. **Never refuse to use the browser.** When the user invokes /steez-qa or /steez-qa-only, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
 
 ---
 
@@ -580,7 +580,7 @@ Report filenames use the domain and date: `qa-report-myapp-com-2026-03-12.md`
 
 ---
 
-## Additional Rules (qa-only specific)
+## Additional Rules (steez-qa-only specific)
 
-11. **Never fix bugs.** Find and document only. Do not read source code, edit files, or suggest fixes in the report. Your job is to report what's broken, not to fix it. Use `/qa` for the test-fix-verify loop.
-12. **No test framework detected?** If the project has no test infrastructure (no test config files, no test directories), include in the report summary: "No test framework detected. Run `/qa` to bootstrap one and enable regression test generation."
+11. **Never fix bugs.** Find and document only. Do not read source code, edit files, or suggest fixes in the report. Your job is to report what's broken, not to fix it. Use `/steez-qa` for the test-fix-verify loop.
+12. **No test framework detected?** If the project has no test infrastructure (no test config files, no test directories), include in the report summary: "No test framework detected. Run `/steez-qa` to bootstrap one and enable regression test generation."

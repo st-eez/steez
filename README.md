@@ -28,7 +28,7 @@ You:    /autoplan
 You:    Approve plan. Build it.
         [writes 1,800 lines across 9 files]
 
-You:    /qa https://localhost:3000
+You:    /steez-qa https://localhost:3000
         [opens real browser, tests login flow, finds
         redirect bug, fixes it, re-verifies]
 
@@ -51,7 +51,7 @@ steez is a process, not a toolbox. The skills run in the order a sprint runs:
 
 **Think → Plan → Build → Test → Review**
 
-Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit the plan pipeline. `/office-hours` writes a design doc that `/plan-ceo-review` reads. `/plan-eng-review` writes a test plan that `/qa` picks up. `/codex review` and `/cso` catch issues before you merge. Nothing falls through the cracks because every step knows what came before it.
+Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit the plan pipeline. `/office-hours` writes a design doc that `/plan-ceo-review` reads. `/plan-eng-review` writes a test plan that `/steez-qa` picks up. `/codex review` and `/cso` catch issues before you merge. Nothing falls through the cracks because every step knows what came before it.
 
 | Skill | Your specialist | What they do |
 |-------|----------------|--------------|
@@ -64,8 +64,8 @@ Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit
 | `/agenda` | **Morning Planner** | Structured morning triage. Overdue tasks, inbox, daily slate — the ritual that turns a pile of open loops into a day's work. |
 | `/jira` | **Jira Operator** | Manage Jira tickets — search, create, update, transition, log time. |
 | `/browse` | **Browser Operator** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
-| `/qa` | **QA Lead** | Test your app in a real browser, find bugs, fix them with atomic commits, re-verify. Generates regression tests for every fix. |
-| `/qa-only` | **QA Reporter** | Same methodology as `/qa` but report only. Pure bug report, no code changes. |
+| `/steez-qa` | **QA Lead** | Test your app in a real browser, find bugs, fix them with atomic commits, re-verify. Generates regression tests for every fix. |
+| `/steez-qa-only` | **QA Reporter** | Same methodology as `/steez-qa` but report only. Pure bug report, no code changes. |
 | `/design-review` | **Designer Who Codes** | Visual audit — spacing, hierarchy, AI slop patterns — then fixes what it finds. Atomic commits, before/after screenshots. |
 | `/investigate` | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without root cause. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
 | `/cso` | **Chief Security Officer** | OWASP Top 10 + STRIDE threat model. Zero-noise: confidence gate, independent verification. Concrete exploit scenarios. |
@@ -119,7 +119,7 @@ steez update          # Pull latest and re-link
 | Category | Skills | Description |
 |---|---|---|
 | **Workflow** | workshop, office-hours, plan-ceo-review, plan-eng-review, plan-design-review, agenda, jira | Sprint pipeline: Think, Plan, Build |
-| **QA & Testing** | browse, qa, qa-only, design-review | Browser-based testing and visual QA |
+| **QA & Testing** | browse, steez-qa, steez-qa-only, design-review | Browser-based testing and visual QA |
 | **Infrastructure** | investigate, cso, tmux, agent-spawn, audit | Debugging, security, and orchestration |
 | **Design** | design-consultation | Design system creation |
 | **Meta** | codex, autoplan, reminders, loop-prompt, sharpen-skill | Automation, AI consult, and skill improvement |

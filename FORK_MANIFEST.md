@@ -26,8 +26,8 @@ Upstream version: 0.13.0.0
 | steez-plan-ceo-review/SKILL.md | plan-ceo-review/SKILL.md | Same pattern |
 | steez-plan-design-review/SKILL.md | plan-design-review/SKILL.md | Same pattern |
 | steez-plan-eng-review/SKILL.md | plan-eng-review/SKILL.md | Same pattern |
-| steez-qa/SKILL.md | qa/SKILL.md | Same pattern |
-| steez-qa-only/SKILL.md | qa-only/SKILL.md | Same pattern |
+| steez-qa/SKILL.md | qa/SKILL.md | Same pattern, plus added `steez-` prefix to avoid /q autocomplete collision with /quit (diverges from gstack bare-name convention) |
+| steez-qa-only/SKILL.md | qa-only/SKILL.md | Same pattern, plus added `steez-` prefix to avoid /q autocomplete collision with /quit (diverges from gstack bare-name convention) |
 
 ## Removed Skills (available for re-port from gstack)
 | Skill | Upstream source | Removed | Reason |

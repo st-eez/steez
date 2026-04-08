@@ -96,7 +96,7 @@ Flags:
 		fmt.Print(`steez uninstall — remove installed skills
 
 Usage:
-  steez uninstall qa benchmark    Remove specific skills
+  steez uninstall steez-qa benchmark    Remove specific skills
   steez uninstall --all           Remove ALL steez-managed symlinks
 
 Only removes symlinks tracked in installed.json.
@@ -129,7 +129,7 @@ Usage:
 
 Usage:
   steez sync                Sync all SKILL.md files with managed preambles
-  steez sync qa ship        Sync specific skills only
+  steez sync steez-qa ship        Sync specific skills only
   steez sync --check        Check freshness without writing (exit 1 if stale)
   steez sync --verbose      Show all files including current/skipped
 

@@ -459,7 +459,7 @@ func checkUnregisteredSymlinks(skillsDir string, reg *config.Registry) []CheckRe
 
 func checkBrowseBinary(repoPath string, reg *config.Registry) []CheckResult {
 	// Check if any browse-dependent skills are installed.
-	browseSkills := []string{"browse", "qa", "qa-only",
+	browseSkills := []string{"browse", "steez-qa", "steez-qa-only",
 		"design-review", "canary", "benchmark",
 		"connect-chrome", "setup-browser-cookies"}
 

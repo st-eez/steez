@@ -562,7 +562,7 @@ The plan should be complete enough that when implementation begins, every test i
 
 ### Test Plan Artifact
 
-After producing the coverage diagram, write a test plan artifact to the project directory so `/qa` and `/qa-only` can consume it as primary test input:
+After producing the coverage diagram, write a test plan artifact to the project directory so `/steez-qa` and `/steez-qa-only` can consume it as primary test input:
 
 ```bash
 eval "$(~/.steez/bin/slug 2>/dev/null)" && mkdir -p ~/.steez/projects/$SLUG
@@ -591,7 +591,7 @@ Repo: {owner/repo}
 - {end-to-end flow that must work}
 ```
 
-This file is consumed by `/qa` and `/qa-only` as primary test input. Include only the information that helps a QA tester know **what to test and where** — not implementation details.
+This file is consumed by `/steez-qa` and `/steez-qa-only` as primary test input. Include only the information that helps a QA tester know **what to test and where** — not implementation details.
 
 For LLM/prompt changes: check the "Prompt/LLM changes" file patterns listed in CLAUDE.md. If this plan touches ANY of those patterns, state which eval suites must be run, which cases should be added, and what baselines to compare against. Then use AskUserQuestion to confirm the eval scope with the user.
 
