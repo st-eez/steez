@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agent)
       shift
-      [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex") ]] || { echo "error: --agent requires claude or codex" >&2; exit 1; }
+      [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex" || "$1" == "prometheus") ]] || { echo "error: --agent requires claude, codex, or prometheus" >&2; exit 1; }
       AGENT_OVERRIDE="$1"; shift
       ;;
     -h|--help) usage ;;
@@ -98,6 +98,12 @@ fi
 
 [[ -n "$AGENT_OVERRIDE" ]] && AGENT="$AGENT_OVERRIDE"
 
+# Prometheus is claude with a different system prompt — transcript format is
+# identical, so normalize for parsing but preserve the original name for output
+# so consumers see "prometheus" in results instead of the internal "claude" alias.
+DISPLAY_AGENT="$AGENT"
+[[ "$AGENT" == "prometheus" ]] && AGENT="claude"
+
 # --- Tail strategy: 500 lines, fallback to 2000 ---
 LINES=$(tail -500 "$TRANSCRIPT")
 
@@ -142,7 +148,8 @@ fi
 printf '%s' "$LINES" | python3 -c "
 import sys, json
 
-agent = '$AGENT'
+agent = '$DISPLAY_AGENT'
+parse_as = '$AGENT'
 mode = '$MODE'
 history_n = int('${HISTORY_N:-0}') if '${HISTORY_N:-0}'.isdigit() else 0
 
@@ -374,10 +381,10 @@ def parse_codex():
         })
 
 
-if agent == 'claude':
+if parse_as == 'claude':
     parse_claude()
-elif agent == 'codex':
+elif parse_as == 'codex':
     parse_codex()
 else:
-    emit({'error': 'unknown agent type: ' + agent})
+    emit({'error': 'unknown agent type: ' + parse_as})
 "

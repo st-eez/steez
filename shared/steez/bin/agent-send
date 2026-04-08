@@ -28,7 +28,7 @@ Arguments:
 Exit codes:
   0  Message submitted
   1  Generic error (bad args, send failed)
-  2  Pane is not a recognized AI agent (claude or codex)
+  2  Pane is not a recognized AI agent (prometheus, claude, or codex)
 EOF
   exit 0
 }
@@ -43,9 +43,9 @@ AGENT_STATE="$HOME/.steez/bin/agent-state"
 
 [[ -n "$MSG" ]] || { echo "error: message body is empty" >&2; exit 1; }
 
-# Validate the pane is running a recognized AI agent (claude or codex)
+# Validate the pane is running a recognized AI agent (prometheus, claude, or codex)
 "$AGENT_STATE" "$PANE" >/dev/null 2>&1 || {
-  echo "error: pane '$PANE' is not a recognized AI agent (claude or codex)" >&2
+  echo "error: pane '$PANE' is not a recognized AI agent (prometheus, claude, or codex)" >&2
   exit 2
 }
 
