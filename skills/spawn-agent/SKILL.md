@@ -78,6 +78,7 @@ Parse these four fields **independently**, then combine into script args:
 - "spawn prometheus", "spawn an agent", "launch an agent", "fire up an agent" → `prometheus`
 - "spawn claude", "spawn vanilla claude", "launch a claude" → `claude`
 - "spawn codex", "launch codex", "fire up codex" → `codex`
+- "spawn ren", "launch ren", "fire up ren" → `ren`
 - **Default** (no model mentioned) → `prometheus`
 
 Prometheus is the default agent. "Spawn an agent" without qualification means prometheus. Only explicit "claude" or "codex" gets those models.

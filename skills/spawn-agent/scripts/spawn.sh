@@ -43,8 +43,8 @@ done
 
 # Validate model
 case "$MODEL" in
-  prometheus|claude|codex) ;;
-  *) echo "ERROR: unknown model '$MODEL' (use: prometheus, claude, codex)"; exit 1 ;;
+  prometheus|claude|codex|ren) ;;
+  *) echo "ERROR: unknown model '$MODEL' (use: prometheus, claude, codex, ren)"; exit 1 ;;
 esac
 
 # --- Directory resolution ---
@@ -205,6 +205,7 @@ AGENT_STATE="$HOME/.steez/bin/agent-state"
 
 case "$MODEL" in
   prometheus) LAUNCH_CMD="prometheus" ;;
+  ren)        LAUNCH_CMD="ren" ;;
   claude)     LAUNCH_CMD="claude --dangerously-skip-permissions" ;;
   codex)      LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox" ;;
 esac
