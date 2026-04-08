@@ -20,7 +20,7 @@ Input:
 
 Options:
   --all                             Scan every tmux agent pane, return JSON array
-  --agent claude|codex|prometheus   Override agent type inference
+  --agent claude|codex|prometheus|ren   Override agent type inference
   -h, --help                        Show this help
 EOF
   exit 0
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
     --all)     ALL_MODE="true"; shift ;;
     --agent)
       shift
-      [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex" || "$1" == "prometheus") ]] || { echo "error: --agent requires claude, codex, or prometheus" >&2; exit 1; }
+      [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex" || "$1" == "prometheus" || "$1" == "ren") ]] || { echo "error: --agent requires claude, codex, prometheus, or ren" >&2; exit 1; }
       AGENT_OVERRIDE="$1"; shift
       ;;
     -h|--help) usage ;;
@@ -171,17 +171,18 @@ else
   elif [[ "$TRANSCRIPT" == */.codex/* ]]; then
     AGENT="codex"
   else
-    error_json "cannot infer agent type from path — use --agent claude|codex"
+    error_json "cannot infer agent type from path — use --agent claude|codex|prometheus|ren"
   fi
 fi
 
 [[ -n "$AGENT_OVERRIDE" ]] && AGENT="$AGENT_OVERRIDE"
 
-# Prometheus is claude with a different system prompt — transcript format is
-# identical, so normalize for parsing but preserve the original name for output
-# so consumers see "prometheus" in results instead of the internal "claude" alias.
+# Prometheus and Ren are claude with different system prompts — transcript
+# format is identical, so normalize for parsing but preserve the original name
+# for output so consumers see "prometheus" or "ren" in results instead of the
+# internal "claude" alias.
 DISPLAY_AGENT="$AGENT"
-[[ "$AGENT" == "prometheus" ]] && AGENT="claude"
+[[ "$AGENT" == "prometheus" || "$AGENT" == "ren" ]] && AGENT="claude"
 
 # --- Tail strategy: 500 lines, fallback to 2000 ---
 LINES=$(tail -500 "$TRANSCRIPT")
