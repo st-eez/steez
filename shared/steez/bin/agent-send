@@ -37,7 +37,45 @@ EOF
 case "$1" in -h|--help) usage ;; esac
 [[ $# -eq 2 ]] || { echo "error: usage: agent-send <pane> \"message\"" >&2; exit 1; }
 
-# Delegate to the low-level delivery primitive. agent-send is a thin
-# wrapper so other tools (e.g. agent-watch) can reuse the delivery recipe
-# without inheriting any behavior agent-send layers on top.
-exec "$HOME/.steez/bin/agent-deliver" "$@"
+PANE="$1"
+MSG="$2"
+
+# Deliver via the low-level primitive. agent-send is the "interactive"
+# wrapper — after delivery it also registers a background watch on the
+# target pane so the spawner gets notified when the agent finishes.
+# Watch registration is a best-effort add-on; a failure here never fails
+# the delivery itself.
+"$HOME/.steez/bin/agent-deliver" "$PANE" "$MSG"
+DELIVER_RC=$?
+
+# Post-delivery watch registration. Runs in a fully detached subshell
+# so it does not block the caller — agent-send is still pure
+# fire-and-forget from the caller's perspective.
+#
+# Baseline is hardcoded to "working" (same reasoning as spawn.sh auto-
+# registration): the semantic intent of every agent-send call is "notify
+# me when the agent finishes THIS message", regardless of what state the
+# target was in when the message landed. Observing the post-delivery
+# state was the original plan (per the bead description) but it races —
+# a fast agent can respond and return to idle before any reasonable
+# sleep finishes, leaving us with baseline=idle and a daemon that never
+# fires. Hardcoding baseline=working is race-free and always correct:
+#   - agent-already-working:     daemon fires on the transition out
+#   - agent-fast-responded:      current=idle differs from baseline,
+#                                daemon fires on first poll
+#   - agent-still-booting/idle:  same as above — correct notification
+#
+# Label is inferred by agent-watch itself via agent-state (it falls back
+# to the agent name when --label is omitted), so no state read is needed
+# here either.
+if [[ $DELIVER_RC -eq 0 ]] && [[ -n "${TMUX_PANE:-}" ]]; then
+  SPAWNER_PANE="$TMUX_PANE"
+  (
+    "$HOME/.steez/bin/agent-watch" add "$PANE" \
+      --spawner "$SPAWNER_PANE" \
+      --baseline "working" >/dev/null 2>&1 || true
+  ) </dev/null >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+fi
+
+exit $DELIVER_RC

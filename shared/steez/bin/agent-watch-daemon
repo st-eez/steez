@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# agent-watch-daemon — Background watcher for AI agent panes.
+#
+# RECURSIVE LOOP PREVENTION — HARD ARCHITECTURAL RULE
+# ---------------------------------------------------
+# This daemon MUST call agent-deliver directly. It MUST NOT call
+# agent-send. agent-send auto-registers a watch after every delivery,
+# so if the daemon called agent-send to notify a spawner, the daemon
+# would register a watch on the spawner, the spawner's next state
+# change would fire another notification, which would register
+# another watch, forever. The layered agent-deliver primitive exists
+# specifically to break this loop: it has no side effects beyond tmux.
+#
+# Any future edit to this file that introduces a call to agent-send
+# is a bug that will cause an infinite notification loop.
+#
+# Behavior
+# --------
+# Singleton via PID file at $STATE_DIR/agent-watch-daemon.pid. Second
+# invocation detects the running daemon and exits silently. Main loop
+# reads the watchlist file fresh each cycle, calls agent-state on each
+# entry, and fires a notification when the pane transitions out of its
+# baseline into a terminal state (idle or blocked:*). Fired entries are
+# removed via atomic tmp+rename. The daemon exits cleanly after the
+# watchlist has been empty for EMPTY_CYCLES_EXIT consecutive cycles.
+#
+# Transient agent-state failures (empty output, parse errors) are
+# tolerated up to MAX_STATE_FAILURES consecutive cycles per pane. After
+# that, the watch is dropped and logged.
+
+set -uo pipefail
+
+STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}"
+WATCHES="$STATE_DIR/watches.jsonl"
+PIDFILE="$STATE_DIR/agent-watch-daemon.pid"
+LOG="$STATE_DIR/agent-watch.log"
+
+AGENT_DELIVER="$HOME/.steez/bin/agent-deliver"
+AGENT_STATE="$HOME/.steez/bin/agent-state"
+AGENT_HISTORY="$HOME/.steez/bin/agent-history"
+
+POLL_INTERVAL="${AGENT_WATCH_POLL:-10}"
+EMPTY_CYCLES_EXIT="${AGENT_WATCH_EMPTY_CYCLES:-3}"
+MAX_STATE_FAILURES="${AGENT_WATCH_MAX_STATE_FAILURES:-10}"
+
+mkdir -p "$STATE_DIR"
+touch "$WATCHES" "$LOG"
+
+iso_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+log_line() {
+  local level="$1" component="$2" event="$3"
+  printf '%s %s %s %s\n' "$(iso_ts)" "$level" "$component" "$event" >> "$LOG"
+}
+
+# ---- Singleton enforcement ----
+if [[ -f "$PIDFILE" ]]; then
+  old_pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  if [[ -n "${old_pid:-}" ]] && kill -0 "$old_pid" 2>/dev/null; then
+    # Another daemon is live. Exit silently (not an error).
+    exit 0
+  fi
+  # Stale PID file — the previous daemon died without cleaning up
+  # (SIGKILL, power loss, etc). kill -0 reports no such process, so
+  # it is safe to remove the file and claim the role.
+  rm -f "$PIDFILE"
+fi
+
+echo $$ > "$PIDFILE"
+EXIT_REASON="normal"
+cleanup() {
+  rm -f "$PIDFILE"
+  log_line INFO daemon "stopped pid=$$ reason=$EXIT_REASON"
+}
+trap cleanup EXIT
+trap 'EXIT_REASON=signal; exit 0' INT TERM
+
+log_line INFO daemon "started pid=$$ poll=${POLL_INTERVAL}s"
+
+# ---- Atomic watchlist rewrite ----
+# Removes a single watch entry by pane. Write-to-tmp + rename. mv(1) on
+# the same filesystem is an atomic rename(2); readers never see a
+# partially written file.
+remove_watch() {
+  local pane="$1"
+  [[ -f "$WATCHES" ]] || return 0
+  local tmp="$WATCHES.tmp.$$"
+  if jq -c --arg p "$pane" 'select(.pane != $p)' "$WATCHES" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$WATCHES"
+  else
+    rm -f "$tmp"
+  fi
+}
+
+# ---- State read helpers ----
+read_state() {
+  local pane="$1"
+  local json
+  json=$("$AGENT_STATE" "$pane" 2>/dev/null || true)
+  [[ -n "$json" ]] || return 1
+  printf '%s' "$json" | python3 -c "import sys,json
+try:
+    d=json.loads(sys.stdin.read())
+    s=d.get('state','')
+    if s: print(s)
+except: pass" 2>/dev/null
+}
+
+read_detail() {
+  local pane="$1" state="$2"
+  case "$state" in
+    idle)
+      "$AGENT_HISTORY" "$pane" --last 2>/dev/null | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    r = (d.get('response') or '').strip()
+    r = ' '.join(r.split())  # collapse whitespace/newlines for single-line notification
+    print(r[:300])
+except Exception:
+    pass
+" 2>/dev/null || true
+      ;;
+    blocked:question|blocked:permission)
+      "$AGENT_HISTORY" "$pane" --blocked 2>/dev/null | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    q = d.get('question') or ''
+    if not q:
+        tool = d.get('tool', '')
+        inp = d.get('input', {})
+        try:
+            inp_str = json.dumps(inp) if not isinstance(inp, str) else inp
+        except Exception:
+            inp_str = str(inp)
+        q = f'{tool}: {inp_str}' if tool else inp_str
+    q = ' '.join(q.split())
+    print(q[:300])
+except Exception:
+    pass
+" 2>/dev/null || true
+      ;;
+    blocked:unknown)
+      printf 'unknown blocker'
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+# ---- Notification delivery ----
+# IMPORTANT: uses agent-deliver, NEVER agent-send. See top-of-file rule.
+fire_notification() {
+  local pane="$1" spawner="$2" label="$3" new_state="$4" detail="$5"
+  local msg
+  # Two-newline prefix so the notification visually separates from any
+  # text the user has in the composer when it arrives.
+  msg=$(printf '\n\n[agent-watch] %s (%s) working -> %s. %s' \
+    "$pane" "$label" "$new_state" "$detail")
+
+  if "$AGENT_DELIVER" "$spawner" "$msg" >/dev/null 2>&1; then
+    log_line INFO daemon "fired spawner=$spawner pane=$pane label=\"$label\" transition=working->$new_state"
+    return 0
+  fi
+  local rc=$?
+  log_line WARN daemon "delivery failed spawner=$spawner pane=$pane rc=$rc (dropping watch)"
+  return "$rc"
+}
+
+# ---- Per-pane transient-failure tracker ----
+declare -A FAIL_COUNTS
+
+# ---- Main poll loop ----
+empty_cycles=0
+
+while true; do
+  if [[ ! -s "$WATCHES" ]]; then
+    empty_cycles=$((empty_cycles + 1))
+    if (( empty_cycles >= EMPTY_CYCLES_EXIT )); then
+      EXIT_REASON="watchlist empty for ${EMPTY_CYCLES_EXIT} cycles"
+      log_line INFO daemon "exiting: $EXIT_REASON"
+      exit 0
+    fi
+    sleep "$POLL_INTERVAL"
+    continue
+  fi
+  empty_cycles=0
+
+  # Snapshot the file for this cycle. If the file disappears mid-read
+  # (e.g., a concurrent rename), cat returns empty and we skip the cycle.
+  snapshot=$(cat "$WATCHES" 2>/dev/null || true)
+  [[ -n "$snapshot" ]] || { sleep "$POLL_INTERVAL"; continue; }
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+
+    pane=$(printf '%s' "$line" | jq -r '.pane // empty' 2>/dev/null)
+    spawner=$(printf '%s' "$line" | jq -r '.spawner_pane // empty' 2>/dev/null)
+    baseline=$(printf '%s' "$line" | jq -r '.baseline_state // "working"' 2>/dev/null)
+    label=$(printf '%s' "$line" | jq -r '.label // "agent"' 2>/dev/null)
+
+    [[ -n "$pane" && -n "$spawner" ]] || continue
+
+    cur=$(read_state "$pane" || true)
+
+    if [[ -z "$cur" ]]; then
+      # Transient failure (unparseable pane, window resize race, etc).
+      # Tolerate up to MAX_STATE_FAILURES consecutive failures before
+      # dropping the watch.
+      FAIL_COUNTS[$pane]=$(( ${FAIL_COUNTS[$pane]:-0} + 1 ))
+      if (( FAIL_COUNTS[$pane] >= MAX_STATE_FAILURES )); then
+        log_line WARN daemon "gave up on pane $pane after ${FAIL_COUNTS[$pane]} failed state reads"
+        remove_watch "$pane"
+        unset "FAIL_COUNTS[$pane]"
+      fi
+      continue
+    fi
+
+    # Reset the failure counter on any successful read.
+    FAIL_COUNTS[$pane]=0
+
+    # Transition rule: fire when current != baseline AND current is one
+    # of the terminal states. Working -> working stays unchanged. Working
+    # -> terminal fires. Non-working baselines also fire on any transition
+    # into a terminal state other than themselves (e.g., idle -> blocked).
+    if [[ "$cur" != "$baseline" ]]; then
+      case "$cur" in
+        idle|blocked:question|blocked:permission|blocked:unknown)
+          detail=$(read_detail "$pane" "$cur")
+          fire_notification "$pane" "$spawner" "$label" "$cur" "$detail" || true
+          # One-shot: remove the entry regardless of delivery success.
+          # A failed delivery (dead spawner) is logged above and the
+          # watch is dropped to avoid looping on a permanently broken
+          # target.
+          remove_watch "$pane"
+          unset "FAIL_COUNTS[$pane]"
+          ;;
+      esac
+    fi
+  done <<< "$snapshot"
+
+  sleep "$POLL_INTERVAL"
+done

@@ -1,0 +1,200 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: agent-watch add <pane> [--spawner <pane>] [--label <str>] [--baseline <state>]
+       agent-watch remove <pane>
+       agent-watch list
+       agent-watch daemon-status
+
+Register and manage background watches on AI agent panes. The daemon
+(agent-watch-daemon) polls each watched pane and delivers a one-shot
+notification to the spawner pane when the pane transitions out of its
+baseline state into a terminal state (idle, blocked:question, etc).
+
+Notifications are delivered via agent-deliver (never agent-send) to
+prevent recursive notification loops.
+
+Commands:
+  add <pane>       Start watching <pane>. Auto-starts the daemon.
+  remove <pane>    Stop watching <pane>.
+  list             Print the current watchlist.
+  daemon-status    Print whether the daemon is running and its pid.
+
+Options for `add`:
+  --spawner <pane>    Pane to notify when the watched pane finishes.
+                      Defaults to $TMUX_PANE (the caller's pane).
+  --label <str>       Short label shown in the notification message.
+                      Defaults to the agent type (ren, claude, codex, etc).
+  --baseline <state>  Initial state to compare against. The daemon fires
+                      when the observed state differs from baseline and
+                      is one of {idle, blocked:question, blocked:permission,
+                      blocked:unknown}. Defaults to "working".
+
+State files:
+  ~/.steez/state/watches.jsonl             one JSON entry per active watch
+  ~/.steez/state/agent-watch-daemon.pid    daemon singleton lock
+  ~/.steez/state/agent-watch.log           audit trail
+EOF
+  exit 0
+}
+
+STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}"
+WATCHES="$STATE_DIR/watches.jsonl"
+PIDFILE="$STATE_DIR/agent-watch-daemon.pid"
+DAEMON_BIN="$HOME/.steez/bin/agent-watch-daemon"
+AGENT_STATE="$HOME/.steez/bin/agent-state"
+
+mkdir -p "$STATE_DIR"
+touch "$WATCHES"
+
+resolve_pane_id() {
+  # Resolve any pane reference to the canonical %N form. Falls back to
+  # the raw argument if tmux cannot find it (we still want the entry in
+  # the watchlist so the daemon can log the dead-pane failure).
+  local raw="$1"
+  local resolved
+  resolved=$(tmux display-message -t "$raw" -p '#{pane_id}' 2>/dev/null || true)
+  if [[ -n "$resolved" ]]; then
+    printf '%s' "$resolved"
+  else
+    printf '%s' "$raw"
+  fi
+}
+
+ensure_daemon() {
+  # Idempotent start. If the PID file points at a live process, do nothing.
+  # Otherwise, launch the daemon fully detached from this shell so that
+  # `agent-watch add` returns immediately without leaving a zombie child.
+  if [[ -f "$PIDFILE" ]]; then
+    local old_pid
+    old_pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+      return 0
+    fi
+  fi
+  # Detachment recipe (macOS-compatible — no setsid available on darwin):
+  # - nohup: ignore SIGHUP so the daemon survives the parent's exit
+  # - </dev/null >/dev/null 2>&1: close inherited fds so the parent is not
+  #   blocked waiting on any of them
+  # - (... &) outer subshell: backgrounds the whole chain in a subshell
+  #   that exits immediately, orphaning the daemon to init/launchd
+  (nohup "$DAEMON_BIN" </dev/null >/dev/null 2>&1 &) || true
+}
+
+infer_label() {
+  local pane="$1"
+  local state_json agent
+  state_json=$("$AGENT_STATE" "$pane" 2>/dev/null || true)
+  if [[ -n "$state_json" ]]; then
+    agent=$(printf '%s' "$state_json" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))" 2>/dev/null || true)
+    if [[ -n "$agent" ]]; then
+      printf '%s' "$agent"
+      return 0
+    fi
+  fi
+  printf 'agent'
+}
+
+cmd_add() {
+  [[ $# -gt 0 ]] || { echo "error: agent-watch add requires a pane" >&2; exit 1; }
+
+  local pane_raw="$1"; shift
+  local spawner_raw="${TMUX_PANE:-}"
+  local label=""
+  local baseline="working"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --spawner)  spawner_raw="$2"; shift 2 ;;
+      --label)    label="$2"; shift 2 ;;
+      --baseline) baseline="$2"; shift 2 ;;
+      -h|--help)  usage ;;
+      *) echo "error: unknown arg '$1'" >&2; exit 1 ;;
+    esac
+  done
+
+  [[ -n "$pane_raw" ]] || { echo "error: pane required" >&2; exit 1; }
+  [[ -n "$spawner_raw" ]] || { echo "error: --spawner required (no \$TMUX_PANE to fall back on)" >&2; exit 1; }
+
+  local pane spawner
+  pane=$(resolve_pane_id "$pane_raw")
+  spawner=$(resolve_pane_id "$spawner_raw")
+
+  if [[ -z "$label" ]]; then
+    label=$(infer_label "$pane")
+  fi
+
+  # Atomic append. Watch entries are well under PIPE_BUF (~4KB on macOS),
+  # so a plain `>>` append is guaranteed atomic by POSIX. No locking needed.
+  local entry
+  entry=$(jq -cn \
+    --arg pane "$pane" \
+    --arg spawner "$spawner" \
+    --arg baseline "$baseline" \
+    --arg label "$label" \
+    --argjson added_at "$(date +%s)" \
+    '{pane: $pane, spawner_pane: $spawner, baseline_state: $baseline, label: $label, added_at: $added_at}')
+  printf '%s\n' "$entry" >> "$WATCHES"
+
+  ensure_daemon
+
+  echo "watching $pane <- $spawner ($label, baseline=$baseline)"
+}
+
+cmd_remove() {
+  [[ $# -gt 0 ]] || { echo "error: agent-watch remove requires a pane" >&2; exit 1; }
+  local pane_raw="$1"
+  local pane
+  pane=$(resolve_pane_id "$pane_raw")
+
+  [[ -f "$WATCHES" ]] || return 0
+
+  # Atomic rewrite via tmp + rename. Never modify in place — a concurrent
+  # daemon iteration reading the file mid-write would see corrupt JSON.
+  local tmp="$WATCHES.tmp.$$"
+  if jq -c --arg p "$pane" 'select(.pane != $p)' "$WATCHES" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$WATCHES"
+    echo "removed watch on $pane"
+  else
+    rm -f "$tmp"
+    echo "error: failed to rewrite watchlist" >&2
+    exit 1
+  fi
+}
+
+cmd_list() {
+  if [[ ! -s "$WATCHES" ]]; then
+    echo "(no active watches)"
+    return
+  fi
+  jq -r '"\(.pane)  <- \(.spawner_pane)  [\(.label)]  baseline=\(.baseline_state)  added=\(.added_at)"' "$WATCHES"
+}
+
+cmd_daemon_status() {
+  if [[ -f "$PIDFILE" ]]; then
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "running pid=$pid"
+      return 0
+    fi
+  fi
+  echo "not running"
+}
+
+main() {
+  [[ $# -gt 0 ]] || usage
+  local cmd="$1"; shift
+  case "$cmd" in
+    add)           cmd_add "$@" ;;
+    remove|rm)     cmd_remove "$@" ;;
+    list|ls)       cmd_list "$@" ;;
+    daemon-status) cmd_daemon_status "$@" ;;
+    -h|--help)     usage ;;
+    *) echo "error: unknown command '$cmd'" >&2; usage ;;
+  esac
+}
+
+main "$@"
