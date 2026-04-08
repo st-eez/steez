@@ -129,6 +129,7 @@ func cmdInstall(args []string) int {
 		{"agent-state", "shared/steez/bin/agent-state"},
 		{"agent-history", "shared/steez/bin/agent-history"},
 		{"agent-send", "shared/steez/bin/agent-send"},
+		{"agent-deliver", "shared/steez/bin/agent-deliver"},
 		{"browse", "shared/steez/browse/dist/browse"},
 	}
 	// Remove old steez-prefixed bin symlinks from before the rename.

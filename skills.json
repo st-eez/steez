@@ -109,7 +109,7 @@
     }
   },
   "shared_infra": {
-    "bin": ["agent-history", "agent-send", "agent-state", "steez-bd", "config", "diff-scope", "review-log", "review-read", "slug"],
+    "bin": ["agent-deliver", "agent-history", "agent-send", "agent-state", "steez-bd", "config", "diff-scope", "review-log", "review-read", "slug"],
     "runtime_dir": "~/.steez",
     "browse_binary": "skills/browse/dist/browse"
   }
