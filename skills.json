@@ -53,9 +53,6 @@
     "jira": {
       "description": "Manage Jira tickets — search, create, update, transition, log time"
     },
-    "tmux": {
-      "description": "Tmux safety rules and patterns — prevents sending to wrong pane"
-    },
     "spawn-agent": {
       "description": "Spawn, prompt, read from, and communicate with AI agents across tmux panes"
     },
@@ -86,7 +83,7 @@
     "infrastructure": {
       "label": "Infrastructure",
       "description": "Debugging, security, and orchestration tools",
-      "skills": ["investigate", "cso", "tmux", "spawn-agent", "audit"]
+      "skills": ["investigate", "cso", "spawn-agent", "audit"]
     },
     "design": {
       "label": "Design",

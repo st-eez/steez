@@ -190,14 +190,14 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	}
 
 	// Install one skill.
-	source := filepath.Join(repoPath, "skills", "tmux")
-	target := filepath.Join(skillsDir, "tmux")
+	source := filepath.Join(repoPath, "skills", "spawn-agent")
+	target := filepath.Join(skillsDir, "spawn-agent")
 	CreateSymlink(source, target, false, false)
 
 	// Write registry.
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "tmux", Source: source, Target: target},
+			{Name: "spawn-agent", Source: source, Target: target},
 		},
 	}
 	data, _ := json.MarshalIndent(reg, "", "  ")
