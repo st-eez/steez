@@ -154,14 +154,33 @@ except Exception:
 # IMPORTANT: uses agent-deliver, NEVER agent-send. See top-of-file rule.
 fire_notification() {
   local pane="$1" spawner="$2" label="$3" new_state="$4" detail="$5"
+
+  # Resolve the target pane to a human-readable session:window.pane
+  # address alongside the stable %N pane_id. %N is canonical and never
+  # shifts when panes are killed or moved, but it is opaque to a human
+  # glancing at a notification. session:window.pane is what the user
+  # would type to navigate to the pane, which is the form most people
+  # recognize at a glance. We show both.
+  #
+  # If tmux can no longer resolve the pane (it died between the state
+  # read and the fire), we fall back to just the %N so the message
+  # still carries the unambiguous identifier.
+  local addr id_part
+  addr=$(tmux display-message -t "$pane" -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+  if [[ -n "$addr" ]]; then
+    id_part="$pane @ $addr"
+  else
+    id_part="$pane"
+  fi
+
   local msg
   # Two-newline prefix so the notification visually separates from any
   # text the user has in the composer when it arrives.
   msg=$(printf '\n\n[agent-watch] %s (%s) working -> %s. %s' \
-    "$pane" "$label" "$new_state" "$detail")
+    "$id_part" "$label" "$new_state" "$detail")
 
   if "$AGENT_DELIVER" "$spawner" "$msg" >/dev/null 2>&1; then
-    log_line INFO daemon "fired spawner=$spawner pane=$pane label=\"$label\" transition=working->$new_state"
+    log_line INFO daemon "fired spawner=$spawner pane=$pane addr=${addr:-unknown} label=\"$label\" transition=working->$new_state"
     return 0
   fi
   local rc=$?
