@@ -3,10 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: agent-history [<pane|path>] <mode> [--agent claude|codex|prometheus|ren]
+Usage: agent-history [<pane|path>] <mode>
        agent-history --all <mode>
 
-Read structured conversation data from Claude Code, Ren, or Codex CLI transcripts.
+Read structured conversation data from Claude Code (including claude-variants
+like ren and prometheus) or Codex CLI transcripts. Parser format is
+auto-detected from the transcript path.
 
 Modes:
   --last         Last human prompt + assistant response
@@ -15,13 +17,12 @@ Modes:
 
 Input:
   %42            Pane ID — resolves transcript via agent-state --detail
-  /path/to.jsonl Direct transcript path (agent inferred from path)
+  /path/to.jsonl Direct transcript path (format inferred from path)
   (none)         Uses $TMUX_PANE if set
 
 Options:
-  --all                             Scan every tmux agent pane, return JSON array
-  --agent claude|codex|prometheus|ren   Override agent type inference
-  -h, --help                        Show this help
+  --all          Scan every tmux agent pane, return JSON array
+  -h, --help     Show this help
 EOF
   exit 0
 }
@@ -35,7 +36,6 @@ error_json() {
 TARGET=""
 MODE=""
 HISTORY_N=""
-AGENT_OVERRIDE=""
 ALL_MODE="false"
 
 while [[ $# -gt 0 ]]; do
@@ -49,11 +49,6 @@ while [[ $# -gt 0 ]]; do
       HISTORY_N="$1"; shift
       ;;
     --all)     ALL_MODE="true"; shift ;;
-    --agent)
-      shift
-      [[ $# -gt 0 && ("$1" == "claude" || "$1" == "codex" || "$1" == "prometheus" || "$1" == "ren") ]] || { echo "error: --agent requires claude, codex, prometheus, or ren" >&2; exit 1; }
-      AGENT_OVERRIDE="$1"; shift
-      ;;
     -h|--help) usage ;;
     -*) echo "error: unknown option '$1'" >&2; exit 1 ;;
     *)  TARGET="$1"; shift ;;
@@ -65,7 +60,6 @@ done
 # --- --all scan mode: iterate every agent pane, emit a JSON array ---
 if [[ "$ALL_MODE" == "true" ]]; then
   [[ -z "$TARGET" ]] || { echo "error: --all cannot be combined with a target" >&2; exit 1; }
-  [[ -z "$AGENT_OVERRIDE" ]] || { echo "error: --all cannot be combined with --agent" >&2; exit 1; }
 
   mode_args=()
   case "$MODE" in
@@ -139,14 +133,15 @@ fi
 
 # --- Input resolution ---
 TRANSCRIPT=""
-AGENT=""
+DISPLAY_AGENT=""
+FORMAT=""
 
 resolve_from_pane() {
   local pane="$1"
   local detail
   detail=$("$HOME/.steez/bin/agent-state" "$pane" --detail 2>/dev/null) || error_json "pane $pane is not a recognized AI agent"
 
-  AGENT=$(printf '%s' "$detail" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))")
+  DISPLAY_AGENT=$(printf '%s' "$detail" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))")
   TRANSCRIPT=$(printf '%s' "$detail" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('detail',{}).get('transcript_path','') if d.get('detail') else '')")
 
   [[ -n "$TRANSCRIPT" ]] || error_json "no transcript found for pane $pane"
@@ -160,36 +155,35 @@ elif [[ "$TARGET" == %* ]]; then
   # Pane ID
   resolve_from_pane "$TARGET"
 else
-  # Direct path
+  # Direct path — display name is best-effort from path prefix
   TRANSCRIPT="$TARGET"
   [[ -f "$TRANSCRIPT" ]] || error_json "file not found: $TRANSCRIPT"
-  # Infer agent from path
-  if [[ -n "$AGENT_OVERRIDE" ]]; then
-    AGENT="$AGENT_OVERRIDE"
-  elif [[ "$TRANSCRIPT" == */.claude/* ]]; then
-    AGENT="claude"
+  if [[ "$TRANSCRIPT" == */.claude/* ]]; then
+    DISPLAY_AGENT="claude"
   elif [[ "$TRANSCRIPT" == */.codex/* ]]; then
-    AGENT="codex"
+    DISPLAY_AGENT="codex"
   else
-    error_json "cannot infer agent type from path — use --agent claude|codex|prometheus|ren"
+    DISPLAY_AGENT="unknown"
   fi
 fi
 
-[[ -n "$AGENT_OVERRIDE" ]] && AGENT="$AGENT_OVERRIDE"
-
-# Prometheus and Ren are claude with different system prompts — transcript
-# format is identical, so normalize for parsing but preserve the original name
-# for output so consumers see "prometheus" or "ren" in results instead of the
-# internal "claude" alias.
-DISPLAY_AGENT="$AGENT"
-[[ "$AGENT" == "prometheus" || "$AGENT" == "ren" ]] && AGENT="claude"
+# --- Format dispatch: keyed on transcript path, not agent name ---
+# claude-variants (claude, ren, prometheus, future) share JSONL schema,
+# so parser dispatch is O(2) formats rather than O(N) agent names.
+if [[ "$TRANSCRIPT" == */.claude/* ]]; then
+  FORMAT="claude"
+elif [[ "$TRANSCRIPT" == */.codex/* ]]; then
+  FORMAT="codex"
+else
+  error_json "cannot determine transcript format from path: $TRANSCRIPT"
+fi
 
 # --- Tail strategy: 500 lines, fallback to 2000 ---
 LINES=$(tail -500 "$TRANSCRIPT")
 
 # Check if we have at least one human prompt in the tailed data
 has_prompt() {
-  if [[ "$AGENT" == "claude" ]]; then
+  if [[ "$FORMAT" == "claude" ]]; then
     printf '%s' "$1" | python3 -c "
 import sys, json
 for line in sys.stdin:
@@ -229,7 +223,7 @@ printf '%s' "$LINES" | python3 -c "
 import sys, json
 
 agent = '$DISPLAY_AGENT'
-parse_as = '$AGENT'
+parse_as = '$FORMAT'
 mode = '$MODE'
 history_n = int('${HISTORY_N:-0}') if '${HISTORY_N:-0}'.isdigit() else 0
 
