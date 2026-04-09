@@ -1,7 +1,7 @@
 ---
 name: spawn-agent
 preamble-tier: 1
-description: "REQUIRED for spawning, prompting, reading from, and communicating with AI coding agents (claude, codex, prometheus) across tmux panes. Use this skill, not tmux, whenever the user wants to spawn, launch, start, orchestrate, message, query, or check on an agent. Spawn triggers: spawn an agent, launch prometheus, spin up a claude, fire up codex, start an agent in a new pane, put an agent in a worktree. Post-spawn triggers: send the agent a message, ask the other agent, query the previous session, check what that agent is doing, read the agent's response, wait for the agent to finish. Even when tmux panes or windows are mentioned, if the operation involves an AI agent in a pane, use this skill."
+description: "REQUIRED for spawning, prompting, reading from, and communicating with AI coding agents (ren, claude, codex, prometheus) across tmux panes. Use this skill whenever the user wants to spawn, launch, start, orchestrate, message, query, or check on an agent. Spawn triggers: spawn an agent, launch ren, launch prometheus, spin up a claude, fire up codex, start an agent in a new pane, put an agent in a worktree. Post-spawn triggers: send the agent a message, ask the other agent, query the previous session, check what that agent is doing, read the agent's response, wait for the agent to finish. If the operation involves an AI agent in a pane, use this skill."
 ---
 
 <!-- BEGIN MANAGED PREAMBLE -->
@@ -65,7 +65,7 @@ RECOMMENDATION: [what the user should do next]
 
 # Agent Spawn: Tmux-based AI Agent Orchestrator
 
-Spawn an AI coding agent (Prometheus, Claude, or Codex) in a tmux target. This skill is project-agnostic.
+Spawn an AI coding agent (Ren, Prometheus, Claude, or Codex) in a tmux target. This skill is project-agnostic.
 
 ## Step 1: Parse user intent
 
@@ -75,13 +75,13 @@ Parse these four fields **independently**, then combine into script args:
 
 ### 1. Model (which agent to launch)
 
-- "spawn prometheus", "spawn an agent", "launch an agent", "fire up an agent" → `prometheus`
+- "spawn ren", "launch ren", "fire up ren", "spawn an agent", "launch an agent", "fire up an agent" → `ren`
+- "spawn prometheus", "launch prometheus", "fire up prometheus" → `prometheus`
 - "spawn claude", "spawn vanilla claude", "launch a claude" → `claude`
 - "spawn codex", "launch codex", "fire up codex" → `codex`
-- "spawn ren", "launch ren", "fire up ren" → `ren`
-- **Default** (no model mentioned) → `prometheus`
+- **Default** (no model mentioned) → `ren`
 
-Prometheus is the default agent. "Spawn an agent" without qualification means prometheus. Only explicit "claude" or "codex" gets those models.
+Ren is the default agent. "Spawn an agent" without qualification means ren. Only explicit "prometheus", "claude", or "codex" gets those models.
 
 ### 2. Topology (how to create the pane)
 
@@ -121,12 +121,13 @@ Prometheus is the default agent. "Spawn an agent" without qualification means pr
 
 | User says | Model | Topology | Anchor | Result |
 |-----------|-------|----------|--------|--------|
-| "spawn an agent beside me" | `prometheus` | `split-h` | current pane | `split-h` |
+| "spawn an agent beside me" | `ren` | `split-h` | current pane | `split-h` |
 | "spawn codex in this window (2)" | `codex` | `split-h` | window 2 | `split-h --model codex` (if already in 2) |
 | "put claude in window 3" | `claude` | `split-h` | window 3 | `split-h --target mac:3.1 --model claude` |
-| "new window with an agent" | `prometheus` | `new-window` | — | `new-window` |
-| "spawn an agent" (no locality) | `prometheus` | dynamic | current window | layout-aware (see below) |
+| "new window with an agent" | `ren` | `new-window` | — | `new-window` |
+| "spawn an agent" (no locality) | `ren` | dynamic | current window | layout-aware (see below) |
 | "start codex below" | `codex` | `split-v` | current pane | `split-v --model codex` |
+| "spawn prometheus beside me" | `prometheus` | `split-h` | current pane | `split-h --model prometheus` |
 
 **Working directory.** tmux inherits the cwd of the source pane on split/new-window, so skip this entirely unless the user explicitly mentions a different path or worktree. Rules:
 - User mentions a specific path → cd to that path after creating the pane
@@ -176,7 +177,7 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 **Target types:** `split-h`, `split-v`, `new-window`, `new-session`
 
 **Flags:**
-- `--model <name>`: which agent to launch. `prometheus` (default), `claude`, or `codex`
+- `--model <name>`: which agent to launch. `ren` (default), `prometheus`, `claude`, or `codex`
 - `--dir <name-or-path>`: working directory (resolved via zoxide cascade)
 - `--session <name>`: session name (for `new-session` only)
 - `--prompt <text>`: initial prompt to send after the agent starts
@@ -184,7 +185,7 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 
 **Examples:**
 ```bash
-# Spawn prometheus beside current pane (default model)
+# Spawn ren beside current pane (default model)
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h
 
 # Spawn codex in a specific directory with a task
@@ -216,10 +217,11 @@ Parse the `TARGET=...` pane_id from step 1's output and pass it as `--target` in
 The script outputs structured key=value lines:
 - `RESOLVED=/full/path METHOD=zoxide`: directory was resolved (method: literal, local, zoxide, or find)
 - `SELF=%0 TARGET=%5`: stable pane IDs (never shift when panes are killed or moved)
-- `MODEL=prometheus`: which agent was launched
+- `MODEL=ren`: which agent was launched
 - `PROMPT_SENT`: prompt was passed as a CLI argument at launch
 - `WORKING`: agent launched and is actively processing the prompt
 - `IDLE`: agent launched and is waiting for input (no prompt was sent, or it finished fast)
+- `WATCHED=%5 SPAWNER=%0 BASELINE=working`: a background watch was registered so the spawner pane gets a notification when the agent finishes the initial prompt (only emitted when `--prompt` was passed)
 
 **Error handling:**
 
@@ -237,7 +239,7 @@ The script outputs structured key=value lines:
 ## Step 3: Report
 
 After spawning, report:
-- The model launched (prometheus, claude, or codex)
+- The model launched (ren, prometheus, claude, or codex)
 - The tmux pane_id (e.g., `%5`)
 - The working directory
 - Whether an initial prompt was sent
@@ -265,6 +267,12 @@ The script wraps the chat-pane footgun (Enter must arrive as a separate keystrok
 This is pure fire-and-forget. The script returns as soon as the message is submitted. It does not wait, does not poll, does not read the response. If you want to know what the agent did, read separately on your own clock using the sections below.
 
 The pane argument accepts a pane id (`%N`, preferred) or `session:window.pane`. The pane must be a recognized AI agent (claude or codex); otherwise the script exits with code 2.
+
+**Auto-watch on delivery.** Every successful `agent-send` call also registers a background watch via `agent-watch add` with `baseline=working`. When the watched pane finishes the turn — idle, blocked on a question, blocked on a permission prompt — a notification is delivered back into your pane by the `agent-watch-daemon` so the orchestrator learns about the transition without polling.
+
+You do not need to call `agent-watch` yourself for messages sent via `agent-send`. You also do not need to call it for the initial prompt passed to `scripts/spawn.sh --prompt` — that is wired into the script directly and emits a `WATCHED=...` line on success. The two entry points exist because they cover different delivery paths: `spawn.sh --prompt` launches the agent with the prompt as a CLI argument (bypassing `agent-send`), while `agent-send` is used for every subsequent message.
+
+**Do not** call `agent-watch add` from code that also calls `agent-send` — that would double-register and fire two notifications. The auto-registration inside `agent-send` is the single source of truth for message-driven watches.
 
 ### Waiting For An Agent To Finish
 

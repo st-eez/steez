@@ -5,7 +5,7 @@
 #   spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>] [--model <name>]
 #
 # Target types: split-h, split-v, new-window, new-session
-# Models: prometheus (default), claude, codex
+# Models: ren (default), prometheus, claude, codex
 #
 # --target <pane>  For split-h/split-v: split this pane instead of self.
 #                  Use pane_id format (%N, e.g., %5) or session:window.pane (e.g., mac:5.1).
@@ -28,7 +28,7 @@ DIR_NAME=""
 SESSION_NAME=""
 PROMPT_TEXT=""
 SPLIT_TARGET=""
-MODEL="prometheus"
+MODEL="ren"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -238,3 +238,35 @@ for i in $(seq 1 10); do
     break
   fi
 done
+
+# --- Register watch for the initial prompt ---
+# If a prompt was passed via --prompt, the agent is (or will be) working
+# on it right now. Register a background watch so the spawner pane gets
+# a notification when the agent finishes. This is the auto-registration
+# equivalent of what agent-send does for subsequent messages; without it,
+# the very first turn of every prompted spawn would be unwatched.
+#
+# Baseline is hardcoded to "working". Why not the observed state from the
+# polling loop above? The polling loop races with agent boot — a fast
+# agent may already be back to idle, a slow agent may not have loaded yet
+# and still show the shell prompt. Either way, we know semantically that
+# the agent is (or will be) processing the prompt, so baseline=working is
+# the correct intent. The daemon's transition rule handles both races:
+# - agent still booting:  shell idle -> working -> idle triggers fire
+#     on the final working -> idle transition.
+# - agent already done:   current=idle on first daemon poll, baseline=
+#     working != idle, fire immediately.
+#
+# Why this lives in spawn.sh and not in the skill prose: the script is
+# the single canonical entry point for all /spawn-agent calls, so wiring
+# the watch here covers every invocation deterministically rather than
+# relying on Claude to remember to run `agent-watch add` after every spawn.
+if [ -n "$PROMPT_TEXT" ]; then
+  PROMPT_SUMMARY=$(printf '%s' "$PROMPT_TEXT" | tr -d '\n\r' | cut -c1-40)
+  if "$HOME/.steez/bin/agent-watch" add "$NEW_TARGET" \
+      --spawner "$SELF_ID" \
+      --baseline "working" \
+      --label "$MODEL $PROMPT_SUMMARY" >/dev/null 2>&1; then
+    echo "WATCHED=$NEW_TARGET SPAWNER=$SELF_ID BASELINE=working"
+  fi
+fi
