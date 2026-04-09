@@ -67,6 +67,9 @@
     },
     "sharpen-skill": {
       "description": "Evaluate and improve skills via multi-agent research and critique"
+    },
+    "skillify": {
+      "description": "Capture a session's workflow as a reusable SKILL.md file"
     }
   },
   "categories": {
@@ -93,7 +96,7 @@
     "meta": {
       "label": "Meta",
       "description": "Automation, AI consult, and skill improvement",
-      "skills": ["codex", "autoplan", "reminders", "loop-prompt", "sharpen-skill"]
+      "skills": ["codex", "autoplan", "reminders", "loop-prompt", "sharpen-skill", "skillify"]
     }
   },
   "profiles": {
