@@ -45,8 +45,15 @@ MSG="$2"
 # target pane so the spawner gets notified when the agent finishes.
 # Watch registration is a best-effort add-on; a failure here never fails
 # the delivery itself.
-"$HOME/.steez/bin/agent-deliver" "$PANE" "$MSG"
-DELIVER_RC=$?
+#
+# The `|| DELIVER_RC=$?` idiom captures agent-deliver's exit code without
+# tripping `set -e`. A bare invocation followed by `DELIVER_RC=$?` would
+# never reach the assignment on failure — the script would exit on the
+# non-zero return before touching the next line, making the `if [[ $DELIVER_RC
+# -eq 0 ]]` guard below unreachable dead code. This form is explicit and
+# survives future edits that might add `|| true` or remove `set -e`.
+DELIVER_RC=0
+"$HOME/.steez/bin/agent-deliver" "$PANE" "$MSG" || DELIVER_RC=$?
 
 # Post-delivery watch registration. Runs in a fully detached subshell
 # so it does not block the caller — agent-send is still pure
