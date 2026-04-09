@@ -25,6 +25,24 @@ wrong-target mutations:
   or `delete`. Never use numeric indexes — they shift between calls as reminders are
   added or completed.
 
+## Smart Lists
+
+Apple Reminders has built-in smart lists that are virtual views, not real lists.
+**Never create a list with these names** — they already exist as automatic filters:
+
+- **Today** — shows all reminders due today. To "add to Today," set `--due today`
+  on the appropriate real list (Dumak, Personal, etc.), not `--list "Today"`.
+- **Scheduled** — shows all reminders with any due date.
+- **All** — shows every reminder across all lists.
+- **Flagged** — shows flagged reminders.
+
+When the user says "add to my Today list" or "put this on Today," they mean: create
+the reminder in the correct real list with `--due today`. The correct real list is
+determined by the content — dev/business/IT work goes to Dumak, legal/payroll goes
+to Dimakos Legal, personal items go to Personal, parking-lot ideas go to Ideas.
+
+If the user explicitly names a real list AND says "today," do both: `--list "<list>" --due today`.
+
 ## Viewing Reminders
 
 ```sh
