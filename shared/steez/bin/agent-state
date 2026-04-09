@@ -231,25 +231,11 @@ check_pane() {
 render_layout() {
   local tsv_lines=()
   local pane_data
-  pane_data=$(tmux list-panes -a -F $'#{session_name}\t#{window_index}\t#{window_name}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_current_command}\t#{pane_pid}\t#{pane_title}')
+  pane_data=$(tmux list-panes -a -F $'#{session_name}\t#{window_index}\t#{window_name}\t#{pane_id}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}\t#{pane_pid}\t#{pane_title}')
 
-  while IFS=$'\t' read -r session win_idx win_name pane_id left top width height cmd pane_pid pane_title; do
+  while IFS=$'\t' read -r session win_idx win_name pane_id left top width height pane_pid pane_title; do
     local agent state="none" name=""
-
-    # Fast path: use command name directly when it identifies the agent
-    case "$cmd" in
-      claude)
-        # pane_current_command is the foreground of the pane's shell, which
-        # is the claude child itself. Need its pid to read env, not the shell pid.
-        claude_pid=$(awk -v ppid="$pane_pid" '$2 == ppid { print $1; exit }' <<< "$_PS")
-        if is_prometheus "$claude_pid"; then agent="prometheus"
-        elif is_ren "$claude_pid"; then agent="ren"
-        else agent="claude"
-        fi
-        ;;
-      codex)  agent="codex" ;;
-      *)      agent=$(detect_agent "$pane_pid") ;;
-    esac
+    agent=$(detect_agent "$pane_pid")
 
     if [[ "$agent" != "unknown" ]]; then
       local tail_text
