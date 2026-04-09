@@ -77,9 +77,28 @@ EOF
 bd update $WORKSHOP_BEAD --design-file=/tmp/workshop-qa-final.md
 ```
 
+## Step 2b: Reconcile before drafting
+
+The handoff is happening because the context window is long enough to degrade. Your top-of-mind recall of the session is the least reliable source available. Before drafting, force yourself to verify against actual artifacts.
+
+**Re-read the conversation.** Scan from the beginning for: user corrections, new requirements, scope changes, and decisions that emerged during discussion. Pay special attention to moments where the user pushed back or corrected you -- those are the highest-signal turns and the easiest to forget.
+
+**Re-read the originating ticket/issue.** If the session started from a Jira ticket, GitHub issue, or bead, re-read it now. Check that you're capturing the full spec (field names, acceptance criteria, explicit requirements), not just your summary of the problem.
+
+**Re-read any beads updated during the session.** `bd show` the in-flight bead if one exists. Check what's already captured vs what's missing.
+
+**Update the in-flight bead.** Reconcile conversation findings into the bead's notes/description -- any decisions, corrections, or research results from the conversation that aren't yet captured. This is your last chance to make the artifact current while you still have the full conversation available. The new agent may read this bead independently of the handoff bead, so it must stand on its own.
+
+```bash
+# Example: append session findings to the in-flight bead
+bd update <IN_FLIGHT_BEAD> --append-notes "<findings not yet captured>"
+```
+
+Only after completing this reconciliation should you proceed to drafting.
+
 ## Step 3: Draft the handoff bead
 
-Introspect your own session context and fill every section of the schema below. Be specific and concrete -- the new agent has zero context beyond what you write here. If a section is empty, say so explicitly ("None so far.") rather than omitting it.
+Draft from the artifacts you just reviewed and updated -- not from top-of-mind recall. The originating ticket, the in-flight bead, and the conversation history are your sources. Be specific and concrete -- the new agent has zero context beyond what you write here. If a section is empty, say so explicitly ("None so far.") rather than omitting it.
 
 ### Workshop handoff sourcing
 
@@ -219,6 +238,21 @@ This is belt-and-suspenders for non-workshop in-flight beads: the spawn prompt a
 ## Step 6: Spawn the new agent
 
 **Standard handoff** (no workshop bead):
+
+```bash
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h \
+  --model ren \
+  --dir "WORK_DIR" \
+  --prompt "You are picking up work from a handoff. The previous session ended because its context window was approaching exhaustion.
+
+Your first two actions:
+1. bd show HANDOFF_BEAD_ID -- the handoff bead. Contains session context: next action, decisions made, dead ends, open questions, session calibrations, and how to reach the old session.
+2. bd show IN_FLIGHT_BEAD -- the work bead. Contains the task description, research findings, and notes updated through the end of the previous session.
+
+Read both completely before doing anything else. The handoff bead tells you what happened and what to do next. The work bead tells you what the task is and what's been found so far."
+```
+
+If there is no in-flight bead, use the single-bead variant instead:
 
 ```bash
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h \
