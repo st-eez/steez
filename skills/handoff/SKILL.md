@@ -177,8 +177,10 @@ experienced firsthand: user conversations, decisions not captured
 above, context that didn't make it into this bead. Anything about
 the work itself, figure out normally or ask the user.
 
-To query (send, poll, read):
-  ~/.steez/bin/agent-send OLD_PANE "your question"
+To query (deliver, poll, read — use agent-deliver, NOT agent-send,
+because agent-send auto-registers a daemon watch that would fire
+a notification back into your pane):
+  ~/.steez/bin/agent-deliver OLD_PANE "your question"
   while [[ "$(~/.steez/bin/agent-state OLD_PANE | jq -r .state)" == "working" ]]; do
     sleep 3
   done
