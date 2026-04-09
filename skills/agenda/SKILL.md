@@ -19,12 +19,14 @@ SKILL_DIR="$HOME/.steez/repo/skills/agenda"
 FORMAT_TABLE="$SKILL_DIR/scripts/format_table.py"
 READ_STATE="$SKILL_DIR/scripts/read_state.py"
 WRITE_STATE="$SKILL_DIR/scripts/write_state.py"
+READ_ARTIFACT="$SKILL_DIR/scripts/read_artifact.py"
+WRITE_ARTIFACT="$SKILL_DIR/scripts/write_artifact.py"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agenda"
 STATE_FILE="$STATE_DIR/daily-planning-state.json"
 mkdir -p "$STATE_DIR"
 ```
 
-If `FORMAT_TABLE`, `READ_STATE`, or `WRITE_STATE` is missing, explain that the skill install is incomplete and stop.
+If `FORMAT_TABLE`, `READ_STATE`, `WRITE_STATE`, `READ_ARTIFACT`, or `WRITE_ARTIFACT` is missing, explain that the skill install is incomplete and stop.
 
 This `SKILL.md` is the runtime source of truth. Do not read other planning docs during a normal pass unless Steve explicitly asks.
 
@@ -110,6 +112,70 @@ python3 "$READ_STATE" "$STATE_FILE" --field timezone
 python3 "$WRITE_STATE" "$STATE_FILE" --default-timezone "America/Montreal"
 ```
 
+## Daily Artifact
+
+Each planning session produces a dated artifact at `$STATE_DIR/YYYY-MM-DD.json`. This is the audit trail — it records what was decided and what changed so issues can be traced back to the session that caused them.
+
+### Tracking decisions during the session
+
+Maintain an in-memory list of decisions throughout the session. Every `remindctl` command that changes a reminder gets an entry in `decisions`. Record only actions that changed state — skip actions (choosing not to act) are not recorded.
+
+Include origin state for traceability:
+- `redate` decisions: include `"from"` (the previous due date)
+- `promote` decisions: include `"from_list"` (always `"Inbox"`)
+
+### Writing the artifact (after Phase 3 approval)
+
+After applying Phase 3 reminder edits and before writing `STATE_FILE`, build the full artifact JSON and pipe it through `write_artifact.py`:
+
+```sh
+ARTIFACT_JSON='{ ... }'  # see schema below
+echo "$ARTIFACT_JSON" | python3 "$WRITE_ARTIFACT" "$STATE_DIR" --timezone "$TIMEZONE" > /dev/null
+```
+
+Use the timezone from `STATE_FILE` (or the default). The script adds `completed_at` (ISO 8601 with timezone) and writes to `$STATE_DIR/YYYY-MM-DD.json`.
+
+### Artifact schema
+
+```json
+{
+  "date": "2026-04-09",
+  "final_slate": [
+    {"id": "STU7", "title": "Salesrep Dashboard", "list": "Dumak"},
+    {"id": "VWX8", "title": "NS-710: Texas TAX", "list": "Dumak"}
+  ],
+  "decisions": [
+    {"phase": "triage", "id": "ABC1", "title": "Old task", "action": "complete"},
+    {"phase": "triage", "id": "DEF2", "title": "Blocked thing", "action": "redate", "from": "2026-04-02", "to": "2026-04-14"},
+    {"phase": "triage", "id": "GHI3", "title": "Not a deadline", "action": "clear_due"},
+    {"phase": "inbox", "id": "MNO5", "title": "New item", "action": "promote", "from_list": "Inbox", "list": "Dumak"},
+    {"phase": "slate", "id": "VWX8", "title": "NS-710: Texas TAX", "action": "add_to_today"}
+  ]
+}
+```
+
+Fields:
+- `final_slate`: the approved Today items (excluding meta items like "Plan today in Agenda")
+- `decisions`: every action that changed reminder state, in execution order. Phase is semantic: `triage` (Phase 1), `inbox` (Phase 2), `slate` (Phase 3). Only state-changing actions — no `skip` entries.
+- `completed_at`: added automatically by `write_artifact.py` in ISO 8601 format
+
+### Reading yesterday's artifact (Phase 1 preamble)
+
+Before starting overdue triage, check yesterday's artifact:
+
+```sh
+YESTERDAY_RAW="$(mktemp)"
+python3 "$READ_ARTIFACT" "$STATE_DIR" --timezone "$TIMEZONE" > "$YESTERDAY_RAW"
+```
+
+Use the Read tool on `YESTERDAY_RAW`. If `found` is `true`, show a one-line continuity summary before the overdue table:
+
+```text
+Yesterday you planned: <title 1>, <title 2>, <title 3>
+```
+
+Do not elaborate. The overdue triage will surface anything that carried over. If `found` is `false`, skip the summary silently.
+
 ## Reading Reminder Notes
 
 After fetching reminders in any phase, read the `notes` field of each reminder before forming recommendations.
@@ -184,7 +250,20 @@ Print a progress marker at the start of each phase and a transition line before 
 
 ### Phase 1: Overdue Triage
 
-Print the Phase 1 progress marker, then run:
+Print the Phase 1 progress marker.
+
+First, read yesterday's artifact for continuity:
+
+```sh
+TIMEZONE="$(python3 "$READ_STATE" "$STATE_FILE" --field timezone)"
+[ -z "$TIMEZONE" ] && TIMEZONE="America/Montreal"
+YESTERDAY_RAW="$(mktemp)"
+python3 "$READ_ARTIFACT" "$STATE_DIR" --timezone "$TIMEZONE" > "$YESTERDAY_RAW"
+```
+
+Use the Read tool on `YESTERDAY_RAW`. If `found` is `true`, print a one-line continuity summary from `final_slate` before fetching overdue items. If `found` is `false`, skip silently.
+
+Then fetch overdue reminders:
 
 ```sh
 OVERDUE_RAW="$(mktemp)"
@@ -438,13 +517,29 @@ Apply the needed reminder edits:
   remindctl edit <ID_PREFIX> --clear-due --json --no-input > /dev/null
   ```
 
-Then update `STATE_FILE` with the local completion timestamp in `YYYY-MM-DD HH:MM` format.
+Then write the daily artifact. Build the full artifact JSON from the decisions tracked throughout the session, and pipe it through `write_artifact.py`:
+
+```sh
+TIMEZONE="$(python3 "$READ_STATE" "$STATE_FILE" --field timezone)"
+[ -z "$TIMEZONE" ] && TIMEZONE="America/Montreal"
+cat <<'ARTIFACT_EOF' | python3 "$WRITE_ARTIFACT" "$STATE_DIR" --timezone "$TIMEZONE" > /dev/null
+{
+  "date": "<TODAY>",
+  "final_slate": [ ... ],
+  "decisions": [ ... ]
+}
+ARTIFACT_EOF
+```
+
+Populate `final_slate` and `decisions` from the session. See the artifact schema in the Daily Artifact section for the expected structure.
+
+Finally, update `STATE_FILE` with the local completion timestamp in `YYYY-MM-DD HH:MM` format.
 
 ```sh
 python3 "$WRITE_STATE" "$STATE_FILE" --default-timezone "America/Montreal" > /dev/null
 ```
 
-Only write the state file after the final slate is approved and all reminder edits are applied.
+Only write the state file and artifact after the final slate is approved and all reminder edits are applied.
 
 ## Worked Example
 
