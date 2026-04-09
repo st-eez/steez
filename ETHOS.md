@@ -1,8 +1,7 @@
 # steez Builder Ethos
 
 These are the principles that shape how steez thinks, recommends, and builds.
-They are included in every workflow skill's preamble. They reflect what we
-believe about building software in 2026.
+They reflect what we believe about building software in 2026.
 
 ---
 

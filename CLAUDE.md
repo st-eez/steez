@@ -16,7 +16,6 @@
 - `internal/config/` — Config loading (`~/.steez/installed.json`)
 - `skills/` — Skill directories (each contains SKILL.md + skill files)
 - `skills.json` — Manifest of all skills, categories, and profiles
-- `preamble/` — Managed preamble system (section templates + tier config)
 - `shared/steez/` — Shared runtime (bin scripts, browse binary)
 
 ## Commands
@@ -93,9 +92,6 @@ steez/                                    # repo root
 ├── skills/                               # skill directories
 │   ├── browse/SKILL.md                   # browse skill definition
 │   └── {name}/SKILL.md                   # 22 workflow skills
-├── preamble/                             # managed preamble system
-│   ├── sections/                         # section templates
-│   └── tiers.json                        # tier → sections mapping
 ├── cmd/steez/                            # Go CLI entrypoint
 ├── internal/                             # Go packages
 ├── ETHOS.md                              # builder philosophy
@@ -121,11 +117,9 @@ steez/                                    # repo root
 │   ├── agent-send -> ~/.steez/repo/shared/steez/bin/agent-send
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
-├── sessions/                             # PID-based session tracking (auto-cleaned 2h TTL)
 ├── analytics/
 │   ├── skill-usage.jsonl                 # skill invocations (written by PostToolUse hook)
 │   └── spec-review.jsonl                 # spec/review analytics
-├── skill-reports/                        # Skill Self-Report bug reports ({slug}.md)
 ├── projects/{slug}/
 │   ├── {branch}-reviews.jsonl            # review logs per branch
 │   └── *-design-*.md                     # design docs from /office-hours
@@ -133,12 +127,6 @@ steez/                                    # repo root
     ├── chromium-profile/                 # persistent Chromium state (login sessions, cache)
     └── sidebar-sessions/                 # sidebar daemon sessions
 ```
-
-## Preamble System
-
-Each skill has a managed preamble block between `<!-- BEGIN/END MANAGED PREAMBLE -->`
-markers. Edit preamble content directly in the skill's SKILL.md file. The preamble
-includes session tracking, analytics, voice, and completion protocol sections.
 
 ## Upstream Relationship
 
@@ -160,17 +148,6 @@ persist between blocks. Use prose to carry state ("the base branch detected
 in Step 0"), not shell variables. Express conditionals as numbered English
 steps, not nested `if/elif/else`. Don't hardcode branch names — detect
 dynamically via `gh pr view` or `gh repo view`.
-
-### Preamble pattern
-
-Every skill preamble sets these variables:
-
-| Variable | Source | Purpose |
-|----------|--------|---------|
-| `STEEZ_HOME` | `${STEEZ_HOME:-$HOME/.steez}` | Runtime state directory |
-| `_BRANCH` | `git branch --show-current` | Current branch |
-| `_PROACTIVE` | `~/.steez/bin/config get proactive` | Auto-suggest skills |
-| `REPO_MODE` | Hardcoded `solo` | Always solo |
 
 Skill analytics are tracked via a PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`),
 not inline telemetry. The hook fires mechanically on every Skill tool invocation and writes to
@@ -214,12 +191,10 @@ slug ← review-log (needs SLUG for file path)
      ← review-read (needs SLUG for file path)
 
 config ← review-read (reads skip_eng_review)
-         ← all skills (reads proactive in preamble)
 
 diff-scope — standalone, no dependencies
 
-steez-bd ← all skills (beads context in preamble, non-blocking)
-         ← office-hours (chain creation after design doc approved)
+steez-bd ← office-hours (chain creation after design doc approved)
          ← plan-ceo-review (handoff at completion)
          ← plan-eng-review (handoff at completion)
          ← ship (handoff at completion, emit-finding for issues)
@@ -253,7 +228,7 @@ builder philosophy.
 Use conventional commits: `feat:` | `fix:` | `refactor:` | `docs:` | `chore:`
 
 Prefer one commit per logical change. When you've made multiple changes
-(e.g., a preamble fix + a branding removal + a new skill), split them into
+(e.g., a bug fix + a branding removal + a new skill), split them into
 separate commits. Each commit should be independently understandable.
 
 ## Design References

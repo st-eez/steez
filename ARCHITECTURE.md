@@ -24,9 +24,6 @@ steez/                                # repo root
 │   └── updater/                      # git-based update logic
 ├── skills/                           # 22 skill directories, each {name}/SKILL.md
 ├── skills.json                       # manifest: skills + categories + profiles
-├── preamble/                         # managed preamble system
-│   ├── sections/                     # section templates
-│   └── tiers.json                    # tier → sections mapping
 ├── shared/steez/                     # shared runtime (deployed via symlinks)
 │   ├── bin/                          # 9 bash helper scripts
 │   │   ├── config                    # read/write ~/.steez/config
@@ -77,24 +74,14 @@ steez ships as a Go CLI (`cmd/steez/`) that manages a symlink-based install. Eac
 
 ## Why no templates
 
-gstack generates SKILL.md files from `.tmpl` templates via `gen-skill-docs.ts`. This makes sense for gstack — 29 skills with shared preambles and auto-generated command references from source code metadata. Template drift is a real risk at that scale.
+gstack generates SKILL.md files from `.tmpl` templates via `gen-skill-docs.ts`. This makes sense for gstack — 29 skills with shared sections and auto-generated command references from source code metadata. Template drift is a real risk at that scale.
 
 steez doesn't use templates. Each SKILL.md is hand-edited directly.
 
 **Why this works:**
 - **No build step.** Edit a SKILL.md, it's live immediately. No `bun run gen:skill-docs`, no stale generated output.
-- **22 skills is manageable.** The preamble pattern is ~30 lines. Updating 22 files manually takes 5 minutes with search-and-replace. At 50+ skills, this would break down.
 - **No template/generated drift.** gstack's template system solves a real problem — but it introduces its own: the generated SKILL.md can be stale if someone forgets to regenerate. steez has no generated files to go stale.
-
-**The tradeoff:** shared-section updates (preamble, voice, AskUserQuestion format) must be applied to all 22 files manually. This is acceptable friction for a single maintainer.
-
-## Why hardcoded solo
-
-gstack detects whether a repo is solo or collaborative based on contributor count and adapts behavior — review depth, PR format, communication style. steez hardcodes `REPO_MODE=solo` in every preamble.
-
-**Why:** This is personal tooling installed from a single user's checkout. There is no multi-user scenario. The detection logic is dead code, and dead code is a liability — it adds lines that Claude reads, costs tokens, and can confuse the agent about whether it should behave differently.
-
-**How to apply:** Every skill preamble sets `REPO_MODE=solo` as a constant. No conditional branches, no contributor detection.
+- **Shared behavior lives in the agent definition (ren.md/soul.md), not in skills.** Voice, AskUserQuestion format, completeness principles, and other cross-cutting concerns are defined once in the agent layer rather than duplicated across skills.
 
 ## Why local-only telemetry
 
@@ -124,24 +111,9 @@ Every SKILL.md follows the same structure:
 
 ```
 ┌─ YAML frontmatter ─────────────────────────┐
-│ name: {skill}                        │
+│ name: {skill}                              │
 │ description: ...                           │
 │ allowed-tools: [Bash, Read, ...]           │
-└────────────────────────────────────────────┘
-         │
-┌─ Preamble (bash block, run first) ─────────┐
-│ STEEZ_HOME, session tracking               │
-│ Branch detection, config read              │
-│ REPO_MODE=solo, local usage logging        │
-└────────────────────────────────────────────┘
-         │
-┌─ Behavioral sections (shared pattern) ─────┐
-│ PROACTIVE check, Voice identity            │
-│ AskUserQuestion format                     │
-│ Completeness Principle (Boil the Lake)     │
-│ Search Before Building (→ ETHOS.md)        │
-│ Skill Self-Report                          │
-│ STEEZ REVIEW REPORT                        │
 └────────────────────────────────────────────┘
          │
 ┌─ Functional phases (skill-specific) ───────┐
@@ -150,16 +122,7 @@ Every SKILL.md follows the same structure:
 └────────────────────────────────────────────┘
 ```
 
-### Preamble variables
-
-Every skill preamble sets these variables:
-
-| Variable | Source | Purpose |
-|----------|--------|---------|
-| `STEEZ_HOME` | `${STEEZ_HOME:-$HOME/.steez}` | Runtime state directory (override for testing) |
-| `_BRANCH` | `git branch --show-current` | Current branch |
-| `_PROACTIVE` | `config get proactive` | Auto-suggest skills |
-| `REPO_MODE` | Hardcoded `solo` | Always solo |
+Skills contain only their functional logic. Cross-cutting concerns (voice, AskUserQuestion format, completeness principles) live in the agent definition (ren.md/soul.md), not in skills.
 
 Skill analytics are tracked via a PostToolUse hook (`shared/steez/hooks/skill-analytics.sh`),
 not inline telemetry. The hook fires mechanically on every Skill tool invocation and writes to
@@ -190,7 +153,7 @@ Skills communicate through the filesystem, not through shared memory:
 
 ### Review Readiness Dashboard
 
-`review-read` outputs three sections that the Plan Status Footer instruction (injected via preamble) renders into plan files during plan mode:
+`review-read` outputs three sections used by review skills:
 
 ```
 {branch}-reviews.jsonl entries    ← review history
@@ -207,7 +170,6 @@ slug ← review-log (needs SLUG for file path)
      ← review-read (needs SLUG for file path)
 
 config ← review-read (reads skip_eng_review)
-             ← all skills (reads proactive in preamble)
 
 diff-scope — standalone, no dependencies
 ```
@@ -272,14 +234,14 @@ This means crashed sessions don't permanently block accounts. The next agent to 
 
 Skill errors are for the AI agent, not for humans. Every error message should be actionable — tell Claude what went wrong and what to do next. This principle is inherited from gstack's browse server (which rewrites Playwright errors through `wrapError()`) and applied to skill design:
 
-- If a config value is missing, the preamble falls back to a sensible default
+- If a config value is missing, fall back to a sensible default
 - If a design doc isn't found, the skill tells the agent to run `/office-hours` first
 - If a review log is empty, the Review Readiness Dashboard says "no reviews found" instead of erroring
 
 ## What's intentionally not here
 
 - **No template system.** 22 skills is manageable by hand. The build step complexity isn't justified. See "Why no templates" above.
-- **No multi-user support.** `REPO_MODE=solo` is hardcoded. No contributor detection, no collaborative review workflows.
+- **No multi-user support.** This is personal tooling. No contributor detection, no collaborative review workflows.
 - **No remote telemetry.** All analytics are local JSONL files. No Supabase, no network calls.
 - **No onboarding flow.** Config is pre-seeded. No first-run prompts, no opt-in gates.
 - **No self-updater.** steez is git-backed. `steez update` (or `git pull` in the source checkout) is the update mechanism — symlinks already point at the live tree.
@@ -292,11 +254,10 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 | Deployment | `git clone` + `./setup` | Go CLI installer (symlinks) |
 | Template system | `.tmpl` → `gen-skill-docs.ts` → `SKILL.md` | hand-edited SKILL.md |
 | Config file | `~/.gstack/config.yaml` | `~/.steez/config` (no extension) |
-| Repo mode | Detected per-repo | Hardcoded solo |
+| Shared behavior | Per-skill preamble (tiers + managed sections) | Agent definition (ren.md/soul.md) |
 | Telemetry | Local JSONL + opt-in Supabase sync | Local JSONL only |
 | Onboarding | First-run prompts | None (pre-seeded) |
-| Contributor Mode | Gated behind flag | Skill Self-Report (always on) |
-| Voice | Garry Tan / GStack identity | "Senior engineering partner — CTO-level operator" |
+| Voice | Garry Tan / GStack identity | Agent definition (soul.md) |
 | Skill count | 29 skills | 22 skills |
 | Update mechanism | `/gstack-upgrade` self-updater | `git pull` in source checkout (live via symlinks) |
 
@@ -305,26 +266,20 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 ### Adding a new skill
 
 1. Create `skills/{name}/SKILL.md` in the source repo
-2. Add `<!-- BEGIN MANAGED PREAMBLE -->` / `<!-- END MANAGED PREAMBLE -->` markers and a `preamble-tier` field to the YAML frontmatter
-3. Add an entry to `skills.json` (`name`, `category`, `description` ≤80 chars)
-4. Run `steez sync` to populate the managed preamble block from `preamble/sections/`
-5. Run `steez install {name}` to symlink it into `~/.claude/skills/`
+2. Add an entry to `skills.json` (`name`, `category`, `description` ≤80 chars)
+3. Run `steez install {name}` to symlink it into `~/.claude/skills/`
 
 ### Porting from gstack
 
 1. `mkdir -p skills/{name}` + `cp` the gstack `SKILL.md` into it
 2. Strip the `gstack-` prefix from the YAML frontmatter `name:` field (steez skills use bare names — `cso`, not `steez-cso`). Exception: when the bare name would shadow a built-in slash command via `/x` autocomplete (e.g., `/qa` shadows `/quit`), keep the `steez-` prefix to push it past the collision. `steez-qa` and `steez-qa-only` use this exception.
 3. Remove auto-generated comments (template artifact markers)
-4. Replace preamble with steez pattern (`STEEZ_HOME`, hardcoded `~/.steez/bin/` paths, `REPO_MODE=solo`, local JSONL)
-5. Strip onboarding conditionals (`LAKE_INTRO`, `TEL_PROMPTED`, `PROACTIVE_PROMPTED`) — keep only the `PROACTIVE` check
-6. Voice → "senior engineering partner — CTO-level operator"
-7. Delete YC pitch line
-8. Strip Repo Ownership section
-9. Contributor Mode → Skill Self-Report (always on, `~/.steez/skill-reports/`)
-10. Telemetry → local JSONL only (strip Supabase sync)
-11. SETUP browse → steez pattern (`B=~/.steez/bin/browse`)
-12. Plan Status Footer → `STEEZ REVIEW REPORT`
-13. Global replace all gstack paths/refs → steez
+4. Strip all gstack preamble/behavioral sections (voice, AskUserQuestion, completeness, self-report, completion status, plan status footer) — these live in the agent definition now
+5. Strip onboarding conditionals (`LAKE_INTRO`, `TEL_PROMPTED`, `PROACTIVE_PROMPTED`)
+6. Strip Repo Ownership section
+7. Telemetry → local JSONL only (strip Supabase sync)
+8. SETUP browse → steez pattern (`B=~/.steez/bin/browse`)
+9. Global replace all gstack paths/refs → steez
 14. Verify: `grep -c -i gstack SKILL.md` must return 0
 
 **Gotcha:** bash `||` and `&&` precedence — use curly braces `{ }` for fallback grouping (e.g., `cmd || { fallback; }`).
