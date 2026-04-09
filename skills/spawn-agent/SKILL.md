@@ -121,6 +121,7 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 - `--dir <name-or-path>`: working directory (resolved via zoxide cascade)
 - `--session <name>`: session name (for `new-session` only)
 - `--prompt <text>`: initial prompt to send after the agent starts
+- `--no-watch`: skip auto-registering a daemon watch on the spawned pane. Use when the spawner is retiring (e.g., handoff) and should not receive notifications.
 - `--target <pane>`: for `split-h`/`split-v`, split this pane instead of self. Use pane_id (`%N`, e.g., `%5`) or `session:window.pane` (e.g., `mac:5.1`). **Critical for multi-agent spawns.** Without this, splits always happen in the caller's window. When chaining spawns, always use the pane_id from the previous spawn's `TARGET=` output.
 
 **Examples:**

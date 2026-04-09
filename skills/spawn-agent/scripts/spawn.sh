@@ -29,6 +29,7 @@ SESSION_NAME=""
 PROMPT_TEXT=""
 SPLIT_TARGET=""
 MODEL="ren"
+NO_WATCH=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --prompt)  PROMPT_TEXT="$2"; shift 2 ;;
     --target)  SPLIT_TARGET="$2"; shift 2 ;;
     --model)   MODEL="$2"; shift 2 ;;
+    --no-watch) NO_WATCH=true; shift ;;
     *) echo "ERROR: unknown argument '$1'"; exit 1 ;;
   esac
 done
@@ -261,7 +263,7 @@ done
 # the single canonical entry point for all /spawn-agent calls, so wiring
 # the watch here covers every invocation deterministically rather than
 # relying on Claude to remember to run `agent-watch add` after every spawn.
-if [ -n "$PROMPT_TEXT" ]; then
+if [ -n "$PROMPT_TEXT" ] && [ "$NO_WATCH" = "false" ]; then
   PROMPT_SUMMARY=$(printf '%s' "$PROMPT_TEXT" | tr -d '\n\r' | cut -c1-40)
   if "$HOME/.steez/bin/agent-watch" add "$NEW_TARGET" \
       --spawner "$SELF_ID" \

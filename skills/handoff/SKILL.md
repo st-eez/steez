@@ -243,6 +243,7 @@ This is belt-and-suspenders for non-workshop in-flight beads: the spawn prompt a
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h \
   --model ren \
   --dir "WORK_DIR" \
+  --no-watch \
   --prompt "You are picking up work from a handoff. The previous session ended because its context window was approaching exhaustion.
 
 Your first two actions:
@@ -258,6 +259,7 @@ If there is no in-flight bead, use the single-bead variant instead:
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h \
   --model ren \
   --dir "WORK_DIR" \
+  --no-watch \
   --prompt "You are picking up work from a handoff. The previous session ended because its context window was approaching exhaustion, and it summarized its state into bead HANDOFF_BEAD_ID.
 
 Your first action: bd show HANDOFF_BEAD_ID
@@ -271,6 +273,7 @@ The bead contains the next action, decisions made, dead ends, files touched, ope
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h \
   --model ren \
   --dir "WORK_DIR" \
+  --no-watch \
   --prompt "You are picking up a workshop handoff. The previous session ended because its context window was approaching exhaustion.
 
 Your first two actions:
