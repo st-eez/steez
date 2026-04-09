@@ -106,21 +106,37 @@ try:
 except: pass" 2>/dev/null
 }
 
-read_detail() {
-  local pane="$1" state="$2"
-  case "$state" in
-    idle)
-      "$AGENT_HISTORY" "$pane" --last 2>/dev/null | python3 -c "
+# Read the agent's auto-generated turn title from agent-state. Claude
+# Code (and ren/prometheus, which are claude variants) writes a 1-3 word
+# summary of the current turn to the tmux pane title via OSC escape on
+# every turn. agent-state exposes this as the `name` field. Returns the
+# title with leading/trailing whitespace stripped, or empty if the title
+# is missing or matches one of the known generic placeholders that show
+# up before the first real turn renders.
+read_title() {
+  local pane="$1"
+  "$AGENT_STATE" "$pane" 2>/dev/null | python3 -c "
 import sys, json
 try:
     d = json.loads(sys.stdin.read())
-    r = (d.get('response') or '').strip()
-    r = ' '.join(r.split())  # collapse whitespace/newlines for single-line notification
-    print(r[:300])
+    n = (d.get('name') or '').strip()
+    if n.lower() in ('', 'claude code', 'untitled', 'unknown', 'claude', 'ren', 'prometheus', 'codex'):
+        n = ''
+    print(n)
 except Exception:
     pass
 " 2>/dev/null || true
-      ;;
+}
+
+# Read the pending question or tool-call for a blocked agent. Used only
+# for blocked:* transitions — for idle transitions we rely on the title
+# (set by read_title) instead of dumping a chunk of the response, which
+# is too noisy for a notification. The full response is always available
+# by switching to the pane; the notification is meant to be a ping, not
+# a transcript.
+read_blocked_detail() {
+  local pane="$1" state="$2"
+  case "$state" in
     blocked:question|blocked:permission)
       "$AGENT_HISTORY" "$pane" --blocked 2>/dev/null | python3 -c "
 import sys, json
@@ -136,7 +152,7 @@ try:
             inp_str = str(inp)
         q = f'{tool}: {inp_str}' if tool else inp_str
     q = ' '.join(q.split())
-    print(q[:300])
+    print(q[:200])
 except Exception:
     pass
 " 2>/dev/null || true
@@ -173,14 +189,58 @@ fire_notification() {
     id_part="$pane"
   fi
 
-  local msg
+  # Read the agent's auto-generated turn title at fire time. This is
+  # whatever Claude Code (or ren/prometheus, which are claude variants)
+  # set as the tmux pane title via OSC escape on the most recent turn —
+  # typically a 1-3 word summary like "Test complete" or "JWT migration
+  # done". The title is the agent's own headline of what it just did,
+  # which is more useful than dumping a truncated chunk of the response.
+  local title
+  title=$(read_title "$pane")
+
+  # Headline fallback chain: pane title -> registration label -> empty.
+  # We use the registration-time label only when the title is missing
+  # AND the label carries more information than just the agent name
+  # (the agent name is already shown separately in the parens).
+  local headline=""
+  if [[ -n "$title" ]]; then
+    headline=" \"$title\""
+  elif [[ -n "$label" ]] && [[ "$label" != "$pane" ]]; then
+    case "$label" in
+      ren|claude|codex|prometheus|agent) ;;  # bare agent name — already in parens
+      *) headline=" \"$label\"" ;;
+    esac
+  fi
+
+  # The agent type goes in the parens. Prefer the live read from the
+  # title call (we already have it parsed); if that failed, fall back to
+  # whatever the registration label was, then to "agent".
+  local agent_type
+  agent_type=$("$AGENT_STATE" "$pane" 2>/dev/null | python3 -c "
+import sys, json
+try: print(json.loads(sys.stdin.read()).get('agent',''))
+except: pass" 2>/dev/null)
+  agent_type="${agent_type:-${label%% *}}"
+  agent_type="${agent_type:-agent}"
+
+  # Build the message body. Idle = "I finished, glance over". Blocked =
+  # "I need an answer, here's what I'm blocked on". The detail field is
+  # only populated for blocked transitions (set by the main loop via
+  # read_blocked_detail) so the suffix is conditional.
+  local body
+  body=$(printf '[agent-watch] %s%s (%s) working -> %s' \
+    "$id_part" "$headline" "$agent_type" "$new_state")
+  if [[ -n "$detail" ]]; then
+    body=$(printf '%s. %s' "$body" "$detail")
+  fi
+
   # Two-newline prefix so the notification visually separates from any
   # text the user has in the composer when it arrives.
-  msg=$(printf '\n\n[agent-watch] %s (%s) working -> %s. %s' \
-    "$id_part" "$label" "$new_state" "$detail")
+  local msg
+  msg=$(printf '\n\n%s' "$body")
 
   if "$AGENT_DELIVER" "$spawner" "$msg" >/dev/null 2>&1; then
-    log_line INFO daemon "fired spawner=$spawner pane=$pane addr=${addr:-unknown} label=\"$label\" transition=working->$new_state"
+    log_line INFO daemon "fired spawner=$spawner pane=$pane addr=${addr:-unknown} title=\"${title:-}\" agent=$agent_type transition=working->$new_state"
     return 0
   fi
   local rc=$?
@@ -247,7 +307,13 @@ while true; do
     if [[ "$cur" != "$baseline" ]]; then
       case "$cur" in
         idle|blocked:question|blocked:permission|blocked:unknown)
-          detail=$(read_detail "$pane" "$cur")
+          # Detail is only populated for blocked transitions — for idle
+          # we use the pane title (read inside fire_notification) as the
+          # headline instead of dumping a chunk of the response.
+          detail=""
+          case "$cur" in
+            blocked:*) detail=$(read_blocked_detail "$pane" "$cur") ;;
+          esac
           fire_notification "$pane" "$spawner" "$label" "$cur" "$detail" || true
           # One-shot: remove the entry regardless of delivery success.
           # A failed delivery (dead spawner) is logged above and the
