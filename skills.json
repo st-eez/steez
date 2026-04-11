@@ -70,6 +70,9 @@
     },
     "skillify": {
       "description": "Capture a session's workflow as a reusable SKILL.md file"
+    },
+    "ren-update": {
+      "description": "Eval-gated workflow for ren.md/soul.md/hooks changes"
     }
   },
   "categories": {
@@ -96,7 +99,7 @@
     "meta": {
       "label": "Meta",
       "description": "Automation, AI consult, and skill improvement",
-      "skills": ["codex", "autoplan", "reminders", "loop-prompt", "sharpen-skill", "skillify"]
+      "skills": ["codex", "autoplan", "reminders", "loop-prompt", "sharpen-skill", "skillify", "ren-update"]
     }
   },
   "profiles": {
