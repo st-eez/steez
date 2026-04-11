@@ -30,7 +30,7 @@ Confirm the override flag exists on the runner — it is a prerequisite for step
 python3 evals/run.py --help | grep -- --system-prompt
 ```
 
-If the flag is missing, stop. The baseline mechanism does not work without it. Tell the user to ship ren-fyr (or its equivalent) first.
+If the flag is missing, stop. The baseline mechanism in step 4 does not work without it. Add the override flag to `evals/run.py` before proceeding — it is a prerequisite, not part of this workflow.
 
 ## Step 1: State the change in one sentence
 
