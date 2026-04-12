@@ -12,6 +12,12 @@
 #                  Enables multi-agent patterns: new-window first, then
 #                  split-h --target <returned-pane-id> to add agents in that window.
 #
+# --prompt <text>  Initial prompt delivered to the agent after it boots. Safe
+#                  for arbitrary content — backticks, $vars, quotes, and newlines
+#                  all survive to the agent unmolested. spawn.sh shell-escapes
+#                  the prompt before typing it into the target pane so the
+#                  target shell cannot re-interpret it.
+#
 # Output (structured, for model consumption):
 #   SELF=%0 TARGET=%5                  (on success — stable pane_ids)
 #   RESOLVED=/full/path METHOD=local   (if dir was resolved)
@@ -215,9 +221,22 @@ esac
 echo "MODEL=$MODEL"
 
 # --- Launch agent ---
+# Pass prompt as a CLI argument so the agent starts working immediately.
+# We shell-escape PROMPT_TEXT via printf '%q' because tmux send-keys types
+# the constructed string into the target pane, where the target shell
+# re-parses it as a command. Without escaping, backticks, $vars, $(...),
+# and inner quotes would be interpreted by the target shell and corrupt
+# the prompt before the agent ever sees it. printf '%q' produces a
+# shell-safe quoted form that round-trips cleanly in both bash and zsh
+# across every special-character class (tested: backticks, $VAR, ${VAR},
+# $(...), $((...)), single/double quotes, backslashes, newlines via
+# $'\n', glob metacharacters, multibyte Unicode).
+#
+# IMPORTANT: do NOT wrap $(printf '%q' "$PROMPT_TEXT") in extra quotes —
+# printf %q provides its own quoting, and extra quotes re-introduce the
+# same shell-interpretation bug they were meant to fix.
 if [ -n "$PROMPT_TEXT" ]; then
-  # Pass prompt as CLI argument — agent starts working immediately
-  tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD \"$PROMPT_TEXT\""
+  tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD $(printf '%q' "$PROMPT_TEXT")"
 else
   tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
 fi

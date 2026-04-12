@@ -78,6 +78,33 @@ Ren is the default agent. "Spawn an agent" without qualification means ren. Only
 - User says "to fix the tests", "to work on X", "have it do Y" → that's the prompt
 - User says nothing about a task → no prompt, just open the agent
 
+**Prompt delivery — one rule, zero exceptions.** Always deliver prompts via a single-quoted heredoc captured in a double-quoted command substitution:
+
+```bash
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --prompt "$(cat <<'REN_PROMPT'
+Start with `bd show ren-b74`.
+Don't walk the graph. Cost target: $0.02 per case.
+Use "quotes" and apostrophes freely.
+REN_PROMPT
+)"
+```
+
+Why this is the only rule you need: there are three layers of shell interpretation between your `Bash` tool call and the agent. Layer 1 is your invoking shell (the one running your `Bash` tool call). Layer 2 is `spawn.sh`'s variable expansion. Layer 3 is the target pane's shell re-parsing the command that `spawn.sh` types in. The single-quoted heredoc (`<<'REN_PROMPT'`) makes layer 1 deliver literal text with zero escape rules — backticks, `$vars`, `$(...)`, apostrophes, double quotes, newlines, glob metacharacters, multibyte Unicode all pass through. Layer 2 is textual substitution, so nothing is re-interpreted inside spawn.sh. Layer 3 is handled by spawn.sh's own `printf '%q'` escaping — verified end-to-end against bash 3.2 and zsh receivers.
+
+Do NOT use plain `--prompt "text"` when the text contains backticks, `$vars`, or `$(...)`. Your invoking shell will expand them at layer 1 before spawn.sh ever runs, and no downstream fix can recover the original intent. If the prompt is trivially simple (single-line, no special characters, no ambiguity), plain `--prompt` is fine — but defaulting to the heredoc pattern costs nothing and eliminates the footgun permanently.
+
+Pick any unique delimiter word that won't appear in your prose: `REN_PROMPT`, `BRIEF`, `EOF`, whatever. Stick with one convention.
+
+**When the prompt already lives in a file**, capture `cat`'s stdout the same way:
+
+```bash
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --prompt "$(cat /path/to/brief.txt)"
+```
+
+This is the same mechanism as the inline heredoc — `cat` writes the file's bytes to stdout, command substitution captures them verbatim, the outer `"..."` passes them as one argument to `--prompt`. Nothing in the file content is re-interpreted at any layer. Use this form when the prompt is too long to embed inline, or when it's reusable/version-controlled and lives as a file on disk. No separate `--prompt-file` flag — bash already gives you file-as-prompt for free.
+
+**One bead per spawn.** When briefing Ren (or any agent) to work beads from `bd ready`, brief exactly **one** bead per spawn. Name the bead ID in the prompt and tell the agent to stop after that single bead closes — do not hand it a queue. Each bead is a cold pickup; walking multiple beads in one session leaks context between them and defeats the atomic-bead discipline Ren enforces in its own system prompt. If the user has multiple beads to work, spawn multiple agents serially, one bead each.
+
 **Only use AskUserQuestion for things you genuinely cannot infer.** If the user said "spawn an agent beside me", proceed directly with zero questions.
 
 ## Layout Orchestration
@@ -120,7 +147,7 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 - `--model <name>`: which agent to launch. `ren` (default), `prometheus`, `claude`, or `codex`
 - `--dir <name-or-path>`: working directory (resolved via zoxide cascade)
 - `--session <name>`: session name (for `new-session` only)
-- `--prompt <text>`: initial prompt to send after the agent starts
+- `--prompt <text>`: initial prompt delivered to the agent after it boots. Deliver via single-quoted heredoc — see "Prompt delivery — one rule, zero exceptions" above.
 - `--no-watch`: skip auto-registering a daemon watch on the spawned pane. Use when the spawner is retiring (e.g., handoff) and should not receive notifications.
 - `--target <pane>`: for `split-h`/`split-v`, split this pane instead of self. Use pane_id (`%N`, e.g., `%5`) or `session:window.pane` (e.g., `mac:5.1`). **Critical for multi-agent spawns.** Without this, splits always happen in the caller's window. When chaining spawns, always use the pane_id from the previous spawn's `TARGET=` output.
 
@@ -137,6 +164,16 @@ Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles 
 
 # Split a REMOTE pane (not self), using TARGET from a previous spawn
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --target %5 --dir other-project --prompt "run linter"
+
+# Canonical heredoc form — use for anything with backticks, $vars, quotes, or multiple lines
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --prompt "$(cat <<'REN_PROMPT'
+Work bead ren-b74. Start with `bd show ren-b74`.
+Don't walk the graph. One bead, one session. Stop after this bead closes.
+REN_PROMPT
+)"
+
+# File-as-prompt form — use when the brief already lives on disk
+~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --prompt "$(cat /tmp/ren-b74-brief.txt)"
 ```
 
 **Multi-agent pattern** (2+ agents in a new window):
