@@ -222,21 +222,36 @@ echo "MODEL=$MODEL"
 
 # --- Launch agent ---
 # Pass prompt as a CLI argument so the agent starts working immediately.
-# We shell-escape PROMPT_TEXT via printf '%q' because tmux send-keys types
-# the constructed string into the target pane, where the target shell
-# re-parses it as a command. Without escaping, backticks, $vars, $(...),
-# and inner quotes would be interpreted by the target shell and corrupt
-# the prompt before the agent ever sees it. printf '%q' produces a
-# shell-safe quoted form that round-trips cleanly in both bash and zsh
-# across every special-character class (tested: backticks, $VAR, ${VAR},
-# $(...), $((...)), single/double quotes, backslashes, newlines via
-# $'\n', glob metacharacters, multibyte Unicode).
 #
-# IMPORTANT: do NOT wrap $(printf '%q' "$PROMPT_TEXT") in extra quotes —
-# printf %q provides its own quoting, and extra quotes re-introduce the
-# same shell-interpretation bug they were meant to fix.
+# Two things have to be right here:
+#
+# 1. Shell-escape via printf '%q'. The target pane's shell re-parses the
+#    command line we deliver, so raw backticks, $vars, $(...), and inner
+#    quotes would be interpreted by the target shell and corrupt the prompt
+#    before the agent ever sees it. printf '%q' produces a shell-safe
+#    quoted form that round-trips cleanly in both bash and zsh across every
+#    special-character class (backticks, $VAR, ${VAR}, $(...), $((...)),
+#    single/double quotes, backslashes, newlines via $'\n', glob
+#    metacharacters, multibyte Unicode). Do NOT wrap the result in extra
+#    quotes — printf %q provides its own quoting.
+#
+# 2. Deliver via tmux load-buffer + paste-buffer, not send-keys. send-keys
+#    types the constructed command as keystrokes through the target pane's
+#    TTY line buffer, which caps around 4 KB — multi-KB prompts (the whole
+#    point of passing a brief at spawn time) get truncated or stuck. The
+#    paste-buffer path writes the bytes into a tmux buffer and pastes them
+#    in one operation, bypassing the line-buffer limit entirely. This is
+#    the same mechanism agent-deliver uses for in-session messages to a
+#    running agent's composer; spawn.sh now uses it for the initial
+#    command line too. Enter is still delivered as a separate send-keys
+#    keystroke after a brief pause (the agent composer/shell both need
+#    the Enter as a discrete event, not bundled into the paste).
 if [ -n "$PROMPT_TEXT" ]; then
-  tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD $(printf '%q' "$PROMPT_TEXT")"
+  CMD_LINE="$LAUNCH_CMD $(printf '%q' "$PROMPT_TEXT")"
+  SPAWN_BUF="spawn-$$"
+  trap 'tmux delete-buffer -b "$SPAWN_BUF" 2>/dev/null || true' EXIT
+  printf '%s' "$CMD_LINE" | tmux load-buffer -b "$SPAWN_BUF" -
+  tmux paste-buffer -b "$SPAWN_BUF" -t "$NEW_TARGET" -d
 else
   tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
 fi
