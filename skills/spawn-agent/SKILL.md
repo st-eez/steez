@@ -89,7 +89,7 @@ REN_PROMPT
 )"
 ```
 
-Why this is the only rule you need: there are three layers of shell interpretation between your `Bash` tool call and the agent. Layer 1 is your invoking shell (the one running your `Bash` tool call). Layer 2 is `spawn.sh`'s variable expansion. Layer 3 is the target pane's shell re-parsing the command that `spawn.sh` delivers. The single-quoted heredoc (`<<'REN_PROMPT'`) makes layer 1 deliver literal text with zero escape rules — backticks, `$vars`, `$(...)`, apostrophes, double quotes, newlines, glob metacharacters, multibyte Unicode all pass through. Layer 2 is textual substitution, so nothing is re-interpreted inside spawn.sh. Layer 3 is handled by spawn.sh's own `printf '%q'` escaping — verified end-to-end against bash 3.2 and zsh receivers.
+Why this is the only rule you need: there are three layers of shell interpretation between your shell call and the agent. Layer 1 is your invoking shell. Layer 2 is `spawn.sh`'s variable expansion. Layer 3 is the target pane's shell re-parsing the command that `spawn.sh` delivers. The single-quoted heredoc (`<<'REN_PROMPT'`) makes layer 1 deliver literal text with zero escape rules — backticks, `$vars`, `$(...)`, apostrophes, double quotes, newlines, glob metacharacters, multibyte Unicode all pass through. Layer 2 is textual substitution, so nothing is re-interpreted inside spawn.sh. Layer 3 is handled by spawn.sh's own `printf '%q'` escaping — verified end-to-end against bash 3.2 and zsh receivers.
 
 Delivery mechanism: spawn.sh pastes the escaped command line into the target pane via `tmux load-buffer` + `paste-buffer` (the same primitive `agent-deliver` uses for in-session messages), not via `send-keys`. That matters for long prompts — `send-keys` types keystrokes through the target pane's TTY line buffer, which caps around 4 KB (empirically verified: works at ~3.5 KB, fails at ~3.8 KB), so multi-KB briefs would get truncated. The paste-buffer path writes the whole command in one operation and handles multi-KB briefs well past the old 4 KB ceiling. As a caller you don't need to care about the mechanism — briefs up to ~8 KB deliver cleanly in any pane geometry, and larger briefs (5-10 KB) are fine in practice for the wide panes typical of real usage. If you're passing an unusually large brief (10 KB+) into a narrow pane, confirm the agent actually booted before relying on the result.
 
@@ -103,11 +103,11 @@ Pick any unique delimiter word that won't appear in your prose: `REN_PROMPT`, `B
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh split-h --prompt "$(cat /path/to/brief.txt)"
 ```
 
-This is the same mechanism as the inline heredoc — `cat` writes the file's bytes to stdout, command substitution captures them verbatim, the outer `"..."` passes them as one argument to `--prompt`. Nothing in the file content is re-interpreted at any layer. Use this form when the prompt is too long to embed inline, or when it's reusable/version-controlled and lives as a file on disk. No separate `--prompt-file` flag — bash already gives you file-as-prompt for free.
+This is the same mechanism as the inline heredoc — `cat` writes the file's bytes to stdout, command substitution captures them verbatim, the outer `"..."` passes them as one argument to `--prompt`. Nothing in the file content is re-interpreted at any layer. Use this form when the prompt is too long to embed inline, or when it's reusable/version-controlled and lives as a file on disk. No separate `--prompt-file` flag — the shell already gives you file-as-prompt for free.
 
 **One bead per spawn.** When briefing Ren (or any agent) to work beads from `bd ready`, brief exactly **one** bead per spawn. Name the bead ID in the prompt and tell the agent to stop after that single bead closes — do not hand it a queue. Each bead is a cold pickup; walking multiple beads in one session leaks context between them and defeats the atomic-bead discipline Ren enforces in its own system prompt. If the user has multiple beads to work, spawn multiple agents serially, one bead each.
 
-**Only use AskUserQuestion for things you genuinely cannot infer.** If the user said "spawn an agent beside me", proceed directly with zero questions.
+**Only ask a question when you genuinely cannot infer the answer.** If the user said "spawn an agent beside me", proceed directly with zero questions.
 
 ## Layout Orchestration
 
@@ -137,7 +137,7 @@ Distribution: 4 agents = 2+2, 5 agents = 3+2, 6 agents = 3+3.
 
 ## Step 2: Spawn via helper script
 
-Run the `scripts/spawn.sh` script in a **single Bash call**. The script handles everything: tmux validation, pane ID detection, directory resolution (zoxide-backed), agent launch, and readiness polling.
+Run the `scripts/spawn.sh` script in a **single shell call**. The script handles everything: tmux validation, pane ID detection, directory resolution (zoxide-backed), agent launch, and readiness polling.
 
 ```bash
 ~/.steez/repo/skills/spawn-agent/scripts/spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>] [--model <name>]
@@ -209,6 +209,8 @@ The script outputs structured key=value lines:
 - `AMBIGUOUS=N` + `CANDIDATE=...` lines + exit 2. Multiple directory matches. Present the candidates to the user and re-run with the full path via `--dir /full/path/here`.
 - No `WORKING` or `IDLE` after 15 seconds. Agent failed to start or is stuck. Check the target pane manually with `agent-state`.
 
+**Codex hook requirement.** Reliable Codex working/idle detection depends on the Codex `SessionStart` hook setting `@transcript_path` in the pane. Install `shared/steez/hooks/codex-session-start.sh`, enable `codex_hooks = true` in `$HOME/.codex/config.toml`, and register the hook in `$HOME/.codex/hooks.json`. Without that, `agent-state` falls back to process and screen heuristics and gets less trustworthy.
+
 **Directory resolution** uses a tiered cascade:
 1. Literal paths (`/foo`, `~/foo`, `./foo`) → used directly
 2. `$PWD/$name` child check → one stat call, catches "this project's tests/"
@@ -226,9 +228,9 @@ After spawning, report:
 - How to check on it: `~/.steez/bin/agent-state <pane_id> --detail`
 - How to switch to it: `tmux select-window -t <target>` or `tmux switch-client -t <target>`
 
-The `agent-state` command returns structured JSON with the agent's current state (idle, working, blocked:question, blocked:permission). For a visual overview of all agents across windows, use `~/.steez/bin/agent-state --layout`.
+The `agent-state` command returns structured JSON with the agent's current state (idle, working, blocked:question, blocked:permission). For Codex panes, the state is only as good as the transcript hook wiring above. For a visual overview of all agents across windows, use `~/.steez/bin/agent-state --layout`.
 
-In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't use AskUserQuestion. Just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
+In the report, mention that `/loop` is available if they want periodic monitoring of the spawned agent. Don't stop to ask the user anything unless the code truly leaves no safe default. Just include it as a one-liner like "Let me know if you want to set up a /loop to monitor it."
 
 ## Post-Spawn Operations
 

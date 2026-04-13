@@ -34,7 +34,9 @@ Options:
 Setup (--detail):
   Both agents use a SessionStart hook that writes @session_id and
   @transcript_path to tmux pane variables. Without these, --detail falls
-  back to filesystem matching (Claude) or lsof (Codex).
+  back to filesystem matching (Claude) or lsof (Codex). For Codex, the
+  hook also makes working/idle detection more reliable because the state
+  parser can read the active transcript directly.
 
   Claude Code — add a SessionStart hook in ~/.claude/settings.json:
     {"type":"command","command":"$HOME/.claude/hooks/steez-session-start.sh"}
@@ -98,7 +100,7 @@ detect_agent() {
 }
 
 detect_state() {
-  local title="$1" tail_text="$2" agent="$3"
+  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}"
 
   local name prefix
   if [[ "$title" == *" "* ]]; then
@@ -123,7 +125,9 @@ detect_state() {
   elif (( prefix >= 0x2800 && prefix <= 0x28FF )); then
     state="working"
   elif [[ "$agent" == "codex" ]]; then
-    if [[ "$tail_text" == ›* ]] || [[ "$tail_text" == *$'\n›'* ]]; then
+    if state_from_transcript=$(codex_transcript_state "$transcript" 2>/dev/null); then
+      state="$state_from_transcript"
+    elif [[ "$tail_text" == ›* ]] || [[ "$tail_text" == *$'\n›'* ]]; then
       state="idle"
     else
       state="working"
@@ -133,6 +137,58 @@ detect_state() {
   fi
 
   echo "$state|$name"
+}
+
+codex_transcript_state() {
+  local transcript="$1"
+  [[ -n "$transcript" && -r "$transcript" ]] || return 1
+
+  python3 - "$transcript" <<'PYEOF'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+block_size = 8192
+
+with open(path, "rb") as fh:
+    fh.seek(0, os.SEEK_END)
+    pos = fh.tell()
+    carry = ""
+
+    while pos > 0:
+        read_size = min(block_size, pos)
+        pos -= read_size
+        fh.seek(pos)
+        chunk = fh.read(read_size).decode("utf-8", "ignore")
+        carry = chunk + carry
+        lines = carry.splitlines()
+
+        if pos > 0:
+            carry = lines[0] if lines else ""
+            lines = lines[1:]
+        else:
+            carry = ""
+
+        for line in reversed(lines):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            if obj.get("type") != "event_msg":
+                continue
+            payload_type = obj.get("payload", {}).get("type")
+            if payload_type == "task_complete":
+                print("idle")
+                raise SystemExit(0)
+            if payload_type == "user_message":
+                print("working")
+                raise SystemExit(0)
+
+raise SystemExit(1)
+PYEOF
 }
 
 find_transcript() {
@@ -213,8 +269,13 @@ check_pane() {
     tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
   fi
 
+  local transcript_for_state=""
+  if [[ "$include_detail" == "true" || "$agent" == "codex" ]]; then
+    transcript_for_state=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+  fi
+
   local result
-  result=$(detect_state "$pane_title" "$tail_text" "$agent")
+  result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript_for_state")
   local state="${result%%|*}"
   local name="${result#*|}"
 
@@ -222,7 +283,7 @@ check_pane() {
   if [[ "$include_detail" == "true" ]]; then
     session_id=$(tmux show-options -pv -t "$pane_id" @session_id 2>/dev/null) || true
     cwd="$pane_cwd"
-    transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+    transcript="$transcript_for_state"
   fi
 
   emit_json "$pane_id" "$agent" "$state" "$name" "$full_content" "$session_id" "$cwd" "$transcript"
@@ -240,8 +301,12 @@ render_layout() {
     if [[ "$agent" != "unknown" ]]; then
       local tail_text
       tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
+      local transcript=""
+      if [[ "$agent" == "codex" ]]; then
+        transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "" 2>/dev/null) || true
+      fi
       local result
-      result=$(detect_state "$pane_title" "$tail_text" "$agent")
+      result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript")
       state="${result%%|*}"
       name="${result#*|}"
     else
@@ -495,7 +560,11 @@ main() {
           [[ "$agent" == "unknown" ]] && continue
           local tail_text result state name
           tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
-          result=$(detect_state "$pane_title" "$tail_text" "$agent")
+          local transcript=""
+          if [[ "$agent" == "codex" ]]; then
+            transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+          fi
+          result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript")
           state="${result%%|*}"
           name="${result#*|}"
           printf '%s\t%s\t%s\t%s\n' "$pane_id" "$agent" "$state" "$name"
