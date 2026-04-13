@@ -310,18 +310,38 @@ export async function nsInspect(args: string[], bm: BrowserManager): Promise<NsC
  * Discover sublists from the DOM by finding sublist containers
  * (div[id$="_splits"], table.uir-machine-table), extract column
  * headers, then read line values via nlapi sublist APIs.
+ *
+ * Three-phase column resolution per sublist:
+ * 1. Parse header cells for labels, mandatory flags, and tentative IDs
+ * 2. Scan first data row to override tentative IDs with real field scriptids
+ * 3. Scan container for hidden field elements not visible in the table
  */
 async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
   const page = bm.getPage();
 
-  // Step 1: Discover sublist IDs and their column headers from the DOM
+  // Step 1: Discover sublist IDs and resolve real field IDs
   const discovered = await page.evaluate(() => {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const w = window as any;
     const results: Array<{
       id: string;
       columns: Array<{ id: string; label: string; mandatory: boolean }>;
     }> = [];
 
     const seen = new Set<string>();
+
+    /** Extract base field ID from a DOM element ID by stripping NS display suffixes */
+    function extractFieldId(elementId: string): string {
+      return elementId
+        .replace(/(?:val|text)\d+$/, '')         // itemval1 → item
+        .replace(/_(?:val|display|text)\d*$/, ''); // item_display → item
+    }
+
+    /** Check if an element ID is NS internal plumbing */
+    function isInternalId(id: string): boolean {
+      return !id || id.startsWith('inpt_') || id.startsWith('hddn_') ||
+        id.startsWith('custpage_') || id.includes('_fs_');
+    }
 
     /** Parse a header cell: strip trailing *, detect mandatory flag */
     function parseHeader(cell: Element): { id: string; label: string; mandatory: boolean } | null {
@@ -339,40 +359,115 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
       return { id, label, mandatory };
     }
 
+    /**
+     * Resolve columns for a sublist via three-phase discovery:
+     * 1. Header cells → labels, mandatory flags, tentative IDs (may be display aliases)
+     * 2. Data row elements → real field scriptids, matched by column position
+     * 3. Container scan → hidden fields not visible in the table
+     */
+    function resolveColumns(
+      container: Element,
+      sublistId: string,
+    ): Array<{ id: string; label: string; mandatory: boolean }> {
+      // Phase 1: Parse header cells with column-index tracking
+      const headerEntries: Array<{ cellIndex: number; id: string; label: string; mandatory: boolean }> = [];
+      const headerCells = container.querySelectorAll('td.listheadertd, th.listheadertd');
+      headerCells.forEach((cell, idx) => {
+        const parsed = parseHeader(cell);
+        if (parsed) headerEntries.push({ cellIndex: idx, ...parsed });
+      });
+
+      // Phase 2: Scan first data row to resolve real field scriptids
+      const table = container.querySelector('table') || container;
+      const rows = table.querySelectorAll('tr');
+      for (const row of rows) {
+        if (row.querySelector('.listheadertd, .listheadertextb')) continue;
+        const dataCells = row.querySelectorAll('td');
+        if (dataCells.length === 0) continue;
+
+        // Override header-derived IDs with real IDs from data row elements
+        for (const entry of headerEntries) {
+          const dataCell = dataCells[entry.cellIndex];
+          if (!dataCell) continue;
+          const el = dataCell.querySelector('[id]');
+          if (!el) continue;
+          const realId = extractFieldId(el.id);
+          if (realId && !isInternalId(realId)) {
+            entry.id = realId;
+          }
+        }
+
+        // Discover extra columns in data cells with no corresponding header
+        const headerPositions = new Set(headerEntries.map(h => h.cellIndex));
+        dataCells.forEach((cell, idx) => {
+          if (headerPositions.has(idx)) return;
+          const el = cell.querySelector('[id]');
+          if (!el) return;
+          const fieldId = extractFieldId(el.id);
+          if (isInternalId(fieldId)) return;
+          try {
+            const field = w.nlapiGetLineItemField?.(sublistId, fieldId, 1);
+            if (field) {
+              headerEntries.push({
+                cellIndex: idx,
+                id: fieldId,
+                label: field.getLabel?.() || fieldId,
+                mandatory: !!field.isMandatory?.(),
+              });
+            }
+          } catch {}
+        });
+
+        break; // first data row only
+      }
+
+      // Phase 3: Scan container for hidden field elements (custom columns not in the table)
+      const knownIds = new Set(headerEntries.map(e => e.id));
+      const allInputs = container.querySelectorAll('input[id], select[id], textarea[id]');
+      for (const el of allInputs) {
+        const fieldId = extractFieldId(el.id);
+        if (isInternalId(fieldId) || knownIds.has(fieldId)) continue;
+        try {
+          const field = w.nlapiGetLineItemField?.(sublistId, fieldId, 1);
+          if (field) {
+            knownIds.add(fieldId);
+            headerEntries.push({
+              cellIndex: -1,
+              id: fieldId,
+              label: field.getLabel?.() || fieldId,
+              mandatory: !!field.isMandatory?.(),
+            });
+          }
+        } catch {}
+      }
+
+      // Fallback: if 0 columns and no data rows, try input scan from first row
+      if (headerEntries.length === 0) {
+        const fallbackTable = container.querySelector('table');
+        if (fallbackTable) {
+          const dataRows = fallbackTable.querySelectorAll('tr:not(:has(.listheadertd))');
+          const firstRow = dataRows[0];
+          if (firstRow) {
+            const inputs = firstRow.querySelectorAll('input[id], select[id], textarea[id]');
+            for (const inp of inputs) {
+              const inputId = inp.id;
+              if (isInternalId(inputId)) continue;
+              headerEntries.push({ cellIndex: -1, id: inputId, label: inputId, mandatory: false });
+            }
+          }
+        }
+      }
+
+      return headerEntries.map(e => ({ id: e.id, label: e.label, mandatory: e.mandatory }));
+    }
+
     // Strategy A: div[id$="_splits"] containers (e.g. "item_splits" → sublist "item")
     const splitDivs = document.querySelectorAll('div[id$="_splits"]');
     for (const div of splitDivs) {
       const sublistId = div.id.replace(/_splits$/, '');
       if (seen.has(sublistId)) continue;
       seen.add(sublistId);
-
-      const columns: Array<{ id: string; label: string; mandatory: boolean }> = [];
-      const headerCells = div.querySelectorAll('td.listheadertd, th.listheadertd');
-      for (const cell of headerCells) {
-        const parsed = parseHeader(cell);
-        if (parsed) columns.push(parsed);
-      }
-
-      // Fallback: if 0 header columns found, try extracting field IDs from
-      // the first data row's input/select elements (their names contain the field ID)
-      if (columns.length === 0) {
-        const table = div.querySelector('table');
-        if (table) {
-          const dataRows = table.querySelectorAll('tr:not(:has(.listheadertd))');
-          const firstRow = dataRows[0];
-          if (firstRow) {
-            const inputs = firstRow.querySelectorAll('input[id], select[id], textarea[id]');
-            for (const inp of inputs) {
-              const inputId = inp.id;
-              if (inputId.startsWith('inpt_') || inputId.startsWith('hddn_') || inputId.startsWith('custpage_')) continue;
-              if (!inputId || inputId.includes('_fs_')) continue;
-              columns.push({ id: inputId, label: inputId, mandatory: false });
-            }
-          }
-        }
-      }
-
-      results.push({ id: sublistId, columns });
+      results.push({ id: sublistId, columns: resolveColumns(div, sublistId) });
     }
 
     // Strategy B: table.uir-machine-table not inside a _splits div
@@ -385,17 +480,10 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
       const sublistId = tableId.replace(/_[a-z]+$/, '') || `unknown_${seen.size}`;
       if (seen.has(sublistId)) continue;
       seen.add(sublistId);
-
-      const columns: Array<{ id: string; label: string; mandatory: boolean }> = [];
-      const headerCells = table.querySelectorAll('td.listheadertd, th.listheadertd');
-      for (const cell of headerCells) {
-        const parsed = parseHeader(cell);
-        if (parsed) columns.push(parsed);
-      }
-
-      results.push({ id: sublistId, columns });
+      results.push({ id: sublistId, columns: resolveColumns(table, sublistId) });
     }
 
+    /* eslint-enable @typescript-eslint/no-explicit-any */
     return results;
   });
 
