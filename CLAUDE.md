@@ -46,7 +46,7 @@ steez-bd resume                  # session brief: current bead, suggested skill,
 steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
-# Agent subsystem (see specs/ for full contracts)
+# Agent subsystem (see specs/README.md for contracts + synonym index)
 agent-state <pane>               # detect agent state in a tmux pane
 agent-state --all [--json]       # scan all panes for agents
 agent-send <pane> "msg"          # send message + auto-register watch
@@ -73,7 +73,7 @@ steez/                                    # repo root
 │   │   ├── review-log                    # append review entries
 │   │   ├── review-read                   # read review log + config
 │   │   ├── steez-bd                      # beads integration (keeps prefix)
-│   │   ├── agent-*                       # agent subsystem (6 scripts, see specs/)
+│   │   ├── agent-*                       # agent subsystem (6 scripts, see specs/README.md)
 │   │   └── upstream-diff                 # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
@@ -205,7 +205,7 @@ steez-bd ← office-hours (chain creation after design doc approved)
   Depends on: bd CLI (beads), jq (macOS system binary)
 
 agent-state, agent-history, agent-send, agent-deliver, agent-watch, agent-watch-daemon
-  See specs/ for contracts, dependency graph, and data flow
+  See specs/README.md for contracts, dependency graph, and data flow
 ```
 
 ## Search Before Building

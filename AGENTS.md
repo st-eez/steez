@@ -4,7 +4,7 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 
 ## Agent Subsystem
 
-Six scripts manage AI coding agents across tmux panes: state detection, message delivery, completion watching, and transcript parsing. See `specs/` for contracts, dependency graph, and data flow. Quick reference in CLAUDE.md Commands section.
+Six scripts manage AI coding agents across tmux panes: state detection, message delivery, completion watching, and transcript parsing. See `specs/README.md` for contracts, dependency graph, and data flow. Quick reference in CLAUDE.md Commands section.
 
 ## Quick Reference
 
