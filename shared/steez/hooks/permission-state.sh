@@ -34,7 +34,7 @@ if hook_event_name in {"PostToolUse", "PostToolUseFailure", "UserPromptSubmit", 
 
 blocked_state = ""
 if hook_event_name == "PermissionRequest":
-    blocked_state = "blocked:permission"
+    blocked_state = "blocked:question" if tool_name == "AskUserQuestion" else "blocked:permission"
 elif hook_event_name == "PreToolUse" and tool_name == "AskUserQuestion":
     blocked_state = "blocked:question"
 else:

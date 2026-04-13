@@ -67,11 +67,42 @@ is_ren() {
 }
 
 detect_agent() {
-  local shell_pid="$1"
-  [[ -z "$shell_pid" ]] && { echo "unknown"; return; }
+  local pane_pid="$1"
+  [[ -z "$pane_pid" ]] && { echo "unknown"; return; }
+
+  local proc_line proc_pid proc_cmd
+  proc_line=$(awk -v pid="$pane_pid" '$1 == pid { print; exit }' <<< "$_PS")
+  proc_pid=$(awk '{ print $1 }' <<< "$proc_line")
+  proc_cmd=$(awk '{ n=split($3, a, "/"); print a[n] }' <<< "$proc_line")
+
+  case "$proc_cmd" in
+    claude)
+      if is_prometheus "$proc_pid"; then echo "prometheus"
+      elif is_ren "$proc_pid"; then echo "ren"
+      else echo "claude"
+      fi
+      return
+      ;;
+    codex)
+      echo "codex"
+      return
+      ;;
+    node)
+      if [[ "$proc_line" == *codex* ]]; then
+        echo "codex"
+        return
+      elif [[ "$proc_line" == *claude* ]]; then
+        if is_prometheus "$proc_pid"; then echo "prometheus"
+        elif is_ren "$proc_pid"; then echo "ren"
+        else echo "claude"
+        fi
+        return
+      fi
+      ;;
+  esac
 
   local child_line
-  child_line=$(awk -v ppid="$shell_pid" '$2 == ppid { print; exit }' <<< "$_PS")
+  child_line=$(awk -v ppid="$pane_pid" '$2 == ppid { print; exit }' <<< "$_PS")
   [[ -z "$child_line" ]] && { echo "unknown"; return; }
 
   local child_pid child_cmd
@@ -178,6 +209,12 @@ def load_claude_sidecar(state_dir, transcript, session_id):
     sidecar_transcript = data.get("transcript_path") or ""
     if transcript and sidecar_transcript and sidecar_transcript != transcript:
         return None
+
+    requested_at = float(data.get("requested_at") or 0)
+    if transcript and requested_at and os.path.exists(transcript):
+        transcript_mtime = os.path.getmtime(transcript)
+        if transcript_mtime > requested_at + 0.5:
+            return None
 
     return data
 

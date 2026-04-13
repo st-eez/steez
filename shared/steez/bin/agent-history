@@ -94,6 +94,12 @@ sidecar_transcript = data.get("transcript_path") or ""
 if transcript and sidecar_transcript and sidecar_transcript != transcript:
     raise SystemExit(1)
 
+requested_at = float(data.get("requested_at") or 0)
+if transcript and requested_at and os.path.exists(transcript):
+    transcript_mtime = os.path.getmtime(transcript)
+    if transcript_mtime > requested_at + 0.5:
+        raise SystemExit(1)
+
 tool_input = data.get("tool_input", {})
 result = {
     "agent": agent,
