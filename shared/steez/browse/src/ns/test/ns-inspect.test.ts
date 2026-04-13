@@ -118,7 +118,7 @@ describe('ns inspect', () => {
     expect(output.ok).toBe(true);
     expect(output.display).toContain('Sublist: item');
     expect(output.display).toContain('2 lines');
-    expect(output.display).toContain('4 columns');
+    expect(output.display).toContain('5 columns');
 
     // Line values
     expect(output.display).toContain('1:');
@@ -150,7 +150,7 @@ describe('ns inspect', () => {
     expect(output.display).toContain('Must fill (1)');
     expect(output.display).toContain('item | Item | select | mandatory');
     // Can fill group with non-mandatory columns
-    expect(output.display).toContain('Can fill (3)');
+    expect(output.display).toContain('Can fill (4)');
     expect(output.display).toContain('quantity | Quantity');
     expect(output.display).toContain('rate | Rate');
     expect(output.display).toContain('amount | Amount');

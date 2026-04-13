@@ -113,4 +113,40 @@ describe('ns add-row', () => {
     expect(output.ok).toBe(true);
     expect(output.display).toContain('ADD-ROW OK');
   });
+
+  test('reports rejected entity-ref column on subsidiary mismatch', async () => {
+    // Simulate NS clearing a location value (subsidiary mismatch)
+    await bm.getPage().evaluate(() => {
+      (window as any).__rejectColumns = ['location'];
+    });
+
+    const output = await nsAddRow(['item', 'item=300', 'quantity=5', 'location=42'], bm);
+
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('REJECTED: location=42');
+    expect(output.display).toContain('cleared by NetSuite');
+    expect(output.display).toContain('subsidiary mismatch');
+    expect(output.display).toContain('ADD-ROW FAILED');
+
+    // Clean up
+    await bm.getPage().evaluate(() => {
+      (window as any).__rejectColumns = [];
+    });
+  });
+
+  test('reports multiple rejected columns', async () => {
+    await bm.getPage().evaluate(() => {
+      (window as any).__rejectColumns = ['location', 'department'];
+    });
+
+    const output = await nsAddRow(['item', 'item=300', 'location=42', 'department=10'], bm);
+
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('REJECTED: location=42');
+    expect(output.display).toContain('REJECTED: department=10');
+
+    await bm.getPage().evaluate(() => {
+      (window as any).__rejectColumns = [];
+    });
+  });
 });

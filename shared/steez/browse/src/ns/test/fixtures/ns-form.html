@@ -37,9 +37,22 @@
         <td class="listheadertd"><div class="listheadertextb">Quantity</div></td>
         <td class="listheadertd"><div class="listheadertextb">Rate</div></td>
         <td class="listheadertd"><div class="listheadertextb">Amount</div></td>
+        <td class="listheadertd"><div class="listheadertextb">Est. GP %</div></td>
       </tr>
     </thead>
+    <tbody>
+      <!-- Display row — element IDs use NS val{lineNum} convention -->
+      <tr class="uir-machine-row">
+        <td><span id="itemval1">Widget A</span></td>
+        <td><span id="quantityval1">5</span></td>
+        <td><span id="rateval1">10.00</span></td>
+        <td><span id="amountval1">50.00</span></td>
+        <td><span id="custcol_est_gp_pctval1">45</span></td>
+      </tr>
+    </tbody>
   </table>
+  <!-- Hidden custom column: exists on record but not in form's visible column set -->
+  <input type="hidden" id="custcol_margin" value="" />
 </div>
 
 <!-- Error display elements (hidden by default) -->
@@ -145,10 +158,12 @@ window.nlapiCancel = function() { return true; };
 // Mock sublist field metadata (for nlapiGetLineItemField)
 var SUBLIST_COLUMN_META = {
   item: {
-    item:     { type: 'select',   mandatory: true },
-    quantity: { type: 'integer',  mandatory: false },
-    rate:     { type: 'currency', mandatory: false },
-    amount:   { type: 'currency', mandatory: false },
+    item:     { type: 'select',   mandatory: true,  label: 'Item' },
+    quantity: { type: 'integer',  mandatory: false, label: 'Quantity' },
+    rate:     { type: 'currency', mandatory: false, label: 'Rate' },
+    amount:   { type: 'currency', mandatory: false, label: 'Amount' },
+    custcol_est_gp_pct: { type: 'percent', mandatory: false, label: 'Est. GP %' },
+    custcol_margin:     { type: 'currency', mandatory: false, label: 'Margin' },
   },
 };
 
@@ -158,7 +173,7 @@ window.nlapiGetLineItemField = function(sublistId, fieldId, line) {
   return {
     getType: function() { return meta.type; },
     isMandatory: function() { return meta.mandatory; },
-    getLabel: function() { return fieldId; },
+    getLabel: function() { return meta.label || fieldId; },
     isDisabled: function() { return false; },
   };
 };
@@ -166,8 +181,8 @@ window.nlapiGetLineItemField = function(sublistId, fieldId, line) {
 // Mock sublist APIs
 var SUBLIST_LINES = {
   item: [
-    { item: '100', quantity: '5', rate: '10.00', amount: '50.00' },
-    { item: '200', quantity: '3', rate: '20.00', amount: '60.00' },
+    { item: '100', quantity: '5', rate: '10.00', amount: '50.00', custcol_est_gp_pct: '45', custcol_margin: '40.00' },
+    { item: '200', quantity: '3', rate: '20.00', amount: '60.00', custcol_est_gp_pct: '30', custcol_margin: '48.00' },
   ],
 };
 var CURRENT_LINE = {};
@@ -188,7 +203,16 @@ window.nlapiSelectNewLineItem = function(sublistId) {
   CURRENT_LINE = { _sublist: sublistId };
 };
 
+// Columns that should be silently rejected (simulates subsidiary mismatch).
+// Set window.__rejectColumns = ['location'] to make location values get cleared.
+window.__rejectColumns = [];
+
 window.nlapiSetCurrentLineItemValue = function(sublistId, fieldId, value, fsw, ffc) {
+  // Simulate NS clearing the value for rejected entity-ref columns
+  if (window.__rejectColumns.indexOf(fieldId) !== -1) {
+    CURRENT_LINE[fieldId] = '';
+    return;
+  }
   CURRENT_LINE[fieldId] = value;
   // Simulate sourcing: setting 'item' cascades to rate/amount after delay
   if (fsw && fieldId === 'item') {
@@ -204,6 +228,15 @@ window.nlapiGetCurrentLineItemValue = function(sublistId, fieldId) {
 };
 
 window.nlapiCommitLineItem = function(sublistId) {
+  // Simulate NS rejecting commit when a rejected column was cleared
+  if (window.__rejectColumns.length > 0) {
+    for (var i = 0; i < window.__rejectColumns.length; i++) {
+      if (CURRENT_LINE[window.__rejectColumns[i]] === '') {
+        // NS silently refuses to commit — line count stays the same
+        return;
+      }
+    }
+  }
   if (!SUBLIST_LINES[sublistId]) SUBLIST_LINES[sublistId] = [];
   var line = Object.assign({}, CURRENT_LINE);
   delete line._sublist;

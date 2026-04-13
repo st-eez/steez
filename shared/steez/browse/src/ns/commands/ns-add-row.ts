@@ -27,12 +27,19 @@ import { withMutex, nsMutex } from '../mutex';
 
 // ─── Types ──────────────────────────────────────────────────
 
+interface RejectedColumn {
+  column: string;
+  requested: string;
+  actual: string | null;
+}
+
 interface NsAddRowData {
   sublist: string;
   lineNumber: number;
   values: Record<string, string | null>;
   settled: boolean;
   commitFailed: boolean;
+  rejectedColumns: RejectedColumn[];
   elapsedMs: number;
   dialogs: CapturedDialog[];
 }
@@ -185,6 +192,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
           // 2. Set each column value
           const allColumns = fieldValues.map(fv => fv.column);
           let overallSettled = true;
+          const rejectedColumns: RejectedColumn[] = [];
 
           for (const { column, value } of fieldValues) {
             // Set column value with firefieldchanged=true, synchronous=true.
@@ -199,6 +207,18 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
 
             // Re-acquire target — sourcing may have reloaded the NS iframe
             target = bm.getActiveFrameOrPage();
+
+            // Read back the value to detect silent rejection (e.g. subsidiary mismatch
+            // causes NS to clear entity-ref columns like location/department/class)
+            const actual = await target.evaluate(
+              ({ sub, col }: { sub: string; col: string }) => {
+                return (window as any).nlapiGetCurrentLineItemValue?.(sub, col) ?? null;
+              },
+              { sub: sublistId, col: column },
+            );
+            if (actual !== value && (!actual || actual === '')) {
+              rejectedColumns.push({ column, requested: value, actual });
+            }
 
             // Poll other columns for convergence — sourcing may update
             // dependent columns asynchronously
@@ -250,6 +270,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
               values: editLineValues,
               settled: false,
               commitFailed: true,
+              rejectedColumns,
             };
           }
 
@@ -266,7 +287,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
             { sub: sublistId, cols: allColumns, line: lineNumber },
           );
 
-          return { lineNumber, values: finalValues, settled: overallSettled, commitFailed: false };
+          return { lineNumber, values: finalValues, settled: overallSettled, commitFailed: false, rejectedColumns };
         },
         { accept: true },
       );
@@ -281,6 +302,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
           values: addResult.values,
           settled: addResult.settled,
           commitFailed: addResult.commitFailed,
+          rejectedColumns: addResult.rejectedColumns,
           elapsedMs: elapsed,
           dialogs,
         },
@@ -302,12 +324,23 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
 
   const d = result.data!;
   if (d.commitFailed) {
-    const lines = [`ADD-ROW FAILED | Sublist: ${d.sublist} | Commit did not add a new line (validation error or missing required column)`];
+    const lines: string[] = [];
+    if (d.rejectedColumns.length > 0) {
+      for (const rc of d.rejectedColumns) {
+        lines.push(`REJECTED: ${rc.column}=${rc.requested} — value cleared by NetSuite (likely subsidiary mismatch)`);
+      }
+    }
+    lines.push(`ADD-ROW FAILED | Sublist: ${d.sublist} | Commit did not add a new line (validation error or missing required column)`);
     const vals = Object.entries(d.values).map(([k, v]) => `${k}=${truncateValue(v)}`).join(', ');
     if (vals) lines.push(`Edit line values: ${vals}`);
     return { display: lines.join('\n'), ok: false };
   }
   const lines = [`ADD-ROW OK | Sublist: ${d.sublist} | Line: ${d.lineNumber} | Settled: ${d.settled ? 'yes' : 'no'}`];
+  if (d.rejectedColumns.length > 0) {
+    for (const rc of d.rejectedColumns) {
+      lines.push(`WARNING: ${rc.column}=${rc.requested} was cleared by NetSuite (likely subsidiary mismatch)`);
+    }
+  }
   const vals = Object.entries(d.values).map(([k, v]) => `${k}=${truncateValue(v)}`).join(', ');
   if (vals) lines.push(`Values: ${vals}`);
   if (d.dialogs.length > 0) {
