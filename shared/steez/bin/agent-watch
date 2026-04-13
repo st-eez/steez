@@ -44,7 +44,7 @@ STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}"
 WATCHES="$STATE_DIR/watches.jsonl"
 PIDFILE="$STATE_DIR/agent-watch-daemon.pid"
 DAEMON_BIN="$HOME/.steez/bin/agent-watch-daemon"
-AGENT_STATE="$HOME/.local/bin/agent-state"
+AGENT_STATE="$HOME/.steez/bin/agent-state"
 
 mkdir -p "$STATE_DIR"
 touch "$WATCHES"
