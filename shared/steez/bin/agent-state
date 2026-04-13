@@ -41,6 +41,9 @@ Setup (--detail):
   Claude Code — add a SessionStart hook in ~/.claude/settings.json:
     {"type":"command","command":"$HOME/.claude/hooks/steez-session-start.sh"}
   The hook reads session JSON from stdin and writes pane variables.
+  For artifact-first blocked detection, also register
+  ~/.claude/hooks/steez-permission-state.sh for PermissionRequest,
+  PreToolUse (AskUserQuestion), and the matching clear hooks.
 
   Codex CLI — enable hooks in ~/.codex/config.toml:
     [features]
@@ -119,7 +122,6 @@ PYEOF
 
 artifact_state() {
   local agent="$1" transcript="$2" session_id="${3:-}"
-  [[ -n "$transcript" && -r "$transcript" ]] || return 1
 
   python3 - "$agent" "$transcript" "$session_id" "$HOME/.steez/agent-state/claude" "$HOME/.codex/log/codex-tui.log" <<'PYEOF'
 import datetime as dt
@@ -146,11 +148,38 @@ def load_jsonl(path):
 def derive_session_id(path, value):
     if value:
         return value
+    if not path:
+        return ""
     base = os.path.basename(path)
     if base.endswith(".jsonl"):
         base = base[:-6]
     match = re.match(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$", base)
     return match.group(1) if match else base
+
+def load_claude_sidecar(state_dir, transcript, session_id):
+    sid = derive_session_id(transcript, session_id)
+    if not sid:
+        return None
+
+    state_path = os.path.join(state_dir, f"{sid}.json")
+    if not os.path.exists(state_path):
+        return None
+
+    try:
+        with open(state_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+
+    blocked_state = data.get("blocked_state") or ""
+    if blocked_state not in {"blocked:question", "blocked:permission"}:
+        return None
+
+    sidecar_transcript = data.get("transcript_path") or ""
+    if transcript and sidecar_transcript and sidecar_transcript != transcript:
+        return None
+
+    return data
 
 def claude_blocked_state(lines):
     resolved = set()
@@ -283,38 +312,33 @@ def codex_state(lines, thread_id):
 
     return ""
 
-lines = load_jsonl(transcript)
-if not lines:
-    raise SystemExit(1)
-
 if agent in {"claude", "ren", "prometheus"}:
+    sidecar = load_claude_sidecar(claude_state_dir, transcript, session_id)
+    if sidecar:
+        print(sidecar["blocked_state"])
+        raise SystemExit(0)
+
+    if not transcript or not os.path.exists(transcript):
+        raise SystemExit(1)
+
+    lines = load_jsonl(transcript)
+    if not lines:
+        raise SystemExit(1)
+
     state = claude_blocked_state(lines)
     if state == "blocked:question":
         print(state)
         raise SystemExit(0)
-    if state == "pending_tool":
-        sid = derive_session_id(transcript, session_id)
-        state_path = os.path.join(claude_state_dir, f"{sid}.json")
-        if os.path.exists(state_path):
-            try:
-                with open(state_path, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-            except Exception:
-                data = {}
-
-            requested_at = float(data.get("requested_at") or 0)
-            transcript_path = data.get("transcript_path") or ""
-            transcript_mtime = os.path.getmtime(transcript)
-            if (not transcript_path or transcript_path == transcript) and (not requested_at or transcript_mtime <= requested_at + 0.5):
-                print("blocked:permission")
-                raise SystemExit(0)
-
-        print("working")
-        raise SystemExit(0)
-
     raise SystemExit(1)
 
 if agent == "codex":
+    if not transcript or not os.path.exists(transcript):
+        raise SystemExit(1)
+
+    lines = load_jsonl(transcript)
+    if not lines:
+        raise SystemExit(1)
+
     state = codex_state(lines, derive_session_id(transcript, session_id))
     if state:
         print(state)
@@ -347,10 +371,10 @@ detect_state() {
     fi
   fi
 
-  if [[ -n "$blocked_from_screen" ]]; then
-    state="$blocked_from_screen"
-  elif state_from_artifacts=$(artifact_state "$agent" "$transcript" "$session_id" 2>/dev/null); then
+  if state_from_artifacts=$(artifact_state "$agent" "$transcript" "$session_id" 2>/dev/null); then
     state="$state_from_artifacts"
+  elif [[ -n "$blocked_from_screen" ]]; then
+    state="$blocked_from_screen"
   elif (( prefix >= 0x2800 && prefix <= 0x28FF )); then
     state="working"
   elif [[ "$agent" == "codex" && ( "$tail_text" == ›* || "$tail_text" == *$'\n›'* ) ]]; then

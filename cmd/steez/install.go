@@ -164,6 +164,7 @@ func cmdInstall(args []string) int {
 	}
 
 	hookSymlinks := []struct{ name, relPath string }{
+		{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
 		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
 		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
 	}

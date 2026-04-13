@@ -32,6 +32,84 @@ error_json() {
   exit 1
 }
 
+transcript_session_id() {
+  local transcript="${1:-}"
+  [[ -n "$transcript" && -f "$transcript" ]] || return 1
+
+  python3 - "$transcript" <<'PYEOF'
+import os
+import re
+import sys
+
+base = os.path.basename(sys.argv[1])
+if base.endswith(".jsonl"):
+    base = base[:-6]
+
+match = re.match(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$", base)
+print(match.group(1) if match else base)
+PYEOF
+}
+
+emit_claude_sidecar_blocked() {
+  local agent="$1" transcript="$2" session_id="${3:-}"
+
+  python3 - "$agent" "$transcript" "$session_id" "$HOME/.steez/agent-state/claude" <<'PYEOF'
+import json
+import os
+import re
+import sys
+
+agent, transcript, session_id, state_dir = sys.argv[1:]
+
+def derive_session_id(path, value):
+    if value:
+        return value
+    if not path:
+        return ""
+    base = os.path.basename(path)
+    if base.endswith(".jsonl"):
+        base = base[:-6]
+    match = re.match(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$", base)
+    return match.group(1) if match else base
+
+sid = derive_session_id(transcript, session_id)
+if not sid:
+    raise SystemExit(1)
+
+state_path = os.path.join(state_dir, f"{sid}.json")
+if not os.path.exists(state_path):
+    raise SystemExit(1)
+
+try:
+    with open(state_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    raise SystemExit(1)
+
+blocked_state = data.get("blocked_state") or ""
+if blocked_state not in {"blocked:question", "blocked:permission"}:
+    raise SystemExit(1)
+
+sidecar_transcript = data.get("transcript_path") or ""
+if transcript and sidecar_transcript and sidecar_transcript != transcript:
+    raise SystemExit(1)
+
+tool_input = data.get("tool_input", {})
+result = {
+    "agent": agent,
+    "tool": data.get("tool_name", ""),
+    "input": tool_input,
+}
+
+if blocked_state == "blocked:question" and isinstance(tool_input, dict):
+    questions = tool_input.get("questions", [])
+    if questions and isinstance(questions[0], dict):
+        result["question"] = questions[0].get("question", "")
+
+print(json.dumps(result, indent=2))
+PYEOF
+}
+
 # --- Argument parsing ---
 TARGET=""
 MODE=""
@@ -134,6 +212,7 @@ fi
 # --- Input resolution ---
 TRANSCRIPT=""
 DISPLAY_AGENT=""
+SESSION_ID=""
 FORMAT=""
 
 resolve_from_pane() {
@@ -142,6 +221,7 @@ resolve_from_pane() {
   detail=$("$HOME/.steez/bin/agent-state" "$pane" --detail 2>/dev/null) || error_json "pane $pane is not a recognized AI agent"
 
   DISPLAY_AGENT=$(printf '%s' "$detail" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))")
+  SESSION_ID=$(printf '%s' "$detail" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('detail',{}).get('session_id','') if d.get('detail') else '')")
   TRANSCRIPT=$(printf '%s' "$detail" | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('detail',{}).get('transcript_path','') if d.get('detail') else '')")
 
   [[ -n "$TRANSCRIPT" ]] || error_json "no transcript found for pane $pane"
@@ -158,6 +238,7 @@ else
   # Direct path — display name is best-effort from path prefix
   TRANSCRIPT="$TARGET"
   [[ -f "$TRANSCRIPT" ]] || error_json "file not found: $TRANSCRIPT"
+  SESSION_ID=$(transcript_session_id "$TRANSCRIPT" 2>/dev/null) || true
   if [[ "$TRANSCRIPT" == */.claude/* ]]; then
     DISPLAY_AGENT="claude"
   elif [[ "$TRANSCRIPT" == */.codex/* ]]; then
@@ -176,6 +257,13 @@ elif [[ "$TRANSCRIPT" == */.codex/* ]]; then
   FORMAT="codex"
 else
   error_json "cannot determine transcript format from path: $TRANSCRIPT"
+fi
+
+if [[ "$MODE" == "blocked" && "$FORMAT" == "claude" ]]; then
+  if sidecar_result=$(emit_claude_sidecar_blocked "$DISPLAY_AGENT" "$TRANSCRIPT" "$SESSION_ID" 2>/dev/null); then
+    printf '%s\n' "$sidecar_result"
+    exit 0
+  fi
 fi
 
 # --- Tail strategy: 500 lines, fallback to 2000 ---
@@ -328,21 +416,31 @@ def parse_claude():
         emit({'agent': agent, 'pairs': result})
 
     elif mode == 'blocked':
-        # Find the last assistant tool_use with no corresponding tool_result
-        # Walk backwards through assistant messages to find the last tool_use block
         resolved_tool_use_ids = set()
-        for obj in lines:
+        last_tool = None
+
+        for obj in reversed(lines):
             if obj.get('type') == 'user':
-                content = obj.get('message', {}).get('content', [])
+                if obj.get('isMeta') or obj.get('isSidechain'):
+                    continue
+                content = obj.get('message', {}).get('content')
+                if isinstance(content, str):
+                    break
                 if isinstance(content, list):
                     for b in content:
                         if isinstance(b, dict) and b.get('type') == 'tool_result':
-                            resolved_tool_use_ids.add(b.get('tool_use_id', ''))
+                            tool_use_id = b.get('tool_use_id', '')
+                            if tool_use_id:
+                                resolved_tool_use_ids.add(tool_use_id)
+                continue
 
-        # Find last unresolved tool_use
-        last_tool = None
-        for mid in reversed(list(assistant_groups.keys())):
-            blocks = assistant_groups[mid]
+            if obj.get('type') != 'assistant' or obj.get('isSidechain'):
+                continue
+
+            blocks = obj.get('message', {}).get('content', [])
+            if not isinstance(blocks, list):
+                continue
+
             for b in reversed(blocks):
                 if isinstance(b, dict) and b.get('type') == 'tool_use':
                     if b.get('id', '') not in resolved_tool_use_ids:
@@ -420,7 +518,6 @@ def parse_codex():
         emit({'agent': agent, 'pairs': result})
 
     elif mode == 'blocked':
-        # Find last function_call with no matching function_call_output
         resolved_call_ids = set()
         for obj in lines:
             if (obj.get('type') == 'response_item'
@@ -429,15 +526,36 @@ def parse_codex():
 
         last_call = None
         for obj in reversed(lines):
-            if (obj.get('type') == 'response_item'
-                and obj.get('payload', {}).get('type') == 'function_call'):
-                call_id = obj['payload'].get('call_id', '')
-                if call_id not in resolved_call_ids:
-                    last_call = obj['payload']
+            if obj.get('type') == 'event_msg':
+                payload_type = obj.get('payload', {}).get('type')
+                if payload_type in ('task_complete', 'user_message'):
                     break
+                continue
+
+            if obj.get('type') != 'response_item':
+                continue
+
+            payload = obj.get('payload', {})
+            payload_type = payload.get('type')
+            if payload_type == 'function_call':
+                call_id = payload.get('call_id', '')
+                if call_id not in resolved_call_ids:
+                    last_call = payload
+                    break
+            elif payload_type == 'custom_tool_call':
+                last_call = payload
+                break
 
         if not last_call:
             emit({'error': 'no pending tool use found'})
+            return
+
+        if last_call.get('type') == 'custom_tool_call':
+            emit({
+                'agent': agent,
+                'tool': last_call.get('name', ''),
+                'input': last_call.get('input', '')
+            })
             return
 
         # Parse arguments (may be JSON string)
@@ -448,11 +566,16 @@ def parse_codex():
             except:
                 pass
 
-        emit({
+        result = {
             'agent': agent,
             'tool': last_call.get('name', ''),
             'input': args
-        })
+        }
+        if last_call.get('name') == 'request_user_input':
+            questions = args.get('questions', []) if isinstance(args, dict) else []
+            if questions and isinstance(questions[0], dict):
+                result['question'] = questions[0].get('question', '')
+        emit(result)
 
 
 if parse_as == 'claude':

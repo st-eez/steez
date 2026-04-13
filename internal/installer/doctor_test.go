@@ -45,6 +45,16 @@ func setupDoctorHome(t *testing.T, repoPath string) string {
 		os.Symlink(filepath.Join(repoSymlink, bs.relPath), filepath.Join(binDir, bs.name))
 	}
 
+	hookDir := filepath.Join(home, ".claude", "hooks")
+	os.MkdirAll(hookDir, 0o755)
+	for _, hs := range []struct{ name, relPath string }{
+		{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
+		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
+		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
+	} {
+		os.Symlink(filepath.Join(repoSymlink, hs.relPath), filepath.Join(hookDir, hs.name))
+	}
+
 	return home
 }
 
@@ -57,14 +67,7 @@ func writeRegistry(t *testing.T, home string, reg *config.Registry) {
 func TestDoctor_AllPass(t *testing.T) {
 	tmp := t.TempDir()
 	repoPath := filepath.Join(tmp, "repo")
-	// Create shared runtime structure so bin symlinks resolve.
-	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
-	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history", "agent-send", "agent-deliver"} {
-		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
-	}
-	// Create browse binary so that symlink resolves.
-	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)
-	os.WriteFile(filepath.Join(repoPath, "shared", "steez", "browse", "dist", "browse"), []byte("fake"), 0o755)
+	createSharedRuntime(t, repoPath)
 
 	home := setupDoctorHome(t, repoPath)
 
@@ -196,6 +199,10 @@ func createSharedRuntime(t *testing.T, repoPath string) {
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
 	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history", "agent-send", "agent-deliver"} {
 		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
+	}
+	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "hooks"), 0o755)
+	for _, name := range []string{"permission-state.sh", "session-start.sh", "skill-analytics.sh"} {
+		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "hooks", name), []byte("#!/bin/sh"), 0o755)
 	}
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)
 	os.WriteFile(filepath.Join(repoPath, "shared", "steez", "browse", "dist", "browse"), []byte("fake"), 0o755)

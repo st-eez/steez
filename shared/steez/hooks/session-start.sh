@@ -8,5 +8,6 @@ if [ -n "$TMUX_PANE" ]; then
     tmux set-option -p -t "$TMUX_PANE" @session_id "$SID" 2>/dev/null
     TRANSCRIPT=$(printf '%s' "$INPUT" | grep -o '"transcript_path":"[^"]*"' | cut -d'"' -f4)
     tmux set-option -p -t "$TMUX_PANE" @transcript_path "$TRANSCRIPT" 2>/dev/null
+    rm -f "$HOME/.steez/agent-state/claude/$SID.json"
   fi
 fi

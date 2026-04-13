@@ -183,6 +183,7 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	os.MkdirAll(hookDir, 0o755)
 	for _, hs := range []struct{ name, relPath string }{
+		{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
 		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
 		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
 	} {

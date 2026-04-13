@@ -196,6 +196,7 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 func checkHookSymlinks(home string) []CheckResult {
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	expected := []string{
+		"steez-permission-state.sh",
 		"steez-skill-analytics.sh",
 		"steez-session-start.sh",
 	}
@@ -291,14 +292,14 @@ func checkRuntimeDirs(home string, fix bool) []CheckResult {
 			}
 		} else if err != nil {
 			results = append(results, CheckResult{
-				Name:   d.name,
-				Status: "fail",
+				Name:    d.name,
+				Status:  "fail",
 				Message: fmt.Sprintf("Error checking %s: %v", d.path, err),
 			})
 		} else if !info.IsDir() {
 			results = append(results, CheckResult{
-				Name:   d.name,
-				Status: "fail",
+				Name:    d.name,
+				Status:  "fail",
 				Message: fmt.Sprintf("%s exists but is not a directory", d.path),
 			})
 		} else {
@@ -336,8 +337,8 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 		isSym, resolved, err := IsSymlink(entry.Target)
 		if err != nil {
 			results = append(results, CheckResult{
-				Name:   entry.Name,
-				Status: "fail",
+				Name:    entry.Name,
+				Status:  "fail",
 				Message: fmt.Sprintf("Error checking %s: %v", entry.Target, err),
 			})
 			continue
@@ -369,8 +370,8 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 			if fix {
 				if rmErr := os.Remove(entry.Target); rmErr != nil {
 					results = append(results, CheckResult{
-						Name:   entry.Name,
-						Status: "fail",
+						Name:    entry.Name,
+						Status:  "fail",
 						Message: fmt.Sprintf("Dangling symlink → %s (could not remove: %v)", resolved, rmErr),
 					})
 				} else {
@@ -491,8 +492,8 @@ func checkBrowseBinary(repoPath string, reg *config.Registry) []CheckResult {
 	}
 	if err != nil {
 		return []CheckResult{{
-			Name:   "Browse binary",
-			Status: "fail",
+			Name:    "Browse binary",
+			Status:  "fail",
 			Message: fmt.Sprintf("Error checking browse binary: %v", err),
 		}}
 	}

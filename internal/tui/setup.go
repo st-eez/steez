@@ -16,7 +16,7 @@ import (
 type step int
 
 const (
-	stepSplash    step = iota
+	stepSplash step = iota
 	stepProfile
 	stepPicker
 	stepMigration
@@ -468,7 +468,9 @@ func (m *setupModel) runInstall() {
 		m.results = append(m.results, installResult{"~/.claude/hooks/", false, err.Error()})
 	} else {
 		hookSymlinks := []struct{ name, relPath string }{
+			{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
 			{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
+			{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
 		}
 		for _, hs := range hookSymlinks {
 			source := filepath.Join(repoSymlink, hs.relPath)
