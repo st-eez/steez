@@ -53,6 +53,10 @@ log_line() {
   printf '%s %s %s %s\n' "$(iso_ts)" "$level" "$component" "$event" >> "$LOG"
 }
 
+pane_exists() {
+  tmux display-message -t "$1" -p '#{pane_id}' >/dev/null 2>&1
+}
+
 # ---- Singleton enforcement ----
 if [[ -f "$PIDFILE" ]]; then
   old_pid=$(cat "$PIDFILE" 2>/dev/null || true)
@@ -284,11 +288,15 @@ while true; do
 
     if [[ -z "$cur" ]]; then
       # Transient failure (unparseable pane, window resize race, etc).
-      # Tolerate up to MAX_STATE_FAILURES consecutive failures before
-      # dropping the watch.
+      # Keep the watch alive while the pane still exists. A live pane can
+      # still be mid-turn even if agent-state fails transiently.
       FAIL_COUNTS[$pane]=$(( ${FAIL_COUNTS[$pane]:-0} + 1 ))
-      if (( FAIL_COUNTS[$pane] >= MAX_STATE_FAILURES )); then
-        log_line WARN daemon "gave up on pane $pane after ${FAIL_COUNTS[$pane]} failed state reads"
+      if pane_exists "$pane"; then
+        if (( FAIL_COUNTS[$pane] % MAX_STATE_FAILURES == 0 )); then
+          log_line WARN daemon "state read failed for live pane $pane ${FAIL_COUNTS[$pane]} times; retaining watch"
+        fi
+      else
+        log_line WARN daemon "dropping watch on missing pane $pane after ${FAIL_COUNTS[$pane]} failed state reads"
         remove_watch "$pane"
         unset "FAIL_COUNTS[$pane]"
       fi

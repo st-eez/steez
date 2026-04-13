@@ -52,13 +52,70 @@ func RunUpdate() error {
 		return fmt.Errorf("reading HEAD after pull: %w", err)
 	}
 
-	if oldHead == newHead {
+	updated := oldHead != newHead
+	if updated {
+		fmt.Printf("Updated %s..%s\n", oldHead[:8], newHead[:8])
+	} else {
 		fmt.Println("Already up to date.")
+	}
+
+	if err := refreshRuntimeAssets(repoPath); err != nil {
+		return err
+	}
+
+	// 5. Re-validate symlinks.
+	reg, err := config.LoadRegistry()
+	if err != nil {
+		return fmt.Errorf("loading registry: %w", err)
+	}
+
+	relinked := 0
+	for _, entry := range reg.Symlinks {
+		if err := installer.ValidateSymlink(entry.Target); err != nil {
+			// Try to re-create the symlink.
+			if err := installer.CreateSymlink(entry.Source, entry.Target, false, true); err != nil {
+				fmt.Fprintf(os.Stderr, "  warning: could not re-link %s: %v\n", entry.Name, err)
+			} else {
+				relinked++
+			}
+		}
+	}
+	if relinked > 0 {
+		fmt.Printf("Re-linked %d symlinks.\n", relinked)
+	}
+
+	// 6. Check if Go source changed — rebuild binary if so.
+	diff, _ := gitOutput(repoPath, "diff", "--name-only", oldHead, newHead)
+	if updated && containsGoChanges(diff) {
+		if err := rebuildBinary(repoPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: binary rebuild failed: %v\n", err)
+		}
+	}
+
+	// 7. Run doctor.
+	results, err := installer.RunDoctor(repoPath, false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: doctor failed: %v\n", err)
 		return nil
 	}
 
-	fmt.Printf("Updated %s..%s\n", oldHead[:8], newHead[:8])
+	passes, fails, warns := 0, 0, 0
+	for _, r := range results {
+		switch r.Status {
+		case "pass":
+			passes++
+		case "fail":
+			fails++
+		case "warn":
+			warns++
+		}
+	}
 
+	fmt.Printf("\nDoctor: %d passed, %d failed, %d warnings\n", passes, fails, warns)
+	return nil
+}
+
+func refreshRuntimeAssets(repoPath string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolving home directory: %w", err)
@@ -113,55 +170,6 @@ func RunUpdate() error {
 		}
 	}
 
-	// 5. Re-validate symlinks.
-	reg, err := config.LoadRegistry()
-	if err != nil {
-		return fmt.Errorf("loading registry: %w", err)
-	}
-
-	relinked := 0
-	for _, entry := range reg.Symlinks {
-		if err := installer.ValidateSymlink(entry.Target); err != nil {
-			// Try to re-create the symlink.
-			if err := installer.CreateSymlink(entry.Source, entry.Target, false, true); err != nil {
-				fmt.Fprintf(os.Stderr, "  warning: could not re-link %s: %v\n", entry.Name, err)
-			} else {
-				relinked++
-			}
-		}
-	}
-	if relinked > 0 {
-		fmt.Printf("Re-linked %d symlinks.\n", relinked)
-	}
-
-	// 6. Check if Go source changed — rebuild binary if so.
-	diff, _ := gitOutput(repoPath, "diff", "--name-only", oldHead, newHead)
-	if containsGoChanges(diff) {
-		if err := rebuildBinary(repoPath); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: binary rebuild failed: %v\n", err)
-		}
-	}
-
-	// 7. Run doctor.
-	results, err := installer.RunDoctor(repoPath, false)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: doctor failed: %v\n", err)
-		return nil
-	}
-
-	passes, fails, warns := 0, 0, 0
-	for _, r := range results {
-		switch r.Status {
-		case "pass":
-			passes++
-		case "fail":
-			fails++
-		case "warn":
-			warns++
-		}
-	}
-
-	fmt.Printf("\nDoctor: %d passed, %d failed, %d warnings\n", passes, fails, warns)
 	return nil
 }
 
