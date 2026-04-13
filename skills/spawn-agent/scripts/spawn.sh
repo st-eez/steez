@@ -215,9 +215,7 @@ case "$MODEL" in
   ren-codex)  LAUNCH_CMD="ren-codex" ;;
   ren)        LAUNCH_CMD="ren" ;;
   claude)     LAUNCH_CMD="claude --dangerously-skip-permissions" ;;
-  # Codex blocks request_user_input in Default mode unless this feature is
-  # enabled. agent-state's blocked:question detection depends on it.
-  codex)      LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox --enable default_mode_request_user_input" ;;
+  codex)      LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox" ;;
 esac
 
 echo "MODEL=$MODEL"
