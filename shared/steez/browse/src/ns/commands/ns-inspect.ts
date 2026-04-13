@@ -319,7 +319,6 @@ export async function nsInspect(args: string[], bm: BrowserManager): Promise<NsC
 async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
   const page = bm.getPage();
 
-  // Step 1: Discover sublist IDs and resolve real field IDs
   const discovered = await page.evaluate(() => {
     /* eslint-disable @typescript-eslint/no-explicit-any */
     const w = window as any;
@@ -487,7 +486,6 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
     return results;
   });
 
-  // Step 2: For each discovered sublist, read line counts and values via nlapi
   const sublists: NsSublistData[] = [];
 
   for (const sub of discovered) {
