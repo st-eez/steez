@@ -151,6 +151,7 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	os.MkdirAll(skillsDir, 0o755)
+	os.MkdirAll(filepath.Join(home, ".agents", "skills"), 0o755)
 	steezHome := filepath.Join(home, ".steez")
 	os.MkdirAll(filepath.Join(steezHome, "analytics"), 0o755)
 
@@ -194,13 +195,16 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 
 	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "spawn-agent")
-	target := filepath.Join(skillsDir, "spawn-agent")
-	CreateSymlink(source, target, false, false)
+	claudeTarget := filepath.Join(skillsDir, "spawn-agent")
+	codexTarget := filepath.Join(home, ".agents", "skills", "spawn-agent")
+	CreateSymlink(source, claudeTarget, false, false)
+	CreateSymlink(source, codexTarget, false, false)
 
 	// Write registry.
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "spawn-agent", Source: source, Target: target},
+			{Name: "spawn-agent", Scope: "claude-global", Source: source, Target: claudeTarget},
+			{Name: "spawn-agent", Scope: "codex-global", Source: source, Target: codexTarget},
 		},
 	}
 	data, _ := json.MarshalIndent(reg, "", "  ")

@@ -179,7 +179,7 @@ func (m setupModel) viewSplash() string {
 	b.WriteString("\n")
 	b.WriteString(m.styles.Title.Render("  steez"))
 	b.WriteString("\n\n")
-	b.WriteString("  Claude Code skill installer — symlinks workflow skills to ~/.claude/skills/\n\n")
+	b.WriteString("  AI skill installer — symlinks skills to Claude and Codex global paths\n\n")
 	b.WriteString(m.styles.Muted.Render(fmt.Sprintf("  v1.0.0  %s/%s  %s", runtime.GOOS, runtime.GOARCH, runtime.Version())))
 	b.WriteString("\n\n")
 	b.WriteString(m.styles.Footer.Render("  Press enter to continue"))
@@ -359,7 +359,8 @@ func (m setupModel) viewPreflight() string {
 	b.WriteString("\n\n")
 
 	home, _ := os.UserHomeDir()
-	b.WriteString(fmt.Sprintf("  Location:  %s\n", filepath.Join(home, ".claude", "skills")))
+	b.WriteString(fmt.Sprintf("  Claude:    %s\n", filepath.Join(home, ".claude", "skills")))
+	b.WriteString(fmt.Sprintf("  Codex:     %s\n", filepath.Join(home, ".agents", "skills")))
 	b.WriteString(fmt.Sprintf("  Runtime:   %s\n", filepath.Join(home, ".steez")))
 	b.WriteString(fmt.Sprintf("  Profile:   %s\n", m.profileChoice))
 	b.WriteString(fmt.Sprintf("  Skills:    %d\n", len(m.skillNames)))
@@ -403,9 +404,19 @@ func (m *setupModel) runInstall() {
 	}
 
 	skillsTarget := filepath.Join(home, ".claude", "skills")
+	codexSkillsTarget := filepath.Join(home, ".agents", "skills")
 
 	// Ensure skills directory.
 	os.MkdirAll(skillsTarget, 0o755)
+	for _, name := range m.skillNames {
+		if installsGloballyInCodex(name) {
+			if err := os.MkdirAll(codexSkillsTarget, 0o755); err != nil {
+				m.results = append(m.results, installResult{"~/.agents/skills/", false, err.Error()})
+				return
+			}
+			break
+		}
+	}
 
 	reg, _ := config.LoadRegistry()
 
@@ -496,8 +507,20 @@ func (m *setupModel) runInstall() {
 		if err := installer.CreateSymlink(source, target, false, true); err != nil {
 			m.results = append(m.results, installResult{name, false, err.Error()})
 		} else {
-			config.AddToRegistry(reg, name, source, target)
+			config.AddScopedToRegistry(reg, "claude-global", name, source, target)
 			m.results = append(m.results, installResult{name, true, ""})
+		}
+
+		if !installsGloballyInCodex(name) {
+			continue
+		}
+
+		codexTarget := filepath.Join(codexSkillsTarget, name)
+		if err := installer.CreateSymlink(source, codexTarget, false, true); err != nil {
+			m.results = append(m.results, installResult{"codex/" + name, false, err.Error()})
+		} else {
+			config.AddScopedToRegistry(reg, "codex-global", name, source, codexTarget)
+			m.results = append(m.results, installResult{"codex/" + name, true, ""})
 		}
 	}
 
@@ -572,6 +595,10 @@ func (m setupModel) viewInstall() string {
 	b.WriteString(m.styles.Footer.Render("  Press any key to exit"))
 	b.WriteString("\n")
 	return b.String()
+}
+
+func installsGloballyInCodex(name string) bool {
+	return name == "spawn-agent"
 }
 
 // --- Helpers ---

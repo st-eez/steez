@@ -71,6 +71,7 @@ func cmdInstall(args []string) int {
 	}
 
 	skillsTarget := filepath.Join(home, ".claude", "skills")
+	codexSkillsTarget := filepath.Join(home, ".agents", "skills")
 
 	// Ensure target directory exists (Case C: missing).
 	if migResult.State == installer.StateMissing {
@@ -202,6 +203,24 @@ func cmdInstall(args []string) int {
 		}
 	}
 
+	needsCodexSkillsDir := false
+	for _, name := range skillNames {
+		if installsGloballyInCodex(name) {
+			needsCodexSkillsDir = true
+			break
+		}
+	}
+	if needsCodexSkillsDir {
+		if *dryRun {
+			fmt.Printf("Would create directory: %s\n", codexSkillsTarget)
+		} else {
+			if err := os.MkdirAll(codexSkillsTarget, 0o755); err != nil {
+				fmt.Fprintf(os.Stderr, "error creating Codex skills directory: %v\n", err)
+				return 1
+			}
+		}
+	}
+
 	// Install each skill.
 	for _, name := range skillNames {
 		source := filepath.Join(repoPath, "skills", name)
@@ -219,7 +238,22 @@ func cmdInstall(args []string) int {
 			failed++
 		} else {
 			if !*dryRun {
-				config.AddToRegistry(reg, name, source, target)
+				config.AddScopedToRegistry(reg, "claude-global", name, source, target)
+			}
+			installed++
+		}
+
+		if !installsGloballyInCodex(name) {
+			continue
+		}
+
+		codexTarget := filepath.Join(codexSkillsTarget, name)
+		if err := installer.CreateSymlink(source, codexTarget, *dryRun, *force); err != nil {
+			fmt.Fprintf(os.Stderr, "  error: codex/%s: %v\n", name, err)
+			failed++
+		} else {
+			if !*dryRun {
+				config.AddScopedToRegistry(reg, "codex-global", name, source, codexTarget)
 			}
 			installed++
 		}
@@ -297,7 +331,12 @@ func cmdUninstall(args []string) int {
 
 	var toRemove []string
 	if *all {
+		seen := make(map[string]bool)
 		for _, s := range reg.Symlinks {
+			if seen[s.Name] {
+				continue
+			}
+			seen[s.Name] = true
 			toRemove = append(toRemove, s.Name)
 		}
 	} else {
@@ -313,22 +352,26 @@ func cmdUninstall(args []string) int {
 
 	removed := 0
 	for _, name := range toRemove {
-		// Find in registry.
-		var entry *config.RegisteredSymlink
-		for i := range reg.Symlinks {
-			if reg.Symlinks[i].Name == name {
-				entry = &reg.Symlinks[i]
-				break
+		var entries []config.RegisteredSymlink
+		for _, entry := range reg.Symlinks {
+			if entry.Name == name {
+				entries = append(entries, entry)
 			}
 		}
 
-		if entry == nil {
+		if len(entries) == 0 {
 			fmt.Fprintf(os.Stderr, "  %s: not in registry (skipped)\n", name)
 			continue
 		}
 
-		if err := installer.RemoveSymlink(entry.Target); err != nil {
-			fmt.Fprintf(os.Stderr, "  %s: %v\n", name, err)
+		failed := false
+		for _, entry := range entries {
+			if err := installer.RemoveSymlink(entry.Target); err != nil {
+				fmt.Fprintf(os.Stderr, "  %s (%s): %v\n", name, entry.Target, err)
+				failed = true
+			}
+		}
+		if failed {
 			continue
 		}
 
@@ -378,4 +421,8 @@ func resolveSkillArgs(m *installer.Manifest, args []string) ([]string, error) {
 	}
 
 	return skills, nil
+}
+
+func installsGloballyInCodex(name string) bool {
+	return name == "spawn-agent"
 }

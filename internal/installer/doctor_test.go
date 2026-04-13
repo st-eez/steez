@@ -16,6 +16,7 @@ func setupDoctorHome(t *testing.T, repoPath string) string {
 	// Create ~/.claude/skills/ as a real directory.
 	skillsDir := filepath.Join(home, ".claude", "skills")
 	os.MkdirAll(skillsDir, 0o755)
+	os.MkdirAll(filepath.Join(home, ".agents", "skills"), 0o755)
 
 	// Create ~/.steez/ with repo symlink, bin symlinks, and analytics.
 	steezDir := filepath.Join(home, ".steez")
@@ -74,12 +75,15 @@ func TestDoctor_AllPass(t *testing.T) {
 	// Create a valid skill symlink.
 	skillSource := filepath.Join(repoPath, "skills", "alpha")
 	os.MkdirAll(skillSource, 0o755)
-	skillTarget := filepath.Join(home, ".claude", "skills", "alpha")
-	os.Symlink(skillSource, skillTarget)
+	claudeTarget := filepath.Join(home, ".claude", "skills", "alpha")
+	codexTarget := filepath.Join(home, ".agents", "skills", "alpha")
+	os.Symlink(skillSource, claudeTarget)
+	os.Symlink(skillSource, codexTarget)
 
 	reg := &config.Registry{
 		Symlinks: []config.RegisteredSymlink{
-			{Name: "alpha", Source: skillSource, Target: skillTarget},
+			{Name: "alpha", Scope: "claude-global", Source: skillSource, Target: claudeTarget},
+			{Name: "alpha", Scope: "codex-global", Source: skillSource, Target: codexTarget},
 		},
 	}
 	writeRegistry(t, home, reg)

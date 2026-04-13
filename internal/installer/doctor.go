@@ -59,8 +59,8 @@ func RunDoctor(repoPath string, fix bool) ([]CheckResult, error) {
 	results = append(results, checkRegisteredSymlinks(reg, fix)...)
 
 	// 4. Non-registered steez symlinks.
-	skillsDir := filepath.Join(home, ".claude", "skills")
-	results = append(results, checkUnregisteredSymlinks(skillsDir, reg)...)
+	results = append(results, checkUnregisteredSymlinks(filepath.Join(home, ".claude", "skills"), reg)...)
+	results = append(results, checkUnregisteredSymlinks(filepath.Join(home, ".agents", "skills"), reg)...)
 
 	// 5. Browse binary (only if browse-dependent skills installed).
 	results = append(results, checkBrowseBinary(repoPath, reg)...)
@@ -334,10 +334,11 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 	var results []CheckResult
 
 	for _, entry := range reg.Symlinks {
+		displayName := registeredDisplayName(entry)
 		isSym, resolved, err := IsSymlink(entry.Target)
 		if err != nil {
 			results = append(results, CheckResult{
-				Name:    entry.Name,
+				Name:    displayName,
 				Status:  "fail",
 				Message: fmt.Sprintf("Error checking %s: %v", entry.Target, err),
 			})
@@ -348,7 +349,7 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 			// Missing symlink (removed manually).
 			if _, statErr := os.Stat(entry.Target); os.IsNotExist(statErr) {
 				results = append(results, CheckResult{
-					Name:    entry.Name,
+					Name:    displayName,
 					Status:  "warn",
 					Message: fmt.Sprintf("Missing symlink: %s", entry.Target),
 					FixCmd:  fmt.Sprintf("steez install %s", entry.Name),
@@ -356,7 +357,7 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 			} else {
 				// Exists as a real dir/file.
 				results = append(results, CheckResult{
-					Name:    entry.Name,
+					Name:    displayName,
 					Status:  "warn",
 					Message: fmt.Sprintf("Expected symlink but found real path: %s", entry.Target),
 				})
@@ -370,21 +371,21 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 			if fix {
 				if rmErr := os.Remove(entry.Target); rmErr != nil {
 					results = append(results, CheckResult{
-						Name:    entry.Name,
+						Name:    displayName,
 						Status:  "fail",
 						Message: fmt.Sprintf("Dangling symlink → %s (could not remove: %v)", resolved, rmErr),
 					})
 				} else {
-					config.RemoveFromRegistry(reg, entry.Name)
+					config.RemoveFromRegistryTarget(reg, entry.Target)
 					results = append(results, CheckResult{
-						Name:    entry.Name,
+						Name:    displayName,
 						Status:  "pass",
 						Message: fmt.Sprintf("Fixed: removed dangling symlink %s", entry.Target),
 					})
 				}
 			} else {
 				results = append(results, CheckResult{
-					Name:    entry.Name,
+					Name:    displayName,
 					Status:  "fail",
 					Message: fmt.Sprintf("Dangling symlink: %s → %s", entry.Target, resolved),
 					FixCmd:  "steez doctor --fix",
@@ -394,7 +395,7 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 		}
 
 		results = append(results, CheckResult{
-			Name:    entry.Name,
+			Name:    displayName,
 			Status:  "pass",
 			Message: fmt.Sprintf("%s → %s", entry.Target, resolved),
 		})
@@ -406,6 +407,13 @@ func checkRegisteredSymlinks(reg *config.Registry, fix bool) []CheckResult {
 	}
 
 	return results
+}
+
+func registeredDisplayName(entry config.RegisteredSymlink) string {
+	if entry.Scope == "" {
+		return entry.Name
+	}
+	return fmt.Sprintf("%s (%s)", entry.Name, entry.Scope)
 }
 
 func checkUnregisteredSymlinks(skillsDir string, reg *config.Registry) []CheckResult {

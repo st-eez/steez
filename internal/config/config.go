@@ -22,9 +22,10 @@ type Registry struct {
 
 // RegisteredSymlink records a single steez-managed symlink.
 type RegisteredSymlink struct {
-	Name   string `json:"name"`   // e.g. "office-hours"
-	Source string `json:"source"` // repo skill directory
-	Target string `json:"target"` // ~/.claude/skills/office-hours
+	Name   string `json:"name"`            // e.g. "office-hours"
+	Scope  string `json:"scope,omitempty"` // e.g. "claude-global", "codex-global"
+	Source string `json:"source"`          // repo skill directory
+	Target string `json:"target"`          // ~/.claude/skills/office-hours
 }
 
 // Dir returns the steez config directory (~/.steez/).
@@ -152,14 +153,21 @@ func SaveRegistry(reg *Registry) error {
 // AddToRegistry appends a symlink entry to the registry. If an entry with the
 // same name already exists, it is updated in place.
 func AddToRegistry(reg *Registry, name, source, target string) *Registry {
+	return AddScopedToRegistry(reg, "", name, source, target)
+}
+
+// AddScopedToRegistry appends a scoped symlink entry to the registry. If an
+// entry with the same scope+name or target already exists, it is updated.
+func AddScopedToRegistry(reg *Registry, scope, name, source, target string) *Registry {
 	for i, s := range reg.Symlinks {
-		if s.Name == name {
-			reg.Symlinks[i] = RegisteredSymlink{Name: name, Source: source, Target: target}
+		if (s.Scope == scope && s.Name == name) || s.Target == target {
+			reg.Symlinks[i] = RegisteredSymlink{Name: name, Scope: scope, Source: source, Target: target}
 			return reg
 		}
 	}
 	reg.Symlinks = append(reg.Symlinks, RegisteredSymlink{
 		Name:   name,
+		Scope:  scope,
 		Source: source,
 		Target: target,
 	})
@@ -167,13 +175,26 @@ func AddToRegistry(reg *Registry, name, source, target string) *Registry {
 }
 
 // RemoveFromRegistry removes a symlink entry by name. If the name is not found,
-// the registry is returned unchanged.
+// the registry is returned unchanged. It removes all entries for that skill.
 func RemoveFromRegistry(reg *Registry, name string) *Registry {
-	for i, s := range reg.Symlinks {
-		if s.Name == name {
-			reg.Symlinks = append(reg.Symlinks[:i], reg.Symlinks[i+1:]...)
-			return reg
+	filtered := reg.Symlinks[:0]
+	for _, s := range reg.Symlinks {
+		if s.Name != name {
+			filtered = append(filtered, s)
 		}
 	}
+	reg.Symlinks = filtered
+	return reg
+}
+
+// RemoveFromRegistryTarget removes a symlink entry by its target path.
+func RemoveFromRegistryTarget(reg *Registry, target string) *Registry {
+	filtered := reg.Symlinks[:0]
+	for _, s := range reg.Symlinks {
+		if s.Target != target {
+			filtered = append(filtered, s)
+		}
+	}
+	reg.Symlinks = filtered
 	return reg
 }

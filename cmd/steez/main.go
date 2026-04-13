@@ -54,7 +54,7 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Print(`steez — Claude Code skill installer
+	fmt.Print(`steez — AI skill installer
 
 Usage: steez <command> [flags] [args]
 

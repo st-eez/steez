@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/st-eez/steez/internal/config"
 	"github.com/st-eez/steez/internal/installer"
@@ -22,13 +23,13 @@ func cmdList(_ []string) int {
 		return 0
 	}
 
-	fmt.Printf("%-28s %-8s %s\n", "SKILL", "STATUS", "TARGET")
+	fmt.Printf("%-28s %-14s %-8s %s\n", "SKILL", "SCOPE", "STATUS", "TARGET")
 	for _, entry := range reg.Symlinks {
 		status := "valid"
 		if err := installer.ValidateSymlink(entry.Target); err != nil {
 			status = "broken"
 		}
-		fmt.Printf("%-28s %-8s %s\n", entry.Name, status, entry.Target)
+		fmt.Printf("%-28s %-14s %-8s %s\n", entry.Name, displayScope(entry.Scope, entry.Target), status, entry.Target)
 	}
 
 	fmt.Printf("\n%d skills installed.\n", len(reg.Symlinks))
@@ -80,15 +81,22 @@ func cmdInfo(args []string) int {
 	// Check installed status.
 	reg, _ := config.LoadRegistry()
 	installedStatus := "not installed"
+	hasValid := false
+	hasBroken := false
 	for _, s := range reg.Symlinks {
-		if s.Name == skill.Name {
-			if err := installer.ValidateSymlink(s.Target); err != nil {
-				installedStatus = "installed (broken symlink)"
-			} else {
-				installedStatus = "installed"
-			}
-			break
+		if s.Name != skill.Name {
+			continue
 		}
+		if err := installer.ValidateSymlink(s.Target); err != nil {
+			hasBroken = true
+		} else {
+			hasValid = true
+		}
+	}
+	if hasValid {
+		installedStatus = "installed"
+	} else if hasBroken {
+		installedStatus = "installed (broken symlink)"
 	}
 
 	fmt.Printf("Name:        %s\n", skill.Name)
@@ -102,4 +110,18 @@ func cmdInfo(args []string) int {
 	fmt.Printf("Status:      %s\n", installedStatus)
 
 	return 0
+}
+
+func displayScope(scope, target string) string {
+	if scope != "" {
+		return scope
+	}
+	switch {
+	case strings.Contains(target, string(filepath.Separator)+".claude"+string(filepath.Separator)+"skills"+string(filepath.Separator)):
+		return "claude-global"
+	case strings.Contains(target, string(filepath.Separator)+".agents"+string(filepath.Separator)+"skills"+string(filepath.Separator)):
+		return "codex-global"
+	default:
+		return "legacy"
+	}
 }
