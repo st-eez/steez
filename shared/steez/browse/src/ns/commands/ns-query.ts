@@ -16,6 +16,7 @@ import type { NsCommandOutput } from '../format';
 import { formatNsError } from '../format';
 import { guardNsApi, validationError } from '../errors';
 import { withMutex, nsMutex } from '../mutex';
+import { executeSuiteQL } from '../utils/suiteql';
 
 const MAX_ROWS = 200;
 
@@ -23,8 +24,6 @@ const MAX_ROWS = 200;
 const FORBIDDEN_KEYWORDS = /\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|MERGE|EXEC|EXECUTE|GRANT|REVOKE)\b/i;
 
 export async function nsQuery(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
-  const start = Date.now();
-
   // ── Build query string ────────────────────────────────────
   const sql = args.join(' ').trim();
   if (!sql) {
@@ -52,46 +51,10 @@ export async function nsQuery(args: string[], bm: BrowserManager): Promise<NsCom
       return { ok: false, error: formatNsError('ns query', apiErr) };
     }
 
-    // ── Execute via fetch on the page (uses session cookie) ───
+    // ── Execute via shared SuiteQL helper ─────────────────────
     const page = bm.getPage();
-
-    interface SuiteQLResponse {
-      error?: string;
-      status?: number;
-      items?: Record<string, unknown>[];
-      totalResults?: number;
-      hasMore?: boolean;
-    }
-
-    const response: SuiteQLResponse = await page.evaluate(
-      async ({ sql, limit }: { sql: string; limit: number }) => {
-        try {
-          const res = await fetch('/services/rest/query/v1/suiteql', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Prefer': 'transient',
-            },
-            body: JSON.stringify({ q: /\bFETCH\s+FIRST\b/i.test(sql) ? sql : sql + ` FETCH FIRST ${limit + 1} ROWS ONLY` }),
-          });
-
-          if (!res.ok) {
-            const text = await res.text().catch(() => `(body unreadable: ${res.statusText})`);
-            return { error: text || res.statusText, status: res.status };
-          }
-
-          const data = await res.json();
-          return {
-            items: data.items ?? [],
-            totalResults: data.totalResults ?? data.count ?? 0,
-            hasMore: data.hasMore ?? false,
-          };
-        } catch (err: any) {
-          return { error: err?.message ?? String(err) };
-        }
-      },
-      { sql, limit: MAX_ROWS },
-    );
+    const finalSql = /\bFETCH\s+FIRST\b/i.test(sql) ? sql : sql + ` FETCH FIRST ${MAX_ROWS + 1} ROWS ONLY`;
+    const response = await executeSuiteQL(page, finalSql);
 
     if (response.error) {
       return { ok: false, error: formatNsError('ns query', validationError(`SuiteQL error: ${response.error}`)) };
@@ -114,13 +77,7 @@ export async function nsQuery(args: string[], bm: BrowserManager): Promise<NsCom
     ? `QUERY OK | Rows: ${rows.length} shown of ${rows.length}+ total`
     : `QUERY OK | Rows: ${rows.length}`;
 
-  // Strip links:[] noise and emit NDJSON
-  const ndjsonLines = rows.map(row => {
-    const cleaned = Object.fromEntries(
-      Object.entries(row).filter(([k]) => k !== 'links'),
-    );
-    return JSON.stringify(cleaned);
-  });
+  const ndjsonLines = rows.map(row => JSON.stringify(row));
 
   return {
     display: [header, ...ndjsonLines].join('\n'),

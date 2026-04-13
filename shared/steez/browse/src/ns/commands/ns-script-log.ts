@@ -15,11 +15,13 @@ import type { NsCommandOutput } from '../format';
 import { formatNsError } from '../format';
 import { guardNsApi, validationError } from '../errors';
 import { withMutex, nsMutex } from '../mutex';
+import { executeSuiteQL } from '../utils/suiteql';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 200;
 
 const VALID_LEVELS = new Set(['DEBUG', 'AUDIT', 'ERROR', 'EMERGENCY', 'SYSTEM']);
+const VALID_SCRIPT_ID = /^[a-zA-Z0-9_]+$/;
 
 interface ParsedArgs {
   scriptId: string | null;
@@ -58,27 +60,19 @@ function buildQuery(scriptId: string, level: string | null, limit: number): stri
   return sql;
 }
 
-interface LogEntry {
-  date?: string;
-  level?: string;
-  detail?: string;
-  title?: string;
-}
-
-interface SuiteQLResponse {
-  error?: string;
-  status?: number;
-  items?: LogEntry[];
-  totalResults?: number;
-  hasMore?: boolean;
-}
-
 export async function nsScriptLog(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
   const { scriptId, level, limit } = parseArgs(args);
 
   if (!scriptId) {
     return {
       display: formatNsError('ns script-log', validationError('Missing script ID. Usage: ns script-log <scriptId> [--level DEBUG|AUDIT|ERROR|EMERGENCY|SYSTEM] [--limit N]')),
+      ok: false,
+    };
+  }
+
+  if (!VALID_SCRIPT_ID.test(scriptId)) {
+    return {
+      display: formatNsError('ns script-log', validationError(`Invalid script ID: ${scriptId}. Must match [a-zA-Z0-9_]+`)),
       ok: false,
     };
   }
@@ -91,7 +85,7 @@ export async function nsScriptLog(args: string[], bm: BrowserManager): Promise<N
   }
 
   type QueryResult =
-    | { ok: true; entries: LogEntry[]; truncated: boolean }
+    | { ok: true; entries: Record<string, unknown>[]; truncated: boolean }
     | { ok: false; error: string };
 
   const result = await withMutex(nsMutex, async (): Promise<QueryResult> => {
@@ -103,37 +97,13 @@ export async function nsScriptLog(args: string[], bm: BrowserManager): Promise<N
 
     const page = bm.getPage();
     const sql = buildQuery(scriptId, level, limit + 1);
-
-    const response: SuiteQLResponse = await page.evaluate(
-      async ({ sql }: { sql: string }) => {
-        try {
-          const res = await fetch('/services/rest/query/v1/suiteql', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Prefer': 'transient',
-            },
-            body: JSON.stringify({ q: sql }),
-          });
-
-          if (!res.ok) {
-            const text = await res.text().catch(() => `(body unreadable: ${res.statusText})`);
-            return { error: text || res.statusText, status: res.status };
-          }
-
-          return await res.json();
-        } catch (err: any) {
-          return { error: err?.message ?? String(err) };
-        }
-      },
-      { sql },
-    );
+    const response = await executeSuiteQL(page, sql);
 
     if (response.error) {
       return { ok: false, error: formatNsError('ns script-log', validationError(`SuiteQL error: ${response.error}`)) };
     }
 
-    const allEntries = (response.items ?? []) as LogEntry[];
+    const allEntries = response.items ?? [];
     const truncated = allEntries.length > limit;
     const entries = truncated ? allEntries.slice(0, limit) : allEntries;
 
@@ -158,12 +128,7 @@ export async function nsScriptLog(args: string[], bm: BrowserManager): Promise<N
     ? `SCRIPT-LOG OK | ${scriptId} | Entries: ${entries.length} shown of ${entries.length}+ total`
     : `SCRIPT-LOG OK | ${scriptId} | Entries: ${entries.length}`;
 
-  const lines = entries.map(e => {
-    const cleaned = Object.fromEntries(
-      Object.entries(e).filter(([k]) => k !== 'links'),
-    );
-    return JSON.stringify(cleaned);
-  });
+  const lines = entries.map(e => JSON.stringify(e));
 
   return {
     display: [header, ...lines].join('\n'),
