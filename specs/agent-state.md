@@ -1,0 +1,192 @@
+# agent-state
+
+**Path:** `shared/steez/bin/agent-state`
+
+Detects the type and current state of AI coding agents running in tmux panes. The primary state oracle for the entire agent subsystem — every other agent tool depends on it.
+
+## Interface
+
+```
+agent-state <pane> [--read] [--detail]
+agent-state --all [--read] [--detail] [--json]
+agent-state --layout
+```
+
+### Arguments
+
+| Arg | Description |
+|-----|-------------|
+| `<pane>` | Pane identifier (`%N` preferred, also `session:window.pane`) |
+
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--all` | Scan all tmux panes, emit table (default) or JSON array |
+| `--json` | With `--all`: JSON array output instead of table |
+| `--layout` | Visual box diagram showing pane splits and agent states |
+| `--read` | Include full scrollback content in output (forces JSON with `--all`) |
+| `--detail` | Include session metadata: `session_id`, `cwd`, `transcript_path` (forces JSON with `--all`) |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Pane not found or not a recognized AI agent |
+
+## Output Format
+
+### Single pane (default)
+
+JSON object:
+
+```json
+{
+  "pane": "%5",
+  "agent": "ren",
+  "state": "working",
+  "name": "JWT migration"
+}
+```
+
+With `--detail`, adds a `detail` object:
+
+```json
+{
+  "detail": {
+    "session_id": "abc123",
+    "cwd": "/Users/steve/project",
+    "transcript_path": "/Users/steve/.claude/projects/..."
+  }
+}
+```
+
+With `--read`, adds `content` (full scrollback text).
+
+### `--all` table (default)
+
+Tab-aligned columns: `PANE`, `AGENT`, `STATE`, `NAME`. Piped through `column -t`.
+
+### `--all --json`
+
+JSON array of the single-pane objects above.
+
+### `--layout`
+
+Unicode box-drawing diagram with pane positions, agents, and color-coded states. Green = working, yellow = blocked, dim = idle. Filters to windows containing at least one agent pane.
+
+## Agent Detection
+
+`detect_agent` identifies which agent runs in a pane by inspecting the process tree rooted at the pane's shell PID:
+
+1. Read the pane PID's command from a single `ps -eo pid,ppid,command` snapshot (captured once per invocation).
+2. Match the base command name: `claude` or `codex`.
+3. For `node` processes, check if the command line contains `codex` or `claude`.
+4. If the direct process is unrecognized, check the first child process with the same rules.
+5. Distinguish `ren` / `ren-codex` from plain `claude` / `codex` by checking `REN_SESSION=1` in the process environment (`ps -E`).
+
+Recognized agents: `ren`, `ren-codex`, `claude`, `codex`. Anything else returns `unknown` and is excluded from output.
+
+## State Detection
+
+`detect_state` determines the agent's current state using a layered strategy, from highest to lowest confidence:
+
+### Layer 1: Sidecar artifact (Claude/Ren only)
+
+Reads `~/.steez/agent-state/claude/{session_id}.json`, written by a PermissionRequest hook. Contains `blocked_state`, `tool_name`, `tool_input`, and `requested_at`. The sidecar is authoritative for `blocked:question` and `blocked:permission` because the hook fires at the exact moment the block occurs. Staleness guard: if the transcript's mtime is >0.5s after `requested_at`, the sidecar is ignored (the agent moved on).
+
+### Layer 2: Transcript parsing
+
+`artifact_state` reads the JSONL transcript and walks it backward:
+
+**Claude/Ren:** Forward pass collects resolved `tool_use_id`s from `tool_result` blocks. Backward pass checks:
+- `system` with subtype `turn_duration` or `stop_hook_summary` -> `idle`
+- `user` (non-meta, non-sidechain) -> `working`
+- `assistant` with `stop_reason: end_turn` -> `idle`
+- Unresolved `tool_use` named `AskUserQuestion` -> `blocked:question`
+- Any other unresolved `tool_use` -> `working`
+
+**Codex/Ren-Codex:** Forward pass collects resolved `call_id`s from `function_call_output` entries. Backward pass checks:
+- `event_msg` with `task_complete` -> `idle`
+- `event_msg` with `user_message` -> `working`
+- Unresolved `function_call` named `request_user_input` -> `blocked:question`
+- Unresolved `function_call` with `sandbox_permissions: require_escalated` -> `blocked:permission`
+- `custom_tool_call` + TUI log confirmation -> `blocked:permission`
+
+Codex has an additional `codex_waiting_for_approval` heuristic that tail-reads `~/.codex/log/codex-tui.log` looking for `ToolCall:` entries for the same `thread_id` followed by a `client: close` event (close is the most recent entry), with a 3-second age gate.
+
+### Layer 3: Screen scraping
+
+When the transcript is unavailable or returns `working`, the visible pane content (last 10 lines) is checked for UI-specific patterns:
+
+- `"Tab to amend"` / `"Do you want to proceed?"` / `"Do you want to overwrite"` -> `blocked:permission`
+- `"Enter to select"` + `"Chat about this"` -> `blocked:question`
+- `"Esc to cancel"` / `"esc to cancel"` -> `blocked:unknown`
+
+Screen-detected blocked states override transcript-reported `working` (the permission prompt hasn't been written to the transcript yet).
+
+### Layer 4: Title character heuristic
+
+The tmux pane title's first character is checked: Unicode Braille range (U+2800-U+28FF) indicates a spinner -> `working`.
+
+### Layer 5: Codex prompt detection
+
+For Codex agents, a leading `›` (U+203A, single right-pointing angle quotation mark) character in the pane content indicates the idle prompt -> `idle`. Otherwise -> `working`.
+
+### Layer 6: Default
+
+Claude/Ren default to `idle`. Codex/Ren-Codex default to `working`.
+
+## Pane Name
+
+The `name` field is extracted from the tmux pane title. If the title contains a space, everything after the first space is the name (the first character/word is a spinner or prefix). If no space, the full title is used. This is the agent's auto-generated turn summary.
+
+## Transcript Discovery
+
+`find_transcript` locates the JSONL transcript for a pane through a priority chain:
+
+1. **Pane variable:** `tmux show-options -pv @transcript_path` (set by SessionStart hook).
+2. **Claude filesystem match (agent type `claude` only, not `ren`):** `~/.claude/projects/{cwd-key}/` — most recently modified `.jsonl`. `ren` agents rely on the pane variable set by the SessionStart hook; the filesystem fallback does not fire for them.
+3. **Codex process handle:** Walk `shell -> node -> codex` in the process tree, then `lsof -p` to find the open `.jsonl` write handle.
+
+## Dependencies
+
+- `tmux` (pane inspection, capture, title, pid)
+- `ps` (process tree, environment)
+- `python3` (transcript parsing, layout rendering)
+- `jq` (JSON output assembly)
+- `lsof` (Codex transcript discovery)
+- `column` (table formatting)
+
+## State Files
+
+| Path | Purpose |
+|------|---------|
+| `~/.steez/agent-state/claude/{session_id}.json` | Sidecar state written by PermissionRequest hooks |
+
+## Integration Points
+
+- **agent-watch-daemon** calls `agent-state <pane>` every poll cycle to detect state transitions.
+- **agent-deliver** calls `agent-state <pane>` to validate the target is a recognized agent before delivery.
+- **agent-send** inherits agent-deliver's validation.
+- **agent-history** calls `agent-state <pane> --detail` to resolve transcript paths.
+- **agent-watch** calls `agent-state <pane>` to infer the label for new watch registrations.
+- **spawn.sh** uses `agent-state` for post-boot state checks.
+- **spawn-agent SKILL.md** references all `agent-state` modes for post-spawn monitoring.
+
+## Behavioral Contracts
+
+1. A single `ps` snapshot is taken per invocation and reused for all panes (`_init` / `_PS`). No TOCTOU between agent detection and state detection within a single call.
+2. `--all` excludes `unknown` agents — only recognized AI agents appear.
+3. `--layout` filters to windows containing at least one agent pane.
+4. Sidecar state is preferred over transcript state when both exist and the sidecar is fresh.
+5. Screen-detected blocked states override transcript-reported `working`, but never override sidecar or transcript-reported terminal states (`idle`, `blocked:*`).
+6. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
+
+## Error Handling
+
+- Missing pane: `error: pane '<pane>' not found` to stderr, exit 1.
+- Non-agent pane: `error: pane '<pane>' is not a recognized AI agent` to stderr, exit 1.
+- Transcript not found: state detection falls back to screen scraping and heuristics.
+- Python parse failures: caught with `2>/dev/null`, falls back to next detection layer.
