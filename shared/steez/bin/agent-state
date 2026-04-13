@@ -254,6 +254,27 @@ def claude_blocked_state(lines):
 
     return ""
 
+def parse_codex_arguments(raw):
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+def codex_function_call_state(payload):
+    if payload.get("name") == "request_user_input":
+        return "blocked:question"
+
+    arguments = parse_codex_arguments(payload.get("arguments"))
+    if arguments.get("sandbox_permissions") == "require_escalated":
+        return "blocked:permission"
+
+    return "working"
+
 def codex_waiting_for_approval(thread_id, log_path):
     if not thread_id or not os.path.exists(log_path):
         return False
@@ -340,9 +361,7 @@ def codex_state(lines, thread_id):
             call_id = payload.get("call_id")
             if call_id and call_id in resolved:
                 continue
-            if payload.get("name") == "request_user_input":
-                return "blocked:question"
-            return "working"
+            return codex_function_call_state(payload)
 
         if payload_type == "custom_tool_call":
             return "blocked:permission" if codex_waiting_for_approval(thread_id, codex_log) else "working"
