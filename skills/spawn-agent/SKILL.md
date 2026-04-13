@@ -198,9 +198,9 @@ The script outputs structured key=value lines:
 - `RESOLVED=/full/path METHOD=zoxide`: directory was resolved (method: literal, local, zoxide, or find)
 - `SELF=%0 TARGET=%5`: stable pane IDs (never shift when panes are killed or moved)
 - `MODEL=ren`: which agent was launched
-- `PROMPT_SENT`: prompt was passed as a CLI argument at launch
+- `PROMPT_SENT`: the initial prompt was delivered after the fixed 5-second boot wait
 - `WORKING`: agent launched and is actively processing the prompt
-- `IDLE`: agent launched and is waiting for input (no prompt was sent, or it finished fast)
+- `IDLE`: agent launched and is waiting for input (only emitted when no prompt was sent)
 - `WATCHED=%5 SPAWNER=%0 BASELINE=working`: a background watch was registered so the spawner pane gets a notification when the agent finishes the initial prompt (only emitted when `--prompt` was passed)
 
 **Error handling:**
@@ -248,11 +248,11 @@ The script wraps the chat-pane footgun (Enter must arrive as a separate keystrok
 
 This is pure fire-and-forget. The script returns as soon as the message is submitted. It does not wait, does not poll, does not read the response. If you want to know what the agent did, read separately on your own clock using the sections below.
 
-The pane argument accepts a pane id (`%N`, preferred) or `session:window.pane`. The pane must be a recognized AI agent (claude or codex); otherwise the script exits with code 2.
+The pane argument accepts a pane id (`%N`, preferred) or `session:window.pane`. The pane must be a recognized AI agent (ren, prometheus, claude, or codex); otherwise the script exits with code 2.
 
 **Auto-watch on delivery.** Every successful `agent-send` call also registers a background watch via `agent-watch add` with `baseline=working`. When the watched pane finishes the turn — idle, blocked on a question, blocked on a permission prompt — a notification is delivered back into your pane by the `agent-watch-daemon` so the orchestrator learns about the transition without polling.
 
-You do not need to call `agent-watch` yourself for messages sent via `agent-send`. You also do not need to call it for the initial prompt passed to `scripts/spawn.sh --prompt` — that is wired into the script directly and emits a `WATCHED=...` line on success. The two entry points exist because they cover different delivery paths: `spawn.sh --prompt` launches the agent with the prompt as a CLI argument (bypassing `agent-send`), while `agent-send` is used for every subsequent message.
+You do not need to call `agent-watch` yourself for messages sent via `agent-send`. You also do not need to call it for the initial prompt passed to `scripts/spawn.sh --prompt` — `spawn.sh` now launches the agent bare, waits 5 seconds, then routes the initial prompt through `agent-send`, preserving `--no-watch` and still emitting `WATCHED=...` on success.
 
 **Do not** call `agent-watch add` from code that also calls `agent-send` — that would double-register and fire two notifications. The auto-registration inside `agent-send` is the single source of truth for message-driven watches.
 
