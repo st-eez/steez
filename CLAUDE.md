@@ -46,11 +46,13 @@ steez-bd resume                  # session brief: current bead, suggested skill,
 steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
-agent-state <pane>               # detect AI agent state in a tmux pane
-agent-state --all [--json]       # scan all panes for AI agents (table by default)
-agent-history <pane>             # parse structured transcript from tmux pane
-agent-history --all              # parse transcripts from all agent panes
-agent-send <pane> "msg"          # send a message to a ren-codex/claude/codex pane (escape-safe + delayed Enter)
+# Agent subsystem (see specs/ for full contracts)
+agent-state <pane>               # detect agent state in a tmux pane
+agent-state --all [--json]       # scan all panes for agents
+agent-send <pane> "msg"          # send message + auto-register watch
+agent-history <pane>             # parse structured transcript
+agent-watch list|add|rm|check    # manage completion watches
+agent-watch-daemon               # background poll loop (managed by agent-watch)
 upstream-diff <skill>            # diff a steez skill against gstack upstream
 upstream-diff --all              # show divergence summary for all skills
 ```
@@ -64,16 +66,14 @@ network calls, no credentials.
 ```
 steez/                                    # repo root
 ├── shared/steez/                         # shared runtime
-│   ├── bin/                              # 10 bash helper scripts
+│   ├── bin/                              # 13 bash helper scripts
 │   │   ├── config                        # read/write ~/.steez/config
 │   │   ├── slug                          # git remote → owner-repo slug
 │   │   ├── diff-scope                    # categorize diff scopes
 │   │   ├── review-log                    # append review entries
 │   │   ├── review-read                   # read review log + config
 │   │   ├── steez-bd                      # beads integration (keeps prefix)
-│   │   ├── agent-state                   # detect AI agent state in tmux panes
-│   │   ├── agent-history                 # parse structured transcript from tmux pane
-│   │   ├── agent-send                    # send messages to claude/codex panes (escape-safe)
+│   │   ├── agent-*                       # agent subsystem (6 scripts, see specs/)
 │   │   └── upstream-diff                 # diff skill against gstack upstream
 │   ├── browse/                           # headless browser (Playwright + Chromium)
 │   │   ├── src/
@@ -94,6 +94,7 @@ steez/                                    # repo root
 │   └── {name}/SKILL.md                   # 22 workflow skills
 ├── cmd/steez/                            # Go CLI entrypoint
 ├── internal/                             # Go packages
+├── specs/                                # subsystem contracts (source of truth)
 ├── ETHOS.md                              # builder philosophy
 ├── ARCHITECTURE.md                       # design decisions + data flow
 ├── FORK_MANIFEST.md                      # upstream gstack provenance
@@ -113,8 +114,11 @@ steez/                                    # repo root
 │   ├── review-read -> ~/.steez/repo/shared/steez/bin/review-read
 │   ├── steez-bd -> ~/.steez/repo/shared/steez/bin/steez-bd
 │   ├── agent-state -> ~/.steez/repo/shared/steez/bin/agent-state
-│   ├── agent-history -> ~/.steez/repo/shared/steez/bin/agent-history
 │   ├── agent-send -> ~/.steez/repo/shared/steez/bin/agent-send
+│   ├── agent-deliver -> ~/.steez/repo/shared/steez/bin/agent-deliver
+│   ├── agent-watch -> ~/.steez/repo/shared/steez/bin/agent-watch
+│   ├── agent-watch-daemon -> ~/.steez/repo/shared/steez/bin/agent-watch-daemon
+│   ├── agent-history -> ~/.steez/repo/shared/steez/bin/agent-history
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
 ├── analytics/
@@ -200,14 +204,8 @@ steez-bd ← office-hours (chain creation after design doc approved)
          ← ship (handoff at completion, emit-finding for issues)
   Depends on: bd CLI (beads), jq (macOS system binary)
 
-agent-state — standalone (tmux, ps, python3)
-  Used by: spawn-agent skill
-
-agent-history — standalone (tmux, agent-state)
-  Used by: spawn-agent skill
-
-agent-send — standalone (tmux, agent-state)
-  Used by: spawn-agent skill
+agent-state, agent-history, agent-send, agent-deliver, agent-watch, agent-watch-daemon
+  See specs/ for contracts, dependency graph, and data flow
 ```
 
 ## Search Before Building
