@@ -33,6 +33,10 @@ interface RejectedColumn {
   actual: string | null;
 }
 
+function formatRejection(rc: RejectedColumn, prefix: string): string {
+  return `${prefix}: ${rc.column}=${rc.requested} — value cleared by NetSuite (likely subsidiary mismatch)`;
+}
+
 interface NsAddRowData {
   sublist: string;
   lineNumber: number;
@@ -210,13 +214,9 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
 
             // Read back the value to detect silent rejection (e.g. subsidiary mismatch
             // causes NS to clear entity-ref columns like location/department/class)
-            const actual = await target.evaluate(
-              ({ sub, col }: { sub: string; col: string }) => {
-                return (window as any).nlapiGetCurrentLineItemValue?.(sub, col) ?? null;
-              },
-              { sub: sublistId, col: column },
-            );
-            if (actual !== value && (!actual || actual === '')) {
+            const readBack = await createLineItemGetter(target, sublistId)([column]);
+            const actual = readBack[column];
+            if (actual !== value && !actual) {
               rejectedColumns.push({ column, requested: value, actual });
             }
 
@@ -326,9 +326,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
   if (d.commitFailed) {
     const lines: string[] = [];
     if (d.rejectedColumns.length > 0) {
-      for (const rc of d.rejectedColumns) {
-        lines.push(`REJECTED: ${rc.column}=${rc.requested} — value cleared by NetSuite (likely subsidiary mismatch)`);
-      }
+      for (const rc of d.rejectedColumns) lines.push(formatRejection(rc, 'REJECTED'));
     }
     lines.push(`ADD-ROW FAILED | Sublist: ${d.sublist} | Commit did not add a new line (validation error or missing required column)`);
     const vals = Object.entries(d.values).map(([k, v]) => `${k}=${truncateValue(v)}`).join(', ');
@@ -337,9 +335,7 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
   }
   const lines = [`ADD-ROW OK | Sublist: ${d.sublist} | Line: ${d.lineNumber} | Settled: ${d.settled ? 'yes' : 'no'}`];
   if (d.rejectedColumns.length > 0) {
-    for (const rc of d.rejectedColumns) {
-      lines.push(`WARNING: ${rc.column}=${rc.requested} was cleared by NetSuite (likely subsidiary mismatch)`);
-    }
+    for (const rc of d.rejectedColumns) lines.push(formatRejection(rc, 'WARNING'));
   }
   const vals = Object.entries(d.values).map(([k, v]) => `${k}=${truncateValue(v)}`).join(', ');
   if (vals) lines.push(`Values: ${vals}`);
