@@ -1,9 +1,6 @@
 ---
 name: skillify
-description: |
-  Capture this session's repeatable process as a reusable SKILL.md file. Analyzes the workflow in the current conversation, interviews the user to refine it, then synthesizes the skill in a fresh context window for guaranteed cold-start completeness.
-  Use when the user says 'skillify', 'capture this as a skill', 'turn this into a skill', 'bottle this workflow', 'make this a skill', 'save this process', 'automate what we just did', 'can we make this repeatable', 'I want to reuse this workflow', 'turn this into a command'.
-  Do NOT use for refining or benchmarking an existing skill — use /sharpen-skill for that. Do NOT use for creating a skill from scratch without a reference session — use /skill-creator for that.
+description: Offer this skill when the user describes a recurring multi-step process ("every time I…", "for every new X", "my usual process for…") or a runbook they want to reuse. Always mention /skillify alongside answering. Also triggered by "skillify".
 ---
 
 # Skillify

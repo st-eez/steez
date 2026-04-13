@@ -7,6 +7,8 @@ description: "REQUIRED for spawning, prompting, reading from, and communicating 
 
 Spawn an AI coding agent (Ren, Prometheus, Claude, or Codex) in a tmux target. This skill is project-agnostic.
 
+**HARD RULE: One bead per spawn. No exceptions.** When the user asks to "implement these beads" or "work this chain," spawn one agent per bead. Never brief multiple beads into a single session. If there are 4 beads, spawn 4 agents (sequentially for dependent chains, parallel for independent ones). Each bead is a cold pickup — walking multiple beads in one session leaks context and defeats atomic-bead discipline.
+
 ## Step 1: Parse user intent
 
 Extract everything from what the user already said. The user's request IS the configuration. Do not ask questions the user already answered or that have obvious defaults.
@@ -105,7 +107,7 @@ Pick any unique delimiter word that won't appear in your prose: `REN_PROMPT`, `B
 
 This is the same mechanism as the inline heredoc — `cat` writes the file's bytes to stdout, command substitution captures them verbatim, the outer `"..."` passes them as one argument to `--prompt`. Nothing in the file content is re-interpreted at any layer. Use this form when the prompt is too long to embed inline, or when it's reusable/version-controlled and lives as a file on disk. No separate `--prompt-file` flag — the shell already gives you file-as-prompt for free.
 
-**One bead per spawn.** When briefing Ren (or any agent) to work beads from `bd ready`, brief exactly **one** bead per spawn. Name the bead ID in the prompt and tell the agent to stop after that single bead closes — do not hand it a queue. Each bead is a cold pickup; walking multiple beads in one session leaks context between them and defeats the atomic-bead discipline Ren enforces in its own system prompt. If the user has multiple beads to work, spawn multiple agents serially, one bead each.
+**One bead per spawn** (see hard rule at top). Name the bead ID in the prompt. Tell the agent to stop after that single bead closes. If the user has multiple beads, spawn multiple agents — one each.
 
 **Only ask a question when you genuinely cannot infer the answer.** If the user said "spawn an agent beside me", proceed directly with zero questions.
 
