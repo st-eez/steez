@@ -36,7 +36,7 @@ PIDFILE="$STATE_DIR/agent-watch-daemon.pid"
 LOG="$STATE_DIR/agent-watch.log"
 
 AGENT_DELIVER="$HOME/.steez/bin/agent-deliver"
-AGENT_STATE="$HOME/.steez/bin/agent-state"
+AGENT_STATE="$HOME/.local/bin/agent-state"
 AGENT_HISTORY="$HOME/.steez/bin/agent-history"
 
 POLL_INTERVAL="${AGENT_WATCH_POLL:-10}"
