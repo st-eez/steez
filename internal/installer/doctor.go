@@ -134,11 +134,6 @@ func checkRepoSymlink(repoSymlink, repoPath string) CheckResult {
 
 func checkBinSymlinks(steezHome string) []CheckResult {
 	binDir := filepath.Join(steezHome, "bin")
-	expected := []string{
-		"config", "slug", "diff-scope",
-		"review-log", "review-read", "steez-bd",
-		"agent-state", "agent-history", "agent-send", "agent-deliver", "browse",
-	}
 
 	var results []CheckResult
 
@@ -152,22 +147,22 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 		return results
 	}
 
-	for _, name := range expected {
-		path := filepath.Join(binDir, name)
+	for _, bin := range SharedBinSymlinks() {
+		path := filepath.Join(binDir, bin.Name)
 		isSym, resolved, err := IsSymlink(path)
 		if err != nil || !isSym {
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 				results = append(results, CheckResult{
-					Name:    fmt.Sprintf("bin/%s", name),
+					Name:    fmt.Sprintf("bin/%s", bin.Name),
 					Status:  "warn",
-					Message: fmt.Sprintf("Missing: ~/.steez/bin/%s", name),
+					Message: fmt.Sprintf("Missing: ~/.steez/bin/%s", bin.Name),
 					FixCmd:  "steez install",
 				})
 			} else {
 				results = append(results, CheckResult{
-					Name:    fmt.Sprintf("bin/%s", name),
+					Name:    fmt.Sprintf("bin/%s", bin.Name),
 					Status:  "warn",
-					Message: fmt.Sprintf("~/.steez/bin/%s is not a symlink", name),
+					Message: fmt.Sprintf("~/.steez/bin/%s is not a symlink", bin.Name),
 				})
 			}
 			continue
@@ -175,18 +170,18 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 
 		if err := ValidateSymlink(path); err != nil {
 			results = append(results, CheckResult{
-				Name:    fmt.Sprintf("bin/%s", name),
+				Name:    fmt.Sprintf("bin/%s", bin.Name),
 				Status:  "fail",
-				Message: fmt.Sprintf("Dangling: ~/.steez/bin/%s → %s", name, resolved),
+				Message: fmt.Sprintf("Dangling: ~/.steez/bin/%s → %s", bin.Name, resolved),
 				FixCmd:  "steez install",
 			})
 			continue
 		}
 
 		results = append(results, CheckResult{
-			Name:    fmt.Sprintf("bin/%s", name),
+			Name:    fmt.Sprintf("bin/%s", bin.Name),
 			Status:  "pass",
-			Message: fmt.Sprintf("~/.steez/bin/%s → %s", name, resolved),
+			Message: fmt.Sprintf("~/.steez/bin/%s → %s", bin.Name, resolved),
 		})
 	}
 
@@ -195,11 +190,6 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 
 func checkHookSymlinks(home string) []CheckResult {
 	hookDir := filepath.Join(home, ".claude", "hooks")
-	expected := []string{
-		"steez-permission-state.sh",
-		"steez-skill-analytics.sh",
-		"steez-session-start.sh",
-	}
 
 	var results []CheckResult
 
@@ -213,22 +203,22 @@ func checkHookSymlinks(home string) []CheckResult {
 		return results
 	}
 
-	for _, name := range expected {
-		path := filepath.Join(hookDir, name)
+	for _, hook := range SharedClaudeHookSymlinks() {
+		path := filepath.Join(hookDir, hook.Name)
 		isSym, resolved, err := IsSymlink(path)
 		if err != nil || !isSym {
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 				results = append(results, CheckResult{
-					Name:    fmt.Sprintf("hooks/%s", name),
+					Name:    fmt.Sprintf("hooks/%s", hook.Name),
 					Status:  "warn",
-					Message: fmt.Sprintf("Missing: ~/.claude/hooks/%s", name),
+					Message: fmt.Sprintf("Missing: ~/.claude/hooks/%s", hook.Name),
 					FixCmd:  "steez install",
 				})
 			} else {
 				results = append(results, CheckResult{
-					Name:    fmt.Sprintf("hooks/%s", name),
+					Name:    fmt.Sprintf("hooks/%s", hook.Name),
 					Status:  "warn",
-					Message: fmt.Sprintf("~/.claude/hooks/%s is not a symlink", name),
+					Message: fmt.Sprintf("~/.claude/hooks/%s is not a symlink", hook.Name),
 				})
 			}
 			continue
@@ -236,18 +226,18 @@ func checkHookSymlinks(home string) []CheckResult {
 
 		if err := ValidateSymlink(path); err != nil {
 			results = append(results, CheckResult{
-				Name:    fmt.Sprintf("hooks/%s", name),
+				Name:    fmt.Sprintf("hooks/%s", hook.Name),
 				Status:  "fail",
-				Message: fmt.Sprintf("Dangling: ~/.claude/hooks/%s → %s", name, resolved),
+				Message: fmt.Sprintf("Dangling: ~/.claude/hooks/%s → %s", hook.Name, resolved),
 				FixCmd:  "steez install",
 			})
 			continue
 		}
 
 		results = append(results, CheckResult{
-			Name:    fmt.Sprintf("hooks/%s", name),
+			Name:    fmt.Sprintf("hooks/%s", hook.Name),
 			Status:  "pass",
-			Message: fmt.Sprintf("~/.claude/hooks/%s → %s", name, resolved),
+			Message: fmt.Sprintf("~/.claude/hooks/%s → %s", hook.Name, resolved),
 		})
 	}
 

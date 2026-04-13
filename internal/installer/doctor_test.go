@@ -30,30 +30,14 @@ func setupDoctorHome(t *testing.T, repoPath string) string {
 	binDir := filepath.Join(steezDir, "bin")
 	os.MkdirAll(binDir, 0o755)
 	repoSymlink := filepath.Join(steezDir, "repo")
-	for _, bs := range []struct{ name, relPath string }{
-		{"config", "shared/steez/bin/config"},
-		{"slug", "shared/steez/bin/slug"},
-		{"diff-scope", "shared/steez/bin/diff-scope"},
-		{"review-log", "shared/steez/bin/review-log"},
-		{"review-read", "shared/steez/bin/review-read"},
-		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"agent-state", "shared/steez/bin/agent-state"},
-		{"agent-history", "shared/steez/bin/agent-history"},
-		{"agent-send", "shared/steez/bin/agent-send"},
-		{"agent-deliver", "shared/steez/bin/agent-deliver"},
-		{"browse", "shared/steez/browse/dist/browse"},
-	} {
-		os.Symlink(filepath.Join(repoSymlink, bs.relPath), filepath.Join(binDir, bs.name))
+	for _, bs := range SharedBinSymlinks() {
+		os.Symlink(filepath.Join(repoSymlink, bs.RelPath), filepath.Join(binDir, bs.Name))
 	}
 
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	os.MkdirAll(hookDir, 0o755)
-	for _, hs := range []struct{ name, relPath string }{
-		{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
-		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
-		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
-	} {
-		os.Symlink(filepath.Join(repoSymlink, hs.relPath), filepath.Join(hookDir, hs.name))
+	for _, hs := range SharedClaudeHookSymlinks() {
+		os.Symlink(filepath.Join(repoSymlink, hs.RelPath), filepath.Join(hookDir, hs.Name))
 	}
 
 	return home
@@ -201,12 +185,15 @@ func TestDoctor_FixMode(t *testing.T) {
 func createSharedRuntime(t *testing.T, repoPath string) {
 	t.Helper()
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "bin"), 0o755)
-	for _, name := range []string{"config", "slug", "diff-scope", "review-log", "review-read", "steez-bd", "agent-state", "agent-history", "agent-send", "agent-deliver"} {
-		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", name), []byte("#!/bin/sh"), 0o755)
+	for _, bin := range SharedBinSymlinks() {
+		if bin.Name == "browse" {
+			continue
+		}
+		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "bin", bin.Name), []byte("#!/bin/sh"), 0o755)
 	}
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "hooks"), 0o755)
-	for _, name := range []string{"permission-state.sh", "session-start.sh", "skill-analytics.sh"} {
-		os.WriteFile(filepath.Join(repoPath, "shared", "steez", "hooks", name), []byte("#!/bin/sh"), 0o755)
+	for _, hook := range append(SharedClaudeHookSymlinks(), SharedCodexHookSymlinks()...) {
+		os.WriteFile(filepath.Join(repoPath, hook.RelPath), []byte("#!/bin/sh"), 0o755)
 	}
 	os.MkdirAll(filepath.Join(repoPath, "shared", "steez", "browse", "dist"), 0o755)
 	os.WriteFile(filepath.Join(repoPath, "shared", "steez", "browse", "dist", "browse"), []byte("fake"), 0o755)

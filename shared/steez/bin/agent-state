@@ -832,11 +832,11 @@ main() {
       } | column -t -s $'\t'
     fi
   else
-    local pane_info
-    pane_info=$(tmux display-message -t "$pane" -p $'#{pane_id}\t#{pane_pid}\t#{pane_title}\t#{pane_current_path}' 2>/dev/null)
-
     local pane_id pane_pid pane_title pane_cwd
-    IFS=$'\t' read -r pane_id pane_pid pane_title pane_cwd <<< "$pane_info"
+    pane_id=$(tmux display-message -t "$pane" -p '#{pane_id}' 2>/dev/null || true)
+    pane_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)
+    pane_title=$(tmux display-message -t "$pane" -p '#{pane_title}' 2>/dev/null || true)
+    pane_cwd=$(tmux display-message -t "$pane" -p '#{pane_current_path}' 2>/dev/null || true)
 
     if [[ -z "$pane_id" ]]; then
       echo "error: pane '$pane' not found" >&2

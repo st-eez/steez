@@ -59,21 +59,9 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	// Create bin symlinks.
 	binDir := filepath.Join(steezHome, "bin")
 	os.MkdirAll(binDir, 0o755)
-	for _, bs := range []struct{ name, relPath string }{
-		{"config", "shared/steez/bin/config"},
-		{"slug", "shared/steez/bin/slug"},
-		{"diff-scope", "shared/steez/bin/diff-scope"},
-		{"review-log", "shared/steez/bin/review-log"},
-		{"review-read", "shared/steez/bin/review-read"},
-		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"agent-state", "shared/steez/bin/agent-state"},
-		{"agent-history", "shared/steez/bin/agent-history"},
-		{"agent-send", "shared/steez/bin/agent-send"},
-		{"agent-deliver", "shared/steez/bin/agent-deliver"},
-		{"browse", "shared/steez/browse/dist/browse"},
-	} {
-		source := filepath.Join(repoSymlink, bs.relPath)
-		target := filepath.Join(binDir, bs.name)
+	for _, bs := range SharedBinSymlinks() {
+		source := filepath.Join(repoSymlink, bs.RelPath)
+		target := filepath.Join(binDir, bs.Name)
 		CreateSymlink(source, target, false, false)
 	}
 
@@ -162,34 +150,18 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	// Create bin symlinks.
 	binDir := filepath.Join(steezHome, "bin")
 	os.MkdirAll(binDir, 0o755)
-	for _, bs := range []struct{ name, relPath string }{
-		{"config", "shared/steez/bin/config"},
-		{"slug", "shared/steez/bin/slug"},
-		{"diff-scope", "shared/steez/bin/diff-scope"},
-		{"review-log", "shared/steez/bin/review-log"},
-		{"review-read", "shared/steez/bin/review-read"},
-		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"agent-state", "shared/steez/bin/agent-state"},
-		{"agent-history", "shared/steez/bin/agent-history"},
-		{"agent-send", "shared/steez/bin/agent-send"},
-		{"agent-deliver", "shared/steez/bin/agent-deliver"},
-		{"browse", "shared/steez/browse/dist/browse"},
-	} {
-		source := filepath.Join(repoSymlink, bs.relPath)
-		target := filepath.Join(binDir, bs.name)
+	for _, bs := range SharedBinSymlinks() {
+		source := filepath.Join(repoSymlink, bs.RelPath)
+		target := filepath.Join(binDir, bs.Name)
 		CreateSymlink(source, target, false, false)
 	}
 
 	// Create hook symlinks.
 	hookDir := filepath.Join(home, ".claude", "hooks")
 	os.MkdirAll(hookDir, 0o755)
-	for _, hs := range []struct{ name, relPath string }{
-		{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
-		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
-		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
-	} {
-		source := filepath.Join(repoSymlink, hs.relPath)
-		target := filepath.Join(hookDir, hs.name)
+	for _, hs := range SharedClaudeHookSymlinks() {
+		source := filepath.Join(repoSymlink, hs.RelPath)
+		target := filepath.Join(hookDir, hs.Name)
 		CreateSymlink(source, target, false, false)
 	}
 

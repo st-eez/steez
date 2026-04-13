@@ -59,6 +59,60 @@ func RunUpdate() error {
 
 	fmt.Printf("Updated %s..%s\n", oldHead[:8], newHead[:8])
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolving home directory: %w", err)
+	}
+
+	steezHome := filepath.Join(home, ".steez")
+	if err := os.MkdirAll(steezHome, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", steezHome, err)
+	}
+
+	repoSymlink := filepath.Join(steezHome, "repo")
+	if err := installer.CreateSymlink(repoPath, repoSymlink, false, true); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not refresh repo symlink: %v\n", err)
+	}
+
+	binDir := filepath.Join(steezHome, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", binDir, err)
+	}
+	for _, old := range installer.DeprecatedBinSymlinks() {
+		_ = installer.RemoveSymlink(filepath.Join(binDir, old))
+	}
+	for _, bin := range installer.SharedBinSymlinks() {
+		source := filepath.Join(repoSymlink, bin.RelPath)
+		target := filepath.Join(binDir, bin.Name)
+		if err := installer.CreateSymlink(source, target, false, true); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not refresh ~/.steez/bin/%s: %v\n", bin.Name, err)
+		}
+	}
+
+	hookDir := filepath.Join(home, ".claude", "hooks")
+	if err := os.MkdirAll(hookDir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", hookDir, err)
+	}
+	for _, hook := range installer.SharedClaudeHookSymlinks() {
+		source := filepath.Join(repoSymlink, hook.RelPath)
+		target := filepath.Join(hookDir, hook.Name)
+		if err := installer.CreateSymlink(source, target, false, true); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not refresh ~/.claude/hooks/%s: %v\n", hook.Name, err)
+		}
+	}
+
+	codexHookDir := filepath.Join(home, ".codex", "hooks")
+	if err := os.MkdirAll(codexHookDir, 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", codexHookDir, err)
+	}
+	for _, hook := range installer.SharedCodexHookSymlinks() {
+		source := filepath.Join(repoSymlink, hook.RelPath)
+		target := filepath.Join(codexHookDir, hook.Name)
+		if err := installer.CreateSymlink(source, target, false, true); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not refresh ~/.codex/hooks/%s: %v\n", hook.Name, err)
+		}
+	}
+
 	// 5. Re-validate symlinks.
 	reg, err := config.LoadRegistry()
 	if err != nil {

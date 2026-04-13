@@ -120,35 +120,17 @@ func cmdInstall(args []string) int {
 		}
 	}
 
-	binSymlinks := []struct{ name, relPath string }{
-		{"config", "shared/steez/bin/config"},
-		{"slug", "shared/steez/bin/slug"},
-		{"diff-scope", "shared/steez/bin/diff-scope"},
-		{"review-log", "shared/steez/bin/review-log"},
-		{"review-read", "shared/steez/bin/review-read"},
-		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"agent-state", "shared/steez/bin/agent-state"},
-		{"agent-history", "shared/steez/bin/agent-history"},
-		{"agent-send", "shared/steez/bin/agent-send"},
-		{"agent-deliver", "shared/steez/bin/agent-deliver"},
-		{"browse", "shared/steez/browse/dist/browse"},
-	}
 	// Remove old steez-prefixed bin symlinks from before the rename.
 	if !*dryRun {
-		oldBinNames := []string{
-			"steez-config", "steez-slug", "steez-diff-scope",
-			"steez-review-log", "steez-review-read",
-			"steez-agent-state", "steez-agent-history",
-		}
-		for _, old := range oldBinNames {
+		for _, old := range installer.DeprecatedBinSymlinks() {
 			_ = installer.RemoveSymlink(filepath.Join(binDir, old))
 		}
 	}
-	for _, bs := range binSymlinks {
-		source := filepath.Join(repoSymlink, bs.relPath)
-		target := filepath.Join(binDir, bs.name)
+	for _, bs := range installer.SharedBinSymlinks() {
+		source := filepath.Join(repoSymlink, bs.RelPath)
+		target := filepath.Join(binDir, bs.Name)
 		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
-			fmt.Fprintf(os.Stderr, "  error: bin/%s: %v\n", bs.name, err)
+			fmt.Fprintf(os.Stderr, "  error: bin/%s: %v\n", bs.Name, err)
 			failed++
 		} else {
 			installed++
@@ -164,16 +146,11 @@ func cmdInstall(args []string) int {
 		}
 	}
 
-	hookSymlinks := []struct{ name, relPath string }{
-		{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
-		{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
-		{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
-	}
-	for _, hs := range hookSymlinks {
-		source := filepath.Join(repoSymlink, hs.relPath)
-		target := filepath.Join(hookDir, hs.name)
+	for _, hs := range installer.SharedClaudeHookSymlinks() {
+		source := filepath.Join(repoSymlink, hs.RelPath)
+		target := filepath.Join(hookDir, hs.Name)
 		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
-			fmt.Fprintf(os.Stderr, "  error: hooks/%s: %v\n", hs.name, err)
+			fmt.Fprintf(os.Stderr, "  error: hooks/%s: %v\n", hs.Name, err)
 			failed++
 		} else {
 			installed++
@@ -189,14 +166,11 @@ func cmdInstall(args []string) int {
 		}
 	}
 
-	codexHookSymlinks := []struct{ name, relPath string }{
-		{"session-start.sh", "shared/steez/hooks/codex-session-start.sh"},
-	}
-	for _, hs := range codexHookSymlinks {
-		source := filepath.Join(repoSymlink, hs.relPath)
-		target := filepath.Join(codexHookDir, hs.name)
+	for _, hs := range installer.SharedCodexHookSymlinks() {
+		source := filepath.Join(repoSymlink, hs.RelPath)
+		target := filepath.Join(codexHookDir, hs.Name)
 		if err := installer.CreateSymlink(source, target, *dryRun, *force); err != nil {
-			fmt.Fprintf(os.Stderr, "  error: codex-hooks/%s: %v\n", hs.name, err)
+			fmt.Fprintf(os.Stderr, "  error: codex-hooks/%s: %v\n", hs.Name, err)
 			failed++
 		} else {
 			installed++

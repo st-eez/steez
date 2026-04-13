@@ -441,35 +441,17 @@ func (m *setupModel) runInstall() {
 		return
 	}
 
-	binSymlinks := []struct{ name, relPath string }{
-		{"config", "shared/steez/bin/config"},
-		{"slug", "shared/steez/bin/slug"},
-		{"diff-scope", "shared/steez/bin/diff-scope"},
-		{"review-log", "shared/steez/bin/review-log"},
-		{"review-read", "shared/steez/bin/review-read"},
-		{"steez-bd", "shared/steez/bin/steez-bd"},
-		{"agent-state", "shared/steez/bin/agent-state"},
-		{"agent-history", "shared/steez/bin/agent-history"},
-		{"agent-send", "shared/steez/bin/agent-send"},
-		{"agent-deliver", "shared/steez/bin/agent-deliver"},
-		{"browse", "shared/steez/browse/dist/browse"},
-	}
 	// Remove old steez-prefixed bin symlinks from before the rename.
-	oldBinNames := []string{
-		"steez-config", "steez-slug", "steez-diff-scope",
-		"steez-review-log", "steez-review-read",
-		"steez-agent-state", "steez-agent-history",
-	}
-	for _, old := range oldBinNames {
+	for _, old := range installer.DeprecatedBinSymlinks() {
 		_ = installer.RemoveSymlink(filepath.Join(binDir, old))
 	}
-	for _, bs := range binSymlinks {
-		source := filepath.Join(repoSymlink, bs.relPath)
-		target := filepath.Join(binDir, bs.name)
+	for _, bs := range installer.SharedBinSymlinks() {
+		source := filepath.Join(repoSymlink, bs.RelPath)
+		target := filepath.Join(binDir, bs.Name)
 		if err := installer.CreateSymlink(source, target, false, true); err != nil {
-			m.results = append(m.results, installResult{"bin/" + bs.name, false, err.Error()})
+			m.results = append(m.results, installResult{"bin/" + bs.Name, false, err.Error()})
 		} else {
-			m.results = append(m.results, installResult{"bin/" + bs.name, true, ""})
+			m.results = append(m.results, installResult{"bin/" + bs.Name, true, ""})
 		}
 	}
 
@@ -478,18 +460,13 @@ func (m *setupModel) runInstall() {
 	if err := os.MkdirAll(hookDir, 0o755); err != nil {
 		m.results = append(m.results, installResult{"~/.claude/hooks/", false, err.Error()})
 	} else {
-		hookSymlinks := []struct{ name, relPath string }{
-			{"steez-permission-state.sh", "shared/steez/hooks/permission-state.sh"},
-			{"steez-skill-analytics.sh", "shared/steez/hooks/skill-analytics.sh"},
-			{"steez-session-start.sh", "shared/steez/hooks/session-start.sh"},
-		}
-		for _, hs := range hookSymlinks {
-			source := filepath.Join(repoSymlink, hs.relPath)
-			target := filepath.Join(hookDir, hs.name)
+		for _, hs := range installer.SharedClaudeHookSymlinks() {
+			source := filepath.Join(repoSymlink, hs.RelPath)
+			target := filepath.Join(hookDir, hs.Name)
 			if err := installer.CreateSymlink(source, target, false, true); err != nil {
-				m.results = append(m.results, installResult{"hooks/" + hs.name, false, err.Error()})
+				m.results = append(m.results, installResult{"hooks/" + hs.Name, false, err.Error()})
 			} else {
-				m.results = append(m.results, installResult{"hooks/" + hs.name, true, ""})
+				m.results = append(m.results, installResult{"hooks/" + hs.Name, true, ""})
 			}
 		}
 	}
