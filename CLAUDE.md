@@ -50,7 +50,7 @@ agent-state <pane>               # detect AI agent state in a tmux pane
 agent-state --all [--json]       # scan all panes for AI agents (table by default)
 agent-history <pane>             # parse structured transcript from tmux pane
 agent-history --all              # parse transcripts from all agent panes
-agent-send <pane> "msg"          # send a message to a prometheus/claude/codex pane (escape-safe + delayed Enter)
+agent-send <pane> "msg"          # send a message to a ren-codex/claude/codex pane (escape-safe + delayed Enter)
 upstream-diff <skill>            # diff a steez skill against gstack upstream
 upstream-diff --all              # show divergence summary for all skills
 ```

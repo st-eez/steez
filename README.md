@@ -70,7 +70,7 @@ Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit
 | `/investigate` | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without root cause. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
 | `/cso` | **Chief Security Officer** | OWASP Top 10 + STRIDE threat model. Zero-noise: confidence gate, independent verification. Concrete exploit scenarios. |
 | `/audit` | **Code Auditor** | Deep codebase audit — security, quality, architecture, error handling. Pre-release sweep for the whole repo, not just the diff. |
-| `/spawn-agent` | **Orchestrator** | Spawn and orchestrate AI agents (Ren, Prometheus, Claude, Codex) across tmux panes. Parallel work, without the step on each other's toes problem. |
+| `/spawn-agent` | **Orchestrator** | Spawn and orchestrate AI agents (Ren, Ren-Codex, Claude, Codex) across tmux panes. Parallel work, without the step on each other's toes problem. |
 | `/design-consultation` | **Design Partner** | Build a complete design system from scratch. Researches the landscape, proposes creative risks, generates realistic mockups. Writes `DESIGN.md`. |
 | `/codex` | **Second Opinion** | Independent review from OpenAI Codex CLI. Three modes: code review (pass/fail gate), adversarial challenge, and open consultation. Cross-model analysis when both `/codex` and a steez review have run. |
 | `/reminders` | **Reminder Manager** | Manage Apple Reminders via `remindctl` — create, complete, reschedule. Native macOS integration, no third-party app. |

@@ -14,7 +14,7 @@ Usage: agent-state <pane> [--read] [--detail]
        agent-state --all [--read] [--detail] [--json]
        agent-state --layout
 
-Detect the state of AI coding agents (Prometheus, Ren, Claude Code, Codex) in tmux panes.
+Detect the state of AI coding agents (Ren, Ren-Codex, Claude Code, Codex) in tmux panes.
 
 States:
   working              — agent is thinking, streaming, or executing tools
@@ -54,12 +54,6 @@ EOF
   exit 0
 }
 
-is_prometheus() {
-  local pid="$1"
-  [[ -z "$pid" ]] && return 1
-  ps -E -p "$pid" 2>/dev/null | grep -q "PROMETHEUS_SESSION=1"
-}
-
 is_ren() {
   local pid="$1"
   [[ -z "$pid" ]] && return 1
@@ -77,23 +71,25 @@ detect_agent() {
 
   case "$proc_cmd" in
     claude)
-      if is_prometheus "$proc_pid"; then echo "prometheus"
-      elif is_ren "$proc_pid"; then echo "ren"
+      if is_ren "$proc_pid"; then echo "ren"
       else echo "claude"
       fi
       return
       ;;
     codex)
-      echo "codex"
+      if is_ren "$proc_pid"; then echo "ren-codex"
+      else echo "codex"
+      fi
       return
       ;;
     node)
       if [[ "$proc_line" == *codex* ]]; then
-        echo "codex"
+        if is_ren "$proc_pid"; then echo "ren-codex"
+        else echo "codex"
+        fi
         return
       elif [[ "$proc_line" == *claude* ]]; then
-        if is_prometheus "$proc_pid"; then echo "prometheus"
-        elif is_ren "$proc_pid"; then echo "ren"
+        if is_ren "$proc_pid"; then echo "ren"
         else echo "claude"
         fi
         return
@@ -111,18 +107,22 @@ detect_agent() {
 
   case "$child_cmd" in
     claude)
-      if is_prometheus "$child_pid"; then echo "prometheus"
-      elif is_ren "$child_pid"; then echo "ren"
+      if is_ren "$child_pid"; then echo "ren"
       else echo "claude"
       fi
       ;;
-    codex)  echo "codex" ;;
+    codex)
+      if is_ren "$child_pid"; then echo "ren-codex"
+      else echo "codex"
+      fi
+      ;;
     node)
       if [[ "$child_line" == *codex* ]]; then
-        echo "codex"
+        if is_ren "$child_pid"; then echo "ren-codex"
+        else echo "codex"
+        fi
       elif [[ "$child_line" == *claude* ]]; then
-        if is_prometheus "$child_pid"; then echo "prometheus"
-        elif is_ren "$child_pid"; then echo "ren"
+        if is_ren "$child_pid"; then echo "ren"
         else echo "claude"
         fi
       else
@@ -368,7 +368,7 @@ def codex_state(lines, thread_id):
 
     return ""
 
-if agent in {"claude", "ren", "prometheus"}:
+if agent in {"claude", "ren"}:
     sidecar = load_claude_sidecar(claude_state_dir, transcript, session_id)
     if sidecar:
         print(sidecar["blocked_state"])
@@ -387,7 +387,7 @@ if agent in {"claude", "ren", "prometheus"}:
         raise SystemExit(0)
     raise SystemExit(1)
 
-if agent == "codex":
+if agent in {"codex", "ren-codex"}:
     if not transcript or not os.path.exists(transcript):
         raise SystemExit(1)
 
@@ -417,7 +417,7 @@ detect_state() {
   fi
 
   local state blocked_from_screen=""
-  if [[ "$agent" == "claude" || "$agent" == "ren" || "$agent" == "prometheus" ]]; then
+  if [[ "$agent" == "claude" || "$agent" == "ren" ]]; then
     if [[ "$tail_text" == *"Tab to amend"* ]] || [[ "$tail_text" == *"Do you want to proceed?"* ]] || [[ "$tail_text" == *"Do you want to overwrite"* ]]; then
       blocked_from_screen="blocked:permission"
     elif [[ "$tail_text" == *"Enter to select"* ]] && [[ "$tail_text" == *"Chat about this"* ]]; then
@@ -433,9 +433,9 @@ detect_state() {
     state="$blocked_from_screen"
   elif (( prefix >= 0x2800 && prefix <= 0x28FF )); then
     state="working"
-  elif [[ "$agent" == "codex" && ( "$tail_text" == ›* || "$tail_text" == *$'\n›'* ) ]]; then
+  elif [[ "$agent" == "codex" || "$agent" == "ren-codex" ]] && [[ "$tail_text" == ›* || "$tail_text" == *$'\n›'* ]]; then
     state="idle"
-  elif [[ "$agent" == "codex" ]]; then
+  elif [[ "$agent" == "codex" || "$agent" == "ren-codex" ]]; then
     state="working"
   else
     state="idle"
@@ -462,7 +462,7 @@ find_transcript() {
       [[ -d "$session_dir" ]] || return 1
       ls -t "$session_dir"/*.jsonl 2>/dev/null | head -1
       ;;
-    codex)
+    codex|ren-codex)
       # Walk shell -> node -> codex binary; codex holds JSONL open as write handle
       local node_pid="" codex_pid=""
       node_pid=$(awk -v ppid="$shell_pid" '{

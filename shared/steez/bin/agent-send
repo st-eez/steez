@@ -35,7 +35,7 @@ Options:
 Exit codes:
   0  Message submitted
   1  Generic error (bad args, send failed)
-  2  Pane is not a recognized AI agent (prometheus, ren, claude, or codex)
+  2  Pane is not a recognized AI agent (ren, ren-codex, claude, or codex)
 EOF
   exit 0
 }

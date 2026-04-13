@@ -7,7 +7,7 @@ Usage: agent-history [<pane|path>] <mode>
        agent-history --all <mode>
 
 Read structured conversation data from Claude Code (including claude-variants
-like ren and prometheus) or Codex CLI transcripts. Parser format is
+like ren) or Codex CLI transcripts. Parser format is
 auto-detected from the transcript path.
 
 Modes:
@@ -255,7 +255,7 @@ else
 fi
 
 # --- Format dispatch: keyed on transcript path, not agent name ---
-# claude-variants (claude, ren, prometheus, future) share JSONL schema,
+# claude-variants (claude, ren, future) share JSONL schema,
 # so parser dispatch is O(2) formats rather than O(N) agent names.
 if [[ "$TRANSCRIPT" == */.claude/* ]]; then
   FORMAT="claude"

@@ -5,7 +5,7 @@
 #   spawn.sh <target-type> [--dir <name-or-path>] [--session <name>] [--prompt <text>] [--target <pane>] [--model <name>]
 #
 # Target types: split-h, split-v, new-window, new-session
-# Models: ren (default), prometheus, claude, codex
+# Models: ren (default), ren-codex, claude, codex
 #
 # --target <pane>  For split-h/split-v: split this pane instead of self.
 #                  Use pane_id format (%N, e.g., %5) or session:window.pane (e.g., mac:5.1).
@@ -51,8 +51,8 @@ done
 
 # Validate model
 case "$MODEL" in
-  prometheus|claude|codex|ren) ;;
-  *) echo "ERROR: unknown model '$MODEL' (use: prometheus, claude, codex, ren)"; exit 1 ;;
+  ren-codex|claude|codex|ren) ;;
+  *) echo "ERROR: unknown model '$MODEL' (use: ren-codex, claude, codex, ren)"; exit 1 ;;
 esac
 
 # --- Directory resolution ---
@@ -212,7 +212,7 @@ fi
 AGENT_STATE="$HOME/.steez/bin/agent-state"
 
 case "$MODEL" in
-  prometheus) LAUNCH_CMD="prometheus" ;;
+  ren-codex)  LAUNCH_CMD="ren-codex" ;;
   ren)        LAUNCH_CMD="ren" ;;
   claude)     LAUNCH_CMD="claude --dangerously-skip-permissions" ;;
   # Codex blocks request_user_input in Default mode unless this feature is

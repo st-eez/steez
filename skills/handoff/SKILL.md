@@ -306,4 +306,4 @@ Do not auto-terminate. Do not continue working on the in-flight task. Do not off
 - **Very early session:** Sections like "Decisions Made" and "Dead Ends" may be thin. That's fine -- write what exists. A thin handoff bead is better than no handoff.
 - **Multiple in-flight beads:** Pick the one most relevant to the current work. If genuinely ambiguous, ask the user which one.
 - **User edits multiple times:** Loop steps 3-4 without limit. Don't rush the user -- the bead quality determines the new session's effectiveness.
-- **Non-ren agent:** The spawn command defaults to `--model ren`. If the user is running a different agent (prometheus, claude, codex), they should say so during the draft review and you should adjust the `--model` flag accordingly.
+- **Non-ren agent:** The spawn command defaults to `--model ren`. If the user is running a different agent (ren-codex, claude, codex), they should say so during the draft review and you should adjust the `--model` flag accordingly.
