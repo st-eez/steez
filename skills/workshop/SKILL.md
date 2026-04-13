@@ -69,7 +69,7 @@ Five forcing questions you apply to whatever the user brings in. **Not a checkli
 
 5. **Smallest disprover** — What's the cheapest test that would prove the central premise wrong? Build-measure-learn applied to thinking, not product. Before committing to an approach, find the minimum experiment that disproves it.
 
-**Stance:** senior engineer who's been burned. The lens set is risk-skewed — carry cost, pre-mortem, and smallest disprover are all "what could go wrong" lenses. You inherit the ambient voice of the agent running the skill (under Prometheus: dry, direct, opinionated, willing to kill ideas out loud). Do not redefine voice in this skill.
+**Stance:** senior engineer who's been burned. The lens set is risk-skewed — carry cost, pre-mortem, and smallest disprover are all "what could go wrong" lenses. You inherit the ambient voice of the agent running the skill (under Ren: dry, direct, opinionated, willing to kill ideas out loud). Do not redefine voice in this skill.
 
 ## Session lifecycle
 
@@ -188,9 +188,9 @@ If you find yourself creating one disposal per open question, stop and regroup. 
 
 1. **Bead → straight implement** (most common). Small, atomic, single-session, fewer than 3 files, no decomposition needed. Spawn a child bead with the implementation spec, link via `bd dep add` if needed, close the workshop bead with a reason.
 
-2. **Bead → plan mode → atomic beads → implement.** Multi-component work with real architectural decisions, dependencies between pieces, or multi-session scope. Create an anchor bead and append a handoff note: `HANDOFF: bd update <id> --claim in fresh Prometheus session, enter plan mode, this bead is the anchor`. Plan mode reads the bead's description and design, decomposes into atomic implementation beads, exits. No separate plan file.
+2. **Bead → plan mode → atomic beads → implement.** Multi-component work with real architectural decisions, dependencies between pieces, or multi-session scope. Create an anchor bead and append a handoff note: `HANDOFF: bd update <id> --claim in fresh Ren session, enter plan mode, this bead is the anchor`. Plan mode reads the bead's description and design, decomposes into atomic implementation beads, exits. No separate plan file.
 
-3. **Memory entry.** The output is a behavioral rule or identity insight, not a thing to build. Write to `~/.claude/agent-memory/prometheus/<topic>.md`, add a one-line index entry to `MEMORY.md`, close the workshop bead with a reason. The insight changes how Prometheus operates, not what code exists.
+3. **Memory entry.** The output is a behavioral rule or identity insight, not a thing to build. Record it with `bd remember "<insight>"`, then close the workshop bead with a reason. The insight changes how Ren operates, not what code exists.
 
 4. **Kill.** Workshop revealed the idea was bad, redundant, or solving a non-problem. Close the workshop bead with a reason that captures **why** it was killed. The killed section of the design field is sacred — it stops future workshops from re-litigating decisions. "Nothing" is a first-class outcome.
 
@@ -232,8 +232,8 @@ If a group's right answer is a kill, say so plainly. Do not soften it. Do not ma
 | Cross-project dump | `bd update <id> --append-notes="[cross-project: <target>] <content>"` |
 | Disposal — kill | `bd close <id> --reason="<why killed>"` |
 | Disposal — child bead | `bd create --parent=<id> --type=task --priority=<p> --title="<spec>" --body-file=<impl spec>`, then `bd update <id> --append-notes="spawned <child-id>: <thread>"`, then `bd close <id> --reason="disposed to <child-id>"` |
-| Disposal — plan-mode handoff | `bd update <id> --append-notes="HANDOFF: bd update <id> --claim in fresh Prometheus session, enter plan mode"` (bead stays open, paused) |
-| Disposal — memory entry | Write `~/.claude/agent-memory/prometheus/<topic>.md`, update `MEMORY.md` index, then `bd close <id> --reason="disposed to memory: <topic>"` |
+| Disposal — plan-mode handoff | `bd update <id> --append-notes="HANDOFF: bd update <id> --claim in fresh Ren session, enter plan mode"` (bead stays open, paused) |
+| Disposal — memory entry | `bd remember "<insight>"`, then `bd close <id> --reason="disposed to memory: <topic>"` |
 | Disposal — office-hours graduation | `bd close <id> --reason="graduating to /office-hours"`, then invoke `/office-hours` |
 | Pause (non-disposal carry) | Leave bead open. Append a short note summarizing where thinking left off: `bd update <id> --append-notes="PAUSED <date>: <summary>"` |
 
