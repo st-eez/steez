@@ -215,7 +215,9 @@ case "$MODEL" in
   prometheus) LAUNCH_CMD="prometheus" ;;
   ren)        LAUNCH_CMD="ren" ;;
   claude)     LAUNCH_CMD="claude --dangerously-skip-permissions" ;;
-  codex)      LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox" ;;
+  # Codex blocks request_user_input in Default mode unless this feature is
+  # enabled. agent-state's blocked:question detection depends on it.
+  codex)      LAUNCH_CMD="codex --dangerously-bypass-approvals-and-sandbox --enable default_mode_request_user_input" ;;
 esac
 
 echo "MODEL=$MODEL"

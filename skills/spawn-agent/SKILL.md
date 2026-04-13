@@ -209,7 +209,7 @@ The script outputs structured key=value lines:
 - `AMBIGUOUS=N` + `CANDIDATE=...` lines + exit 2. Multiple directory matches. Present the candidates to the user and re-run with the full path via `--dir /full/path/here`.
 - No `WORKING` or `IDLE` after 15 seconds. Agent failed to start or is stuck. Check the target pane manually with `agent-state`.
 
-**Codex hook requirement.** Reliable Codex working/idle detection depends on the Codex `SessionStart` hook setting `@transcript_path` in the pane. Install `shared/steez/hooks/codex-session-start.sh`, enable `codex_hooks = true` in `$HOME/.codex/config.toml`, and register the hook in `$HOME/.codex/hooks.json`. Without that, `agent-state` falls back to process and screen heuristics and gets less trustworthy.
+**Codex hook requirement.** Reliable Codex working/idle detection depends on the Codex `SessionStart` hook setting `@transcript_path` in the pane. Install `shared/steez/hooks/codex-session-start.sh`, enable `codex_hooks = true` in `$HOME/.codex/config.toml`, and register the hook in `$HOME/.codex/hooks.json`. Spawned Codex sessions also need the `default_mode_request_user_input` feature enabled to emit a real `blocked:question` state; `scripts/spawn.sh` now injects that flag automatically. Without the hook wiring, `agent-state` falls back to process and screen heuristics and gets less trustworthy.
 
 **Directory resolution** uses a tiered cascade:
 1. Literal paths (`/foo`, `~/foo`, `./foo`) → used directly
