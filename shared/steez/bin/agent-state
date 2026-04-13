@@ -99,8 +99,233 @@ detect_agent() {
   esac
 }
 
+transcript_session_id() {
+  local transcript="${1:-}"
+  [[ -n "$transcript" && -r "$transcript" ]] || return 1
+
+  python3 - "$transcript" <<'PYEOF'
+import os
+import re
+import sys
+
+base = os.path.basename(sys.argv[1])
+if base.endswith(".jsonl"):
+    base = base[:-6]
+
+match = re.match(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$", base)
+print(match.group(1) if match else base)
+PYEOF
+}
+
+artifact_state() {
+  local agent="$1" transcript="$2" session_id="${3:-}"
+  [[ -n "$transcript" && -r "$transcript" ]] || return 1
+
+  python3 - "$agent" "$transcript" "$session_id" "$HOME/.steez/agent-state/claude" "$HOME/.codex/log/codex-tui.log" <<'PYEOF'
+import datetime as dt
+import json
+import os
+import re
+import sys
+
+agent, transcript, session_id, claude_state_dir, codex_log = sys.argv[1:]
+
+def load_jsonl(path):
+    out = []
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                continue
+    return out
+
+def derive_session_id(path, value):
+    if value:
+        return value
+    base = os.path.basename(path)
+    if base.endswith(".jsonl"):
+        base = base[:-6]
+    match = re.match(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$", base)
+    return match.group(1) if match else base
+
+def claude_blocked_state(lines):
+    resolved = set()
+    for obj in reversed(lines):
+        if obj.get("type") == "user":
+            if obj.get("isMeta") or obj.get("isSidechain"):
+                continue
+            content = obj.get("message", {}).get("content")
+            if isinstance(content, str):
+                break
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        tool_use_id = block.get("tool_use_id")
+                        if tool_use_id:
+                            resolved.add(tool_use_id)
+            continue
+
+        if obj.get("type") != "assistant" or obj.get("isSidechain"):
+            continue
+
+        content = obj.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+
+        for block in reversed(content):
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_use_id = block.get("id")
+            if tool_use_id and tool_use_id in resolved:
+                continue
+            if block.get("name") == "AskUserQuestion":
+                return "blocked:question"
+            return "pending_tool"
+
+    return ""
+
+def codex_waiting_for_approval(thread_id, log_path):
+    if not thread_id or not os.path.exists(log_path):
+        return False
+
+    pattern = f"thread_id={thread_id}"
+    block_size = 65536
+    max_bytes = 8 * 1024 * 1024
+    matched = []
+
+    with open(log_path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        pos = fh.tell()
+        carry = b""
+        consumed = 0
+
+        while pos > 0 and consumed < max_bytes and len(matched) < 6:
+            read_size = min(block_size, pos)
+            pos -= read_size
+            consumed += read_size
+            fh.seek(pos)
+            chunk = fh.read(read_size)
+            carry = chunk + carry
+            lines = carry.splitlines()
+
+            if pos > 0:
+                carry = lines[0] if lines else b""
+                lines = lines[1:]
+            else:
+                carry = b""
+
+            for raw in reversed(lines):
+                try:
+                    line = raw.decode("utf-8", "ignore")
+                except Exception:
+                    continue
+                if pattern in line:
+                    matched.append(line)
+                    if len(matched) >= 6:
+                        break
+
+    if len(matched) < 2:
+        return False
+
+    latest = matched[0]
+    if "client: close" not in latest:
+        return False
+
+    if not any("ToolCall:" in line for line in matched[1:]):
+        return False
+
+    timestamp = latest.split(" ", 1)[0]
+    try:
+        last_at = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except Exception:
+        return False
+
+    age = (dt.datetime.now(dt.timezone.utc) - last_at).total_seconds()
+    return age >= 3.0
+
+def codex_state(lines, thread_id):
+    resolved = set()
+    for obj in lines:
+        if obj.get("type") == "response_item" and obj.get("payload", {}).get("type") == "function_call_output":
+            call_id = obj.get("payload", {}).get("call_id")
+            if call_id:
+                resolved.add(call_id)
+
+    for obj in reversed(lines):
+        if obj.get("type") == "event_msg":
+            payload_type = obj.get("payload", {}).get("type")
+            if payload_type == "task_complete":
+                return "idle"
+            if payload_type == "user_message":
+                return "working"
+            continue
+
+        if obj.get("type") != "response_item":
+            continue
+
+        payload = obj.get("payload", {})
+        payload_type = payload.get("type")
+
+        if payload_type == "function_call":
+            call_id = payload.get("call_id")
+            if call_id and call_id in resolved:
+                continue
+            if payload.get("name") == "request_user_input":
+                return "blocked:question"
+            return "working"
+
+        if payload_type == "custom_tool_call":
+            return "blocked:permission" if codex_waiting_for_approval(thread_id, codex_log) else "working"
+
+    return ""
+
+lines = load_jsonl(transcript)
+if not lines:
+    raise SystemExit(1)
+
+if agent in {"claude", "ren", "prometheus"}:
+    state = claude_blocked_state(lines)
+    if state == "blocked:question":
+        print(state)
+        raise SystemExit(0)
+    if state == "pending_tool":
+        sid = derive_session_id(transcript, session_id)
+        state_path = os.path.join(claude_state_dir, f"{sid}.json")
+        if os.path.exists(state_path):
+            try:
+                with open(state_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except Exception:
+                data = {}
+
+            requested_at = float(data.get("requested_at") or 0)
+            transcript_path = data.get("transcript_path") or ""
+            transcript_mtime = os.path.getmtime(transcript)
+            if (not transcript_path or transcript_path == transcript) and (not requested_at or transcript_mtime <= requested_at + 0.5):
+                print("blocked:permission")
+                raise SystemExit(0)
+
+        print("working")
+        raise SystemExit(0)
+
+    raise SystemExit(1)
+
+if agent == "codex":
+    state = codex_state(lines, derive_session_id(transcript, session_id))
+    if state:
+        print(state)
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PYEOF
+}
+
 detect_state() {
-  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}"
+  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}" session_id="${5:-}"
 
   local name prefix
   if [[ "$title" == *" "* ]]; then
@@ -111,84 +336,32 @@ detect_state() {
     prefix=0
   fi
 
-  local state
-  if [[ "$tail_text" == *"Esc to cancel"* ]] || [[ "$tail_text" == *"esc to cancel"* ]]; then
-    if [[ "$tail_text" == *"Enter to select"* ]]; then
-      state="blocked:question"
-    elif [[ "$tail_text" == *"Tab to amend"* ]]; then
-      state="blocked:permission"
-    elif [[ "$tail_text" == *"enter to confirm"* ]]; then
-      state="blocked:permission"
-    else
-      state="blocked:unknown"
+  local state blocked_from_screen=""
+  if [[ "$agent" == "claude" || "$agent" == "ren" || "$agent" == "prometheus" ]]; then
+    if [[ "$tail_text" == *"Tab to amend"* ]] || [[ "$tail_text" == *"Do you want to proceed?"* ]] || [[ "$tail_text" == *"Do you want to overwrite"* ]]; then
+      blocked_from_screen="blocked:permission"
+    elif [[ "$tail_text" == *"Enter to select"* ]] && [[ "$tail_text" == *"Chat about this"* ]]; then
+      blocked_from_screen="blocked:question"
+    elif [[ "$tail_text" == *"Esc to cancel"* ]] || [[ "$tail_text" == *"esc to cancel"* ]]; then
+      blocked_from_screen="blocked:unknown"
     fi
+  fi
+
+  if [[ -n "$blocked_from_screen" ]]; then
+    state="$blocked_from_screen"
+  elif state_from_artifacts=$(artifact_state "$agent" "$transcript" "$session_id" 2>/dev/null); then
+    state="$state_from_artifacts"
   elif (( prefix >= 0x2800 && prefix <= 0x28FF )); then
     state="working"
+  elif [[ "$agent" == "codex" && ( "$tail_text" == ›* || "$tail_text" == *$'\n›'* ) ]]; then
+    state="idle"
   elif [[ "$agent" == "codex" ]]; then
-    if state_from_transcript=$(codex_transcript_state "$transcript" 2>/dev/null); then
-      state="$state_from_transcript"
-    elif [[ "$tail_text" == ›* ]] || [[ "$tail_text" == *$'\n›'* ]]; then
-      state="idle"
-    else
-      state="working"
-    fi
+    state="working"
   else
     state="idle"
   fi
 
   echo "$state|$name"
-}
-
-codex_transcript_state() {
-  local transcript="$1"
-  [[ -n "$transcript" && -r "$transcript" ]] || return 1
-
-  python3 - "$transcript" <<'PYEOF'
-import json
-import os
-import sys
-
-path = sys.argv[1]
-block_size = 8192
-
-with open(path, "rb") as fh:
-    fh.seek(0, os.SEEK_END)
-    pos = fh.tell()
-    carry = ""
-
-    while pos > 0:
-        read_size = min(block_size, pos)
-        pos -= read_size
-        fh.seek(pos)
-        chunk = fh.read(read_size).decode("utf-8", "ignore")
-        carry = chunk + carry
-        lines = carry.splitlines()
-
-        if pos > 0:
-            carry = lines[0] if lines else ""
-            lines = lines[1:]
-        else:
-            carry = ""
-
-        for line in reversed(lines):
-            if not line.strip():
-                continue
-            try:
-                obj = json.loads(line)
-            except Exception:
-                continue
-            if obj.get("type") != "event_msg":
-                continue
-            payload_type = obj.get("payload", {}).get("type")
-            if payload_type == "task_complete":
-                print("idle")
-                raise SystemExit(0)
-            if payload_type == "user_message":
-                print("working")
-                raise SystemExit(0)
-
-raise SystemExit(1)
-PYEOF
 }
 
 find_transcript() {
@@ -270,18 +443,21 @@ check_pane() {
   fi
 
   local transcript_for_state=""
-  if [[ "$include_detail" == "true" || "$agent" == "codex" ]]; then
-    transcript_for_state=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+  transcript_for_state=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+
+  local session_id=""
+  session_id=$(tmux show-options -pv -t "$pane_id" @session_id 2>/dev/null) || true
+  if [[ -z "$session_id" && -n "$transcript_for_state" ]]; then
+    session_id=$(transcript_session_id "$transcript_for_state" 2>/dev/null) || true
   fi
 
   local result
-  result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript_for_state")
+  result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript_for_state" "$session_id")
   local state="${result%%|*}"
   local name="${result#*|}"
 
-  local session_id="" cwd="" transcript=""
+  local cwd="" transcript=""
   if [[ "$include_detail" == "true" ]]; then
-    session_id=$(tmux show-options -pv -t "$pane_id" @session_id 2>/dev/null) || true
     cwd="$pane_cwd"
     transcript="$transcript_for_state"
   fi
@@ -301,12 +477,14 @@ render_layout() {
     if [[ "$agent" != "unknown" ]]; then
       local tail_text
       tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
-      local transcript=""
-      if [[ "$agent" == "codex" ]]; then
-        transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "" 2>/dev/null) || true
+      local transcript="" session_id=""
+      transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "" 2>/dev/null) || true
+      session_id=$(tmux show-options -pv -t "$pane_id" @session_id 2>/dev/null) || true
+      if [[ -z "$session_id" && -n "$transcript" ]]; then
+        session_id=$(transcript_session_id "$transcript" 2>/dev/null) || true
       fi
       local result
-      result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript")
+      result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id")
       state="${result%%|*}"
       name="${result#*|}"
     else
@@ -560,11 +738,13 @@ main() {
           [[ "$agent" == "unknown" ]] && continue
           local tail_text result state name
           tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
-          local transcript=""
-          if [[ "$agent" == "codex" ]]; then
-            transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+          local transcript="" session_id=""
+          transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+          session_id=$(tmux show-options -pv -t "$pane_id" @session_id 2>/dev/null) || true
+          if [[ -z "$session_id" && -n "$transcript" ]]; then
+            session_id=$(transcript_session_id "$transcript" 2>/dev/null) || true
           fi
-          result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript")
+          result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id")
           state="${result%%|*}"
           name="${result#*|}"
           printf '%s\t%s\t%s\t%s\n' "$pane_id" "$agent" "$state" "$name"
