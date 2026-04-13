@@ -57,6 +57,52 @@ pane_exists() {
   tmux display-message -t "$1" -p '#{pane_id}' >/dev/null 2>&1
 }
 
+process_line_has_agent() {
+  local line="$1"
+  [[ -n "$line" ]] || return 1
+
+  local cmd
+  cmd=$(awk '{ n=split($3, a, "/"); print a[n] }' <<< "$line")
+  case "$cmd" in
+    claude|codex)
+      return 0
+      ;;
+    node)
+      [[ "$line" == *codex* || "$line" == *claude* ]]
+      return
+      ;;
+  esac
+
+  return 1
+}
+
+pane_has_known_agent() {
+  local pane="$1"
+  local pane_pid ps_snapshot proc_line child_line
+
+  pane_pid=$(tmux display-message -t "$pane" -p '#{pane_pid}' 2>/dev/null || true)
+  [[ -n "$pane_pid" ]] || return 2
+
+  ps_snapshot=$(ps -eo pid,ppid,command 2>/dev/null || true)
+  [[ -n "$ps_snapshot" ]] || return 2
+
+  proc_line=$(awk -v pid="$pane_pid" '$1 == pid { print; exit }' <<< "$ps_snapshot")
+  [[ -n "$proc_line" ]] || return 2
+
+  if process_line_has_agent "$proc_line"; then
+    return 0
+  fi
+
+  while IFS= read -r child_line; do
+    [[ -z "$child_line" ]] && continue
+    if process_line_has_agent "$child_line"; then
+      return 0
+    fi
+  done < <(awk -v ppid="$pane_pid" '$2 == ppid { print }' <<< "$ps_snapshot")
+
+  return 1
+}
+
 # ---- Singleton enforcement ----
 if [[ -f "$PIDFILE" ]]; then
   old_pid=$(cat "$PIDFILE" 2>/dev/null || true)
@@ -288,12 +334,24 @@ while true; do
 
     if [[ -z "$cur" ]]; then
       # Transient failure (unparseable pane, window resize race, etc).
-      # Keep the watch alive while the pane still exists. A live pane can
-      # still be mid-turn even if agent-state fails transiently.
+      # Keep the watch alive while the pane still exists AND a recognized
+      # agent is still running there. Drop immediately if the pane lives
+      # on after the agent process exits.
       FAIL_COUNTS[$pane]=$(( ${FAIL_COUNTS[$pane]:-0} + 1 ))
       if pane_exists "$pane"; then
-        if (( FAIL_COUNTS[$pane] % MAX_STATE_FAILURES == 0 )); then
-          log_line WARN daemon "state read failed for live pane $pane ${FAIL_COUNTS[$pane]} times; retaining watch"
+        if pane_has_known_agent "$pane"; then
+          if (( FAIL_COUNTS[$pane] % MAX_STATE_FAILURES == 0 )); then
+            log_line WARN daemon "state read failed for live pane $pane ${FAIL_COUNTS[$pane]} times; retaining watch"
+          fi
+        else
+          agent_rc=$?
+          if [[ "$agent_rc" == "1" ]]; then
+            log_line WARN daemon "dropping watch on live pane $pane after ${FAIL_COUNTS[$pane]} failed state reads because no recognized agent is running"
+            remove_watch "$pane"
+            unset "FAIL_COUNTS[$pane]"
+          elif (( FAIL_COUNTS[$pane] % MAX_STATE_FAILURES == 0 )); then
+            log_line WARN daemon "state read failed for live pane $pane ${FAIL_COUNTS[$pane]} times; agent presence indeterminate, retaining watch"
+          fi
         fi
       else
         log_line WARN daemon "dropping watch on missing pane $pane after ${FAIL_COUNTS[$pane]} failed state reads"
