@@ -19,6 +19,7 @@ import { nsAddRow } from './commands/ns-add-row';
 import { nsDiff } from './commands/ns-diff';
 import { nsVerify } from './commands/ns-verify';
 import { nsLogin } from './commands/ns-login';
+import { nsScriptLog } from './commands/ns-script-log';
 
 export async function handleNsCommand(
   command: string,
@@ -61,9 +62,12 @@ export async function handleNsCommand(
     case 'login':
       return nsLogin(args, browserManager);
 
+    case 'script-log':
+      return nsScriptLog(args, browserManager);
+
     default:
       return {
-        display: `Unknown NS command: ${nsCommand}\nAvailable: navigate, inspect, set, add-row, save, query, status, cancel, diff, verify, login`,
+        display: `Unknown NS command: ${nsCommand}\nAvailable: navigate, inspect, set, add-row, save, query, status, cancel, diff, verify, login, script-log`,
         ok: false,
       };
   }
