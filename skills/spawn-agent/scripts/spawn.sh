@@ -223,88 +223,31 @@ esac
 echo "MODEL=$MODEL"
 
 # --- Launch agent ---
-# Pass prompt as a CLI argument so the agent starts working immediately.
 #
-# Two things have to be right here:
-#
-# 1. Shell-escape via printf '%q'. The target pane's shell re-parses the
-#    command line we deliver, so raw backticks, $vars, $(...), and inner
-#    quotes would be interpreted by the target shell and corrupt the prompt
-#    before the agent ever sees it. printf '%q' produces a shell-safe
-#    quoted form that round-trips cleanly in both bash and zsh across every
-#    special-character class (backticks, $VAR, ${VAR}, $(...), $((...)),
-#    single/double quotes, backslashes, newlines via $'\n', glob
-#    metacharacters, multibyte Unicode). Do NOT wrap the result in extra
-#    quotes — printf %q provides its own quoting.
-#
-# 2. Deliver via tmux load-buffer + paste-buffer, not send-keys. send-keys
-#    types the constructed command as keystrokes through the target pane's
-#    TTY line buffer, which caps around 4 KB — multi-KB prompts (the whole
-#    point of passing a brief at spawn time) get truncated or stuck. The
-#    paste-buffer path writes the bytes into a tmux buffer and pastes them
-#    in one operation, bypassing the line-buffer limit entirely. This is
-#    the same mechanism agent-deliver uses for in-session messages to a
-#    running agent's composer; spawn.sh now uses it for the initial
-#    command line too. Enter is still delivered as a separate send-keys
-#    keystroke after a brief pause (the agent composer/shell both need
-#    the Enter as a discrete event, not bundled into the paste).
-if [ -n "$PROMPT_TEXT" ]; then
-  CMD_LINE="$LAUNCH_CMD $(printf '%q' "$PROMPT_TEXT")"
-  SPAWN_BUF="spawn-$$"
-  trap 'tmux delete-buffer -b "$SPAWN_BUF" 2>/dev/null || true' EXIT
-  printf '%s' "$CMD_LINE" | tmux load-buffer -b "$SPAWN_BUF" -
-  tmux paste-buffer -b "$SPAWN_BUF" -t "$NEW_TARGET" -d
-else
-  tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
-fi
+# Always launch the agent bare. Long prompts go through agent-send after a
+# fixed boot wait so they ride the safe paste-buffer path instead of getting
+# inflated into a giant shell command line that the target pane truncates.
+tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
 sleep 0.3
 tmux send-keys -t "$NEW_TARGET" Enter
-[ -n "$PROMPT_TEXT" ] && echo "PROMPT_SENT"
 
-# --- Poll for agent state ---
-# Wait for agent to boot, load hooks, and begin processing before first poll
+# --- Wait for agent boot, then deliver the initial prompt ---
 sleep 5
-for i in $(seq 1 10); do
-  sleep 1
-  state_out=$("$AGENT_STATE" "$NEW_TARGET" 2>/dev/null) || continue
-  state=$(echo "$state_out" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['state'])" 2>/dev/null) || continue
-  if [[ "$state" == "working" ]]; then
-    echo "WORKING"
-    break
-  elif [[ "$state" == "idle" ]]; then
-    echo "IDLE"
-    break
-  fi
-done
 
-# --- Register watch for the initial prompt ---
-# If a prompt was passed via --prompt, the agent is (or will be) working
-# on it right now. Register a background watch so the spawner pane gets
-# a notification when the agent finishes. This is the auto-registration
-# equivalent of what agent-send does for subsequent messages; without it,
-# the very first turn of every prompted spawn would be unwatched.
-#
-# Baseline is hardcoded to "working". Why not the observed state from the
-# polling loop above? The polling loop races with agent boot — a fast
-# agent may already be back to idle, a slow agent may not have loaded yet
-# and still show the shell prompt. Either way, we know semantically that
-# the agent is (or will be) processing the prompt, so baseline=working is
-# the correct intent. The daemon's transition rule handles both races:
-# - agent still booting:  shell idle -> working -> idle triggers fire
-#     on the final working -> idle transition.
-# - agent already done:   current=idle on first daemon poll, baseline=
-#     working != idle, fire immediately.
-#
-# Why this lives in spawn.sh and not in the skill prose: the script is
-# the single canonical entry point for all /spawn-agent calls, so wiring
-# the watch here covers every invocation deterministically rather than
-# relying on Claude to remember to run `agent-watch add` after every spawn.
-if [ -n "$PROMPT_TEXT" ] && [ "$NO_WATCH" = "false" ]; then
+if [ -n "$PROMPT_TEXT" ]; then
   PROMPT_SUMMARY=$(printf '%s' "$PROMPT_TEXT" | tr -d '\n\r' | cut -c1-40)
-  if "$HOME/.steez/bin/agent-watch" add "$NEW_TARGET" \
-      --spawner "$SELF_ID" \
-      --baseline "working" \
-      --label "$MODEL $PROMPT_SUMMARY" >/dev/null 2>&1; then
-    echo "WATCHED=$NEW_TARGET SPAWNER=$SELF_ID BASELINE=working"
+  SEND_CMD=("$HOME/.steez/bin/agent-send" --spawner "$SELF_ID")
+  if [ "$NO_WATCH" = "true" ]; then
+    SEND_CMD+=(--no-watch)
+  else
+    SEND_CMD+=(--label "$MODEL $PROMPT_SUMMARY" --emit-watch-line)
   fi
+  send_out=$("${SEND_CMD[@]}" "$NEW_TARGET" "$PROMPT_TEXT")
+  echo "PROMPT_SENT"
+  echo "WORKING"
+  if [ -n "$send_out" ]; then
+    printf '%s\n' "$send_out"
+  fi
+else
+  echo "IDLE"
 fi

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: agent-send <pane> "message"
+Usage: agent-send [--no-watch] [--label <str>] [--spawner <pane>] [--emit-watch-line] <pane> "message"
 
 Send a message to a Claude Code, Ren, or Codex CLI pane.
 
@@ -25,6 +25,13 @@ Arguments:
   <message>  Message body. For multi-line, embed real newlines in a quoted
              string or use a heredoc.
 
+Options:
+  --no-watch         Skip auto-registering a completion watch.
+  --label <str>      Override the watch label.
+  --spawner <pane>   Override which pane gets the completion notification.
+  --emit-watch-line  Print WATCHED=<pane> SPAWNER=<pane> BASELINE=working
+                     after a successful watch registration.
+
 Exit codes:
   0  Message submitted
   1  Generic error (bad args, send failed)
@@ -35,7 +42,26 @@ EOF
 
 [[ $# -eq 0 ]] && { echo "error: missing arguments" >&2; exit 1; }
 case "$1" in -h|--help) usage ;; esac
-[[ $# -eq 2 ]] || { echo "error: usage: agent-send <pane> \"message\"" >&2; exit 1; }
+
+WATCH=true
+WATCH_LABEL=""
+SPAWNER_PANE="${TMUX_PANE:-}"
+EMIT_WATCH_LINE=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-watch)        WATCH=false; shift ;;
+    --label)           WATCH_LABEL="$2"; shift 2 ;;
+    --spawner)         SPAWNER_PANE="$2"; shift 2 ;;
+    --emit-watch-line) EMIT_WATCH_LINE=true; shift ;;
+    -h|--help)         usage ;;
+    --)                shift; break ;;
+    -*)                echo "error: unknown argument '$1'" >&2; exit 1 ;;
+    *)                 break ;;
+  esac
+done
+
+[[ $# -eq 2 ]] || { echo "error: usage: agent-send [--no-watch] [--label <str>] [--spawner <pane>] [--emit-watch-line] <pane> \"message\"" >&2; exit 1; }
 
 PANE="$1"
 MSG="$2"
@@ -72,17 +98,22 @@ DELIVER_RC=0
 #                                daemon fires on first poll
 #   - agent-still-booting/idle:  same as above — correct notification
 #
-# Label is inferred by agent-watch itself via agent-state (it falls back
-# to the agent name when --label is omitted), so no state read is needed
-# here either.
-if [[ $DELIVER_RC -eq 0 ]] && [[ -n "${TMUX_PANE:-}" ]]; then
-  SPAWNER_PANE="$TMUX_PANE"
-  (
-    "$HOME/.steez/bin/agent-watch" add "$PANE" \
-      --spawner "$SPAWNER_PANE" \
-      --baseline "working" >/dev/null 2>&1 || true
-  ) </dev/null >/dev/null 2>&1 &
-  disown 2>/dev/null || true
+# Label is inferred by agent-watch itself via agent-state when --label is
+# omitted, so no extra state read is needed here either.
+if [[ $DELIVER_RC -eq 0 ]] && [[ "$WATCH" == "true" ]] && [[ -n "$SPAWNER_PANE" ]]; then
+  WATCH_ARGS=(add "$PANE" --spawner "$SPAWNER_PANE" --baseline "working")
+  [[ -n "$WATCH_LABEL" ]] && WATCH_ARGS+=(--label "$WATCH_LABEL")
+
+  if [[ "$EMIT_WATCH_LINE" == "true" ]]; then
+    if "$HOME/.steez/bin/agent-watch" "${WATCH_ARGS[@]}" >/dev/null 2>&1; then
+      echo "WATCHED=$PANE SPAWNER=$SPAWNER_PANE BASELINE=working"
+    fi
+  else
+    (
+      "$HOME/.steez/bin/agent-watch" "${WATCH_ARGS[@]}" >/dev/null 2>&1 || true
+    ) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+  fi
 fi
 
 exit $DELIVER_RC
