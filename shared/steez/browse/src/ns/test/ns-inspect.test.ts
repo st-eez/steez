@@ -118,13 +118,17 @@ describe('ns inspect', () => {
     expect(output.ok).toBe(true);
     expect(output.display).toContain('Sublist: item');
     expect(output.display).toContain('2 lines');
-    expect(output.display).toContain('5 columns');
+    expect(output.display).toContain('6 columns');
 
-    // Line values
+    // Line values include custom columns resolved by real scriptid
     expect(output.display).toContain('1:');
     expect(output.display).toContain('item=100');
+    expect(output.display).toContain('custcol_est_gp_pct=45');
+    expect(output.display).toContain('custcol_margin=40.00');
     expect(output.display).toContain('2:');
     expect(output.display).toContain('item=200');
+    expect(output.display).toContain('custcol_est_gp_pct=30');
+    expect(output.display).toContain('custcol_margin=48.00');
   });
 
   test('inspect on non-NS page returns error', async () => {
@@ -149,14 +153,34 @@ describe('ns inspect', () => {
     // Must fill group with mandatory column
     expect(output.display).toContain('Must fill (1)');
     expect(output.display).toContain('item | Item | select | mandatory');
-    // Can fill group with non-mandatory columns
-    expect(output.display).toContain('Can fill (4)');
+    // Can fill group with non-mandatory columns (4 visible + 1 hidden custom)
+    expect(output.display).toContain('Can fill (5)');
     expect(output.display).toContain('quantity | Quantity');
     expect(output.display).toContain('rate | Rate');
     expect(output.display).toContain('amount | Amount');
+    // Custom column resolved to real scriptid, not display alias
+    expect(output.display).toContain('custcol_est_gp_pct | Est. GP %');
+    // Hidden custom column discovered from container scan
+    expect(output.display).toContain('custcol_margin | Margin');
     // Column types from nlapiGetLineItemField
     expect(output.display).toContain('integer');
     expect(output.display).toContain('currency');
+    expect(output.display).toContain('percent');
+  });
+
+  test('inspect --sublists resolves real scriptids from data row elements', async () => {
+    const page = bm.getPage();
+    await page.goto(baseUrl + '/ns-form.html');
+
+    const output = await nsInspect(['--sublists'], bm);
+
+    expect(output.ok).toBe(true);
+    // Header "Est. GP %" would produce display alias "estgp" without data row resolution.
+    // With the fix, data row element span#custcol_est_gp_pctval1 reveals the real scriptid.
+    expect(output.display).toContain('custcol_est_gp_pct');
+    expect(output.display).not.toContain('estgp');
+    // Hidden column custcol_margin has no header but is discovered via container scan
+    expect(output.display).toContain('custcol_margin');
   });
 
   test('inspect without --sublists does not include Sublist lines', async () => {
