@@ -266,6 +266,14 @@ cmd_add() {
     label=$(infer_label "$pane")
   fi
 
+  # Remove any existing watch for this pane (idempotent add)
+  local tmp="$WATCHES.tmp.$$"
+  if jq -c --arg p "$pane" 'select(.pane != $p)' "$WATCHES" > "$tmp" 2>/dev/null; then
+    mv -f "$tmp" "$WATCHES"
+  else
+    rm -f "$tmp"
+  fi
+
   local entry
   entry=$(jq -cn \
     --arg pane "$pane" \

@@ -320,6 +320,9 @@ while true; do
   snapshot=$(cat "$WATCHES" 2>/dev/null || true)
   [[ -n "$snapshot" ]] || { sleep "$POLL_INTERVAL"; continue; }
 
+  # Defense in depth: dedupe by pane, keeping the latest entry per pane.
+  snapshot=$(printf '%s' "$snapshot" | jq -c -s 'group_by(.pane) | map(last) | .[]' 2>/dev/null || printf '%s' "$snapshot")
+
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
 
