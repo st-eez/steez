@@ -3,6 +3,7 @@
 ## Conventions
 
 - When adding a new skill, also add its entry to `skills.json` (name, category, description max 80 chars)
+- When behavior changes, update the matching spec in `specs/` in the same commit. If no spec exists for the thing you are changing, create one — specs are the source of truth and cannot drift.
 - Use conventional commits: `feat:` | `fix:` | `refactor:` | `docs:` | `chore:`
 - Use absolute paths (`$HOME`, `__dirname`, `__file__`) — never relative
 - Never hardcode PII or env-specific values — resolve from config at runtime
