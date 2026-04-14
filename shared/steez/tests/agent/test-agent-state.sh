@@ -6,6 +6,9 @@ source "$(dirname "$0")/helpers.sh"
 setup_test_env
 trap cleanup_test_env EXIT
 source_agent_state
+# find_transcript + the --layout/--all paths call real tmux; install the mock
+# once so later suites can register pane vars/captures without reinitialising.
+create_mock_tmux
 
 # ----- detect_agent -----
 
@@ -238,5 +241,149 @@ test_args_unknown_option() {
   assert_contains "$out" "unknown option"
 }
 run_test "unknown option exits 1" test_args_unknown_option
+
+# ----- find_transcript (claude-only filesystem fallback) -----
+#
+# The spec states that `ren` relies on the SessionStart hook's pane variable
+# and must NOT fall back to `~/.claude/projects/{cwd-key}/`. A mutant that
+# folds `ren` into the claude filesystem branch must fail here.
+
+suite "find_transcript"
+
+test_find_transcript_ren_no_filesystem_fallback() {
+  local cwd="/tmp/fakeproj-ren"
+  local path_key="-tmp-fakeproj-ren"
+  mkdir -p "$HOME/.claude/projects/$path_key"
+  : > "$HOME/.claude/projects/$path_key/ren-session.jsonl"
+
+  local out
+  out=$(find_transcript "ren" "%1" 1234 "$cwd")
+  assert_eq "" "$out"
+}
+run_test "ren does not use claude filesystem fallback" test_find_transcript_ren_no_filesystem_fallback
+
+test_find_transcript_claude_filesystem_fallback() {
+  # Positive control: identical setup resolves for agent=claude.
+  local cwd="/tmp/fakeproj-claude"
+  local path_key="-tmp-fakeproj-claude"
+  mkdir -p "$HOME/.claude/projects/$path_key"
+  : > "$HOME/.claude/projects/$path_key/claude-session.jsonl"
+
+  local out
+  out=$(find_transcript "claude" "%1" 1234 "$cwd")
+  assert_eq "$HOME/.claude/projects/$path_key/claude-session.jsonl" "$out"
+}
+run_test "claude uses claude filesystem fallback" test_find_transcript_claude_filesystem_fallback
+
+test_find_transcript_pane_variable_priority() {
+  # Pane variable (written by the SessionStart hook) wins regardless of agent.
+  set_mock_tmux_var "%7" "@transcript_path" "/tmp/from-hook.jsonl"
+  local out
+  out=$(find_transcript "ren" "%7" 9999 "/tmp/anywhere")
+  assert_eq "/tmp/from-hook.jsonl" "$out"
+}
+run_test "pane variable wins for ren" test_find_transcript_pane_variable_priority
+
+# ----- Public modes end-to-end -----
+#
+# Exercise the executable surface the spec claims: single-pane default,
+# --detail, --read, --all (table + --json), and --layout. Each test runs
+# the real agent-state binary against mocked tmux + ps, so the contract
+# can't drift without failing.
+
+suite "public modes (--all, --json, --layout, --read, --detail)"
+
+create_mock_ps
+export MOCK_PS_OUTPUT="  PID  PPID COMMAND
+1001 1000 /usr/local/bin/claude --flag"
+
+# Braille spinner in title (U+2807) — exercises the name-extraction path.
+_E2E_TITLE=$'\xe2\xa0\x87 Doing work'
+_E2E_TRANSCRIPT="$TEST_TMP/e2e.jsonl"
+_E2E_CONTENT="visible scrollback line"
+
+mock_pane "%9" "1001" "$_E2E_TITLE" "/tmp/e2eproj"
+set_mock_tmux_capture "%9" "$_E2E_CONTENT"
+set_mock_tmux_var "%9" "@session_id" "sess-e2e"
+set_mock_tmux_var "%9" "@transcript_path" "$_E2E_TRANSCRIPT"
+# Non-empty window name — `read -r` with IFS=$'\t' collapses adjacent tabs
+# for whitespace IFS chars, so an empty middle field shifts every column
+# one slot left (this is also how real tmux sessions behave — windows
+# always have a name).
+mock_layout_pane "test" 0 "win" "%9" 0 0 80 24 1001 "$_E2E_TITLE"
+
+# Transcript with stop_reason=end_turn → artifact layer reports idle.
+cat > "$_E2E_TRANSCRIPT" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}
+JSONL
+
+test_single_pane_default_json() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%9")
+  assert_json_field "$out" ".pane" "%9"
+  assert_json_field "$out" ".agent" "claude"
+  assert_json_field "$out" ".state" "idle"
+  assert_json_field "$out" ".name" "Doing work"
+}
+run_test "single pane emits JSON object" test_single_pane_default_json
+
+test_single_pane_detail() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%9" --detail)
+  assert_json_field "$out" ".detail.session_id" "sess-e2e"
+  assert_json_field "$out" ".detail.cwd" "/tmp/e2eproj"
+  assert_json_field "$out" ".detail.transcript_path" "$_E2E_TRANSCRIPT"
+}
+run_test "--detail adds detail block" test_single_pane_detail
+
+test_single_pane_read() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%9" --read)
+  assert_json_field "$out" ".content" "$_E2E_CONTENT"
+}
+run_test "--read adds content field" test_single_pane_read
+
+test_all_table() {
+  local out
+  out=$("$BIN_DIR/agent-state" --all)
+  assert_contains "$out" "PANE"
+  assert_contains "$out" "AGENT"
+  assert_contains "$out" "STATE"
+  assert_contains "$out" "NAME"
+  assert_contains "$out" "%9"
+  assert_contains "$out" "claude"
+  assert_contains "$out" "idle"
+}
+run_test "--all emits header + row" test_all_table
+
+test_all_json_array() {
+  local out
+  out=$("$BIN_DIR/agent-state" --all --json)
+  assert_json_field "$out" ".[0].pane" "%9"
+  assert_json_field "$out" ".[0].agent" "claude"
+}
+run_test "--all --json emits JSON array" test_all_json_array
+
+test_all_read_forces_json() {
+  local out
+  out=$("$BIN_DIR/agent-state" --all --read)
+  assert_json_field "$out" ".[0].content" "$_E2E_CONTENT"
+}
+run_test "--all --read forces JSON with content" test_all_read_forces_json
+
+test_all_detail_forces_json() {
+  local out
+  out=$("$BIN_DIR/agent-state" --all --detail)
+  assert_json_field "$out" ".[0].detail.session_id" "sess-e2e"
+}
+run_test "--all --detail forces JSON with detail" test_all_detail_forces_json
+
+test_layout_renders() {
+  local out
+  out=$("$BIN_DIR/agent-state" --layout)
+  assert_contains "$out" "%9"
+  assert_contains "$out" "claude"
+}
+run_test "--layout renders pane id + agent" test_layout_renders
 
 report

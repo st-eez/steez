@@ -143,6 +143,13 @@ MOCK
 # absent from MOCK_TMUX_PANES_FILE all fail non-zero, so tests cannot pass
 # theatrically on a tmux call that real tmux would reject.
 create_mock_tmux() {
+  MOCK_TMUX_VARS_FILE="$TEST_TMP/tmux-vars.tsv"
+  MOCK_TMUX_LAYOUT_FILE="$TEST_TMP/tmux-layout.tsv"
+  MOCK_TMUX_CAPTURE_DIR="$TEST_TMP/tmux-capture"
+  mkdir -p "$MOCK_TMUX_CAPTURE_DIR"
+  touch "$MOCK_TMUX_VARS_FILE" "$MOCK_TMUX_LAYOUT_FILE"
+  export MOCK_TMUX_VARS_FILE MOCK_TMUX_LAYOUT_FILE MOCK_TMUX_CAPTURE_DIR
+
   cat > "$MOCK_BIN/tmux" <<'TMUX_MOCK'
 #!/usr/bin/env bash
 # Optional call log. When MOCK_TMUX_LOG is set, every tmux invocation
@@ -206,6 +213,64 @@ case "$cmd" in
     ;;
   delete-buffer)
     ;;
+  list-panes)
+    # Supports `-a -F <fmt>`. Format selection by substring — agent-state calls
+    # this with two distinct formats (geometry-bearing for --layout, compact
+    # for --all). Unknown formats are rejected so drift surfaces.
+    all=false fmt=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -a) all=true; shift ;;
+        -F) fmt="$2"; shift 2 ;;
+        *) exit 1 ;;
+      esac
+    done
+    [[ "$all" == "true" ]] || exit 1
+    case "$fmt" in
+      *'#{pane_left}'*)
+        [[ -s "${MOCK_TMUX_LAYOUT_FILE:-}" ]] && cat "$MOCK_TMUX_LAYOUT_FILE"
+        ;;
+      *'#{pane_current_path}'*)
+        cat "${MOCK_TMUX_PANES_FILE:-/dev/null}"
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+    ;;
+  show-options)
+    # Usage: show-options -pv -t <pane> <var>. -pv or split -p -v both work.
+    # Missing option returns exit 1 with empty stdout (real tmux behavior).
+    pane="" var=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -p|-v|-pv|-vp) shift ;;
+        -t) pane="$2"; shift 2 ;;
+        *) var="$1"; shift ;;
+      esac
+    done
+    [[ -n "$pane" && -n "$var" ]] || exit 1
+    awk -v p="$pane" -v v="$var" -F $'\t' \
+      '$1==p && $2==v { print $3; found=1; exit } END { exit (found ? 0 : 1) }' \
+      "${MOCK_TMUX_VARS_FILE:-/dev/null}"
+    ;;
+  capture-pane)
+    # Usage: capture-pane -t <pane> -p [-S -]. Returns content from
+    # $MOCK_TMUX_CAPTURE_DIR/<pane> or empty if unset.
+    pane=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) pane="$2"; shift 2 ;;
+        -p) shift ;;
+        -S) shift 2 ;;
+        *) exit 1 ;;
+      esac
+    done
+    [[ -n "$pane" ]] || exit 1
+    if [[ -f "${MOCK_TMUX_CAPTURE_DIR:-}/$pane" ]]; then
+      cat "${MOCK_TMUX_CAPTURE_DIR}/$pane"
+    fi
+    ;;
   *)
     exit 1
     ;;
@@ -229,6 +294,62 @@ mock_pane() {
 mock_pane_alias() {
   local alias="$1" canonical="$2"
   printf '%s\t0\talias\t/tmp\t%s\n' "$alias" "$canonical" >> "$MOCK_TMUX_PANES_FILE"
+}
+
+# Append a row to the 10-field pane layout table consumed by `agent-state --layout`.
+mock_layout_pane() {
+  local session="$1" win_idx="$2" win_name="$3" pane_id="$4"
+  local left="$5" top="$6" width="$7" height="$8"
+  local pane_pid="$9" pane_title="${10}"
+  : "${MOCK_TMUX_LAYOUT_FILE:?call create_mock_tmux before mock_layout_pane}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$session" "$win_idx" "$win_name" "$pane_id" \
+    "$left" "$top" "$width" "$height" "$pane_pid" "$pane_title" \
+    >> "$MOCK_TMUX_LAYOUT_FILE"
+}
+
+# Register a tmux pane variable readable via `tmux show-options -pv -t <pane> <var>`.
+set_mock_tmux_var() {
+  local pane="$1" var="$2" value="$3"
+  : "${MOCK_TMUX_VARS_FILE:?call create_mock_tmux before set_mock_tmux_var}"
+  printf '%s\t%s\t%s\n' "$pane" "$var" "$value" >> "$MOCK_TMUX_VARS_FILE"
+}
+
+# Register pane scrollback content returned by `tmux capture-pane -t <pane>`.
+set_mock_tmux_capture() {
+  local pane="$1" content="$2"
+  : "${MOCK_TMUX_CAPTURE_DIR:?call create_mock_tmux before set_mock_tmux_capture}"
+  printf '%s\n' "$content" > "$MOCK_TMUX_CAPTURE_DIR/$pane"
+}
+
+# Mock `ps` for agent-state's process-tree walking. MOCK_PS_OUTPUT supplies the
+# process table for `-eo pid,ppid,command`. MOCK_PS_REN_PIDS (space-separated)
+# marks pids that should be reported with REN_SESSION=1 under `-E -p <pid>`.
+create_mock_ps() {
+  cat > "$MOCK_BIN/ps" <<'PS_MOCK'
+#!/usr/bin/env bash
+mode="" pid=""
+for a in "$@"; do
+  case "$a" in
+    -eo) mode="eo" ;;
+    -E) mode="E" ;;
+    -p) [[ "$mode" == "E" ]] && mode="Ep" ;;
+    pid,ppid,command) ;;
+    [0-9]*) pid="$a" ;;
+    *) echo "mock ps: unsupported arg: $a" >&2; exit 1 ;;
+  esac
+done
+case "$mode" in
+  eo) printf '%s\n' "${MOCK_PS_OUTPUT:-}" ;;
+  Ep)
+    if [[ " ${MOCK_PS_REN_PIDS:-} " == *" $pid "* ]]; then
+      echo "REN_SESSION=1"
+    fi
+    ;;
+  *) echo "mock ps: unsupported invocation" >&2; exit 1 ;;
+esac
+PS_MOCK
+  chmod +x "$MOCK_BIN/ps"
 }
 
 # Install mock agent scripts at $HOME/.steez/bin/ paths where real scripts
