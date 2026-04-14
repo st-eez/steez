@@ -1041,6 +1041,12 @@ export class BrowserManager {
       if (frame === page.mainFrame()) {
         this.clearRefs();
         this.activeFrame = null; // Navigation invalidates frame context
+        // Breadcrumb so `console` output is easy to slice around page loads.
+        addConsoleEntry({
+          timestamp: Date.now(),
+          level: 'info',
+          text: `--- navigated to ${frame.url()} ---`,
+        });
       }
     });
 

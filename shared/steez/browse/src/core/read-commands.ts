@@ -12,6 +12,29 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TEMP_DIR, isPathWithin } from './platform';
 
+/**
+ * Parse a --since value into an absolute epoch ms threshold.
+ * Accepts a duration (`30s`, `2m`, `1h`, `1d`, `500ms`) or an ISO-8601 timestamp.
+ * Throws with a usable message on invalid input — caller surfaces it to the user.
+ */
+export function parseSinceValue(input: string, now: number = Date.now()): number {
+  const duration = input.match(/^(\d+)(ms|s|m|h|d)$/);
+  if (duration) {
+    const n = Number(duration[1]);
+    const unit = duration[2];
+    const mult =
+      unit === 'ms' ? 1 :
+      unit === 's'  ? 1000 :
+      unit === 'm'  ? 60_000 :
+      unit === 'h'  ? 3_600_000 :
+                      86_400_000; // 'd'
+    return now - n * mult;
+  }
+  const t = Date.parse(input);
+  if (!Number.isNaN(t)) return t;
+  throw new Error(`Invalid --since value: "${input}". Use a duration (30s, 2m, 1h, 1d, 500ms) or ISO-8601 timestamp.`);
+}
+
 /** Detect await keyword, ignoring comments. Accepted risk: await in string literals triggers wrapping (harmless). */
 function hasAwait(code: string): boolean {
   const stripped = code.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
@@ -231,14 +254,27 @@ export async function handleReadCommand(
     }
 
     case 'console': {
-      if (args[0] === '--clear') {
-        consoleBuffer.clear();
-        return 'Console buffer cleared.';
+      let errorsOnly = false;
+      let sinceMs: number | null = null;
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '--clear') {
+          consoleBuffer.clear();
+          return 'Console buffer cleared.';
+        } else if (a === '--errors') {
+          errorsOnly = true;
+        } else if (a === '--since') {
+          const v = args[++i];
+          if (!v) throw new Error('Usage: browse console --since <duration|ISO>');
+          sinceMs = parseSinceValue(v);
+        } else {
+          throw new Error(`Unknown flag for console: ${a}. Use --clear, --errors, --since <duration|ISO>.`);
+        }
       }
-      const entries = args[0] === '--errors'
-        ? consoleBuffer.toArray().filter(e => e.level === 'error' || e.level === 'warning')
-        : consoleBuffer.toArray();
-      if (entries.length === 0) return args[0] === '--errors' ? '(no console errors)' : '(no console messages)';
+      let entries = consoleBuffer.toArray();
+      if (sinceMs !== null) entries = entries.filter(e => e.timestamp >= sinceMs!);
+      if (errorsOnly) entries = entries.filter(e => e.level === 'error' || e.level === 'warning');
+      if (entries.length === 0) return errorsOnly ? '(no console errors)' : '(no console messages)';
       return entries.map(e =>
         `[${new Date(e.timestamp).toISOString()}] [${e.level}] ${e.text}`
       ).join('\n');

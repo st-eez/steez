@@ -9,7 +9,7 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { startTestServer } from './test-server';
 import { BrowserManager } from '../browser-manager';
 import { resolveServerScript } from '../cli';
-import { handleReadCommand } from '../read-commands';
+import { handleReadCommand, parseSinceValue } from '../read-commands';
 import { handleWriteCommand } from '../write-commands';
 import { handleMetaCommand } from '../meta-commands';
 import { consoleBuffer, networkBuffer, dialogBuffer, addConsoleEntry, addNetworkEntry, addDialogEntry, CircularBuffer } from '../buffers';
@@ -1529,6 +1529,91 @@ describe('Console --errors', () => {
     expect(result).toContain('all messages test');
 
     consoleBuffer.clear();
+  });
+});
+
+// ─── Console --since ───────────────────────────────────────────
+
+describe('parseSinceValue', () => {
+  test('parses ms/s/m/h/d durations relative to now', () => {
+    const now = 10_000_000;
+    expect(parseSinceValue('500ms', now)).toBe(now - 500);
+    expect(parseSinceValue('30s', now)).toBe(now - 30_000);
+    expect(parseSinceValue('2m', now)).toBe(now - 120_000);
+    expect(parseSinceValue('1h', now)).toBe(now - 3_600_000);
+    expect(parseSinceValue('1d', now)).toBe(now - 86_400_000);
+  });
+
+  test('parses ISO-8601 timestamps', () => {
+    const iso = '2026-04-13T20:57:00Z';
+    expect(parseSinceValue(iso)).toBe(Date.parse(iso));
+  });
+
+  test('rejects garbage', () => {
+    expect(() => parseSinceValue('yesterday')).toThrow(/Invalid --since/);
+    expect(() => parseSinceValue('30')).toThrow(/Invalid --since/);
+    expect(() => parseSinceValue('30x')).toThrow(/Invalid --since/);
+  });
+});
+
+describe('Console --since', () => {
+  test('filters by duration', async () => {
+    consoleBuffer.clear();
+    const now = Date.now();
+    addConsoleEntry({ timestamp: now - 120_000, level: 'log', text: 'two minutes ago' });
+    addConsoleEntry({ timestamp: now - 5_000, level: 'log', text: 'five seconds ago' });
+
+    const result = await handleReadCommand('console', ['--since', '30s'], bm);
+    expect(result).toContain('five seconds ago');
+    expect(result).not.toContain('two minutes ago');
+
+    consoleBuffer.clear();
+  });
+
+  test('filters by ISO timestamp', async () => {
+    consoleBuffer.clear();
+    const anchor = Date.parse('2026-04-13T20:57:00Z');
+    addConsoleEntry({ timestamp: anchor - 1000, level: 'log', text: 'before anchor' });
+    addConsoleEntry({ timestamp: anchor + 1000, level: 'log', text: 'after anchor' });
+
+    const result = await handleReadCommand('console', ['--since', '2026-04-13T20:57:00Z'], bm);
+    expect(result).toContain('after anchor');
+    expect(result).not.toContain('before anchor');
+
+    consoleBuffer.clear();
+  });
+
+  test('combines with --errors', async () => {
+    consoleBuffer.clear();
+    const now = Date.now();
+    addConsoleEntry({ timestamp: now - 600_000, level: 'error', text: 'old error' });
+    addConsoleEntry({ timestamp: now - 1_000, level: 'log',   text: 'recent log' });
+    addConsoleEntry({ timestamp: now - 1_000, level: 'error', text: 'recent error' });
+
+    const result = await handleReadCommand('console', ['--since', '30s', '--errors'], bm);
+    expect(result).toContain('recent error');
+    expect(result).not.toContain('recent log');
+    expect(result).not.toContain('old error');
+
+    consoleBuffer.clear();
+  });
+
+  test('returns empty message when filter drops everything', async () => {
+    consoleBuffer.clear();
+    addConsoleEntry({ timestamp: Date.now() - 3_600_000, level: 'log', text: 'ancient' });
+
+    const result = await handleReadCommand('console', ['--since', '30s'], bm);
+    expect(result).toBe('(no console messages)');
+
+    consoleBuffer.clear();
+  });
+
+  test('requires a value', async () => {
+    await expect(handleReadCommand('console', ['--since'], bm)).rejects.toThrow(/Usage/);
+  });
+
+  test('rejects unknown flag', async () => {
+    await expect(handleReadCommand('console', ['--nope'], bm)).rejects.toThrow(/Unknown flag/);
   });
 });
 

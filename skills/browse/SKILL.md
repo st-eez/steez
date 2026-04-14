@@ -241,7 +241,7 @@ Refs are invalidated on navigation — run `snapshot` again after `goto`.
 | Command | Description |
 |---------|-------------|
 | `attrs <sel|@ref>` | Element attributes as JSON |
-| `console [--clear|--errors]` | Console messages (--errors filters to error/warning) |
+| `console [--clear\|--errors\|--since <d>]` | Console messages (--errors filters to error/warning; --since accepts duration like 30s/2m/1h/1d or an ISO timestamp; auto-inserts `--- navigated to <url> ---` breadcrumbs) |
 | `cookies` | All cookies as JSON |
 | `css <sel> <prop>` | Computed CSS value |
 | `dialog [--clear]` | Dialog messages |
