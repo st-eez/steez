@@ -95,6 +95,63 @@ describe('ns diff', () => {
     expect(output.display).toContain('Sourced Company');
   });
 
+  test('diff set fires fieldChanged by default for non-entity field', async () => {
+    // The mock cascade watches for truthy fireFieldChanged (3rd arg) on salesrep.
+    // Extend behavior to a plain text field to prove fire-by-default.
+    const page = bm.getPage();
+    await page.evaluate(() => {
+      const orig = (window as any).nlapiSetFieldValue;
+      (window as any).nlapiSetFieldValue = function (
+        fieldId: string,
+        value: string,
+        firefieldchanged: boolean,
+        synchronous: boolean,
+      ) {
+        orig.call(window, fieldId, value, firefieldchanged, synchronous);
+        (window as any).__lastFireFieldChanged = firefieldchanged;
+      };
+    });
+
+    const output = await nsDiff(['set', 'companyname', 'Default Fires'], bm);
+    expect(output.ok).toBe(true);
+
+    const lastFFC = await page.evaluate(() => (window as any).__lastFireFieldChanged);
+    expect(lastFFC).toBe(true);
+  });
+
+  test('diff set --no-source suppresses fieldChanged for entity-ref field', async () => {
+    const output = await nsDiff(['set', 'salesrep', '99', '--no-source'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('Action: set salesrep 99');
+    // salesrep value still changes
+    expect(output.display).toContain('Changed: salesrep');
+    // Cascading should NOT fire — companyname stays put
+    expect(output.display).not.toContain('Changed: companyname');
+  });
+
+  test('diff set --no-source suppresses fieldChanged for non-entity field', async () => {
+    const page = bm.getPage();
+    await page.evaluate(() => {
+      const orig = (window as any).nlapiSetFieldValue;
+      (window as any).nlapiSetFieldValue = function (
+        fieldId: string,
+        value: string,
+        firefieldchanged: boolean,
+        synchronous: boolean,
+      ) {
+        orig.call(window, fieldId, value, firefieldchanged, synchronous);
+        (window as any).__lastFireFieldChanged = firefieldchanged;
+      };
+    });
+
+    const output = await nsDiff(['set', 'companyname', 'Quiet', '--no-source'], bm);
+    expect(output.ok).toBe(true);
+
+    const lastFFC = await page.evaluate(() => (window as any).__lastFireFieldChanged);
+    expect(lastFFC).toBe(false);
+  });
+
   test('diff on non-NS page returns error', async () => {
     const page = bm.getPage();
     await page.goto('about:blank');

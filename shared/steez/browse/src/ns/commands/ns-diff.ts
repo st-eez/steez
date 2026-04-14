@@ -2,13 +2,20 @@
  * ns diff — Snapshot-and-observe command for field change detection.
  *
  * Usage:
- *   ns diff                         → baseline snapshot (no action, no changes)
- *   ns diff set salesrep 99         → set a field and show ALL fields that changed
- *   ns diff set companyname "Foo"   → set a text field and show what changed
+ *   ns diff                                  → baseline snapshot (no action, no changes)
+ *   ns diff set salesrep 99                  → set a field and show ALL fields that changed
+ *   ns diff set companyname "Foo"            → set a text field and show what changed
+ *   ns diff set trandate 2026-04-14 --source → force fire cascading regardless of field type
+ *   ns diff set trandate 2026-04-14 --fire-field-changed → alias for --source
+ *   ns diff set entity 42 --no-source        → force suppress fieldChanged
  *
  * Unlike ns set (which only tracks changes when cascading is fired), ns diff
  * always captures a full before/after snapshot of every field on the form.
  * This makes it useful for understanding the full impact of any mutation.
+ *
+ * Cascading strategy (aligned with ns set):
+ *   nlapiSetFieldValue(id, val, firefieldchanged=true, synchronous=true)
+ *   Always fires fieldChanged by default; --no-source suppresses it.
  *
  * Flow: guardNsApi → snapshot "before" → action (if args) → settle → snapshot "after" → compare
  */
@@ -55,6 +62,35 @@ function toSnapshotMap(fields: NsFieldMetadata[]): Record<string, FieldSnapshot>
   return map;
 }
 
+/**
+ * Parse `set <fieldId> <value> [--source|--fire-field-changed|--no-source]`.
+ * Mirrors ns-set's parseSetArgs so the two commands share a flag vocabulary.
+ */
+function parseSetActionArgs(args: string[]): {
+  fieldId: string | null;
+  value: string | null;
+  forceSource: boolean | null;
+} {
+  let forceSource: boolean | null = null;
+  const positional: string[] = [];
+
+  for (const arg of args) {
+    if (arg === '--source' || arg === '--fire-field-changed') {
+      forceSource = true;
+    } else if (arg === '--no-source') {
+      forceSource = false;
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  return {
+    fieldId: positional[0] ?? null,
+    value: positional[1] ?? null,
+    forceSource,
+  };
+}
+
 // ─── ns diff ────────────────────────────────────────────────
 
 export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
@@ -86,23 +122,20 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
           };
         }
 
-        const actionArgs = args.slice(1);
+        const { fieldId, value, forceSource } = parseSetActionArgs(args.slice(1));
 
-        if (actionArgs.length < 2) {
+        if (!fieldId || value === null) {
           return {
             ok: false as const,
-            error: validationError('Missing arguments. Usage: ns diff set <fieldId> <value>'),
+            error: validationError('Missing arguments. Usage: ns diff set <fieldId> <value> [--source|--fire-field-changed|--no-source]'),
           };
         }
 
-        const fieldId = actionArgs[0];
-        const value = actionArgs[1];
         actionLabel = `set ${fieldId} ${value}`;
 
         // ── Execute the set operation ────────────────────────────
         const page = bm.getPage();
 
-        // Determine cascading behavior: fire for entity-ref fields
         const fieldMeta = beforeFields.find(f => f.id === fieldId);
         if (!fieldMeta) {
           return {
@@ -111,19 +144,33 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
           };
         }
 
-        const fireCascading = fieldMeta.isEntityRef;
-        const fireSlavingWhenever = !fireCascading;
-        const fireFieldChanged = !fireCascading;
+        // Cascading strategy (aligned with ns set):
+        //   nlapiSetFieldValue(fld, val, firefieldchanged, synchronous)
+        //   Always fire by default — --no-source opts out.
+        const fireFieldChanged = forceSource !== false;
+        const synchronous = true;
+
+        // Convergence wait is a separate axis: only worth polling for
+        // entity-ref fields (which have sourcing handlers) or when --source
+        // is explicitly requested.
+        let trackConvergence: boolean;
+        if (forceSource === true) {
+          trackConvergence = true;
+        } else if (forceSource === false) {
+          trackConvergence = false;
+        } else {
+          trackConvergence = fieldMeta.isEntityRef;
+        }
 
         await page.evaluate(
-          ({ fid, val, fsw, ffc }: { fid: string; val: string; fsw: boolean; ffc: boolean }) => {
-            (window as any).nlapiSetFieldValue(fid, val, fsw, ffc);
+          ({ fid, val, ffc, sync }: { fid: string; val: string; ffc: boolean; sync: boolean }) => {
+            (window as any).nlapiSetFieldValue(fid, val, ffc, sync);
           },
-          { fid: fieldId, val: value, fsw: fireSlavingWhenever, ffc: fireFieldChanged },
+          { fid: fieldId, val: value, ffc: fireFieldChanged, sync: synchronous },
         );
 
         // ── Wait for convergence if cascading was fired ──────────
-        if (fireCascading) {
+        if (trackConvergence) {
           const watchFieldIds = beforeFields
             .filter(f => !f.disabled && f.id !== fieldId)
             .map(f => f.id);
