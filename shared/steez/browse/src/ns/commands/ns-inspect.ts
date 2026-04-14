@@ -308,13 +308,14 @@ export async function nsInspect(args: string[], bm: BrowserManager): Promise<NsC
 
 /**
  * Discover sublists from the DOM by finding sublist containers
- * (div[id$="_splits"], table.uir-machine-table), extract column
- * headers, then read line values via nlapi sublist APIs.
+ * (div[id$="_splits"], table.uir-machine-table), then resolve column
+ * metadata from SuiteScript bridges — not DOM headers/data rows,
+ * which expose form display aliases instead of real field scriptids.
  *
- * Three-phase column resolution per sublist:
- * 1. Parse header cells for labels, mandatory flags, and tentative IDs
- * 2. Scan first data row to override tentative IDs with real field scriptids
- * 3. Scan container for hidden field elements not visible in the table
+ * Column resolution priority:
+ * 1. Legacy: nlapiGetLineItemFields(sublistId) — returns real scriptids
+ * 2. SuiteScript 2: currentRecord.getSublistFields({sublistId})
+ * 3. DOM parsing — last resort when both bridges are unavailable
  */
 async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
   const page = bm.getPage();
@@ -336,10 +337,11 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
         .replace(/_(?:val|display|text)\d*$/, ''); // item_display → item
     }
 
-    /** Check if an element ID is NS internal plumbing */
+    /** Check if an element ID is NS internal plumbing or a DOM artifact */
     function isInternalId(id: string): boolean {
       return !id || id.startsWith('inpt_') || id.startsWith('hddn_') ||
-        id.startsWith('custpage_') || id.includes('_fs_');
+        id.startsWith('custpage_') || id.startsWith('qsTarget_') ||
+        id.startsWith('fs_') || id.includes('_fs_');
     }
 
     /** Parse a header cell: strip trailing *, detect mandatory flag */
@@ -359,24 +361,148 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
     }
 
     /**
-     * Resolve columns for a sublist via three-phase discovery:
-     * 1. Header cells → labels, mandatory flags, tentative IDs (may be display aliases)
-     * 2. Data row elements → real field scriptids, matched by column position
-     * 3. Container scan → hidden fields not visible in the table
+     * Priority 1: resolve columns from the sublist Machine object.
+     *
+     * NetSuite edit-mode forms expose an internal Machine per sublist via
+     * `window.getMachine(sublistId)`. Its `form_elems` array holds real
+     * scriptids (e.g. `custcol_est_gp_cost`), paired by index with
+     * `table_labels` (label) and `miniform_elem_types` (field type).
+     *
+     * Entity-ref columns have a `<fieldid>_display` companion that carries
+     * the column label — the base scriptid entry itself has an empty label.
+     * We merge those: the display label belongs to the base id, and the
+     * companion is hidden from output.
+     *
+     * Output keeps: visible columns (label present, possibly via companion)
+     * and hidden custom columns (`custcol_*` even without label). Internal
+     * plumbing (empty label, not custom) is filtered.
      */
-    function resolveColumns(
+    function resolveColumnsViaMachine(sublistId: string):
+      Array<{ id: string; label: string; mandatory: boolean }> | null {
+      if (typeof w.getMachine !== 'function') return null;
+      let machine: any;
+      try { machine = w.getMachine(sublistId); } catch { return null; }
+      if (!machine) return null;
+
+      const formElems = machine.form_elems;
+      const tableLabels = machine.table_labels || {};
+      if (!formElems || typeof formElems.length !== 'number' || formElems.length === 0) return null;
+
+      const DISPLAY = '_display';
+      const baseOf = (raw: string): string | null =>
+        raw.endsWith(DISPLAY) ? raw.slice(0, -DISPLAY.length) : null;
+
+      // Pass 1: collect all real scriptids present (non-display) in the elem list
+      const realIds = new Set<string>();
+      for (let i = 0; i < formElems.length; i++) {
+        const raw = formElems[i];
+        if (typeof raw === 'string' && raw && !baseOf(raw)) realIds.add(raw);
+      }
+
+      // Pass 2: resolve label for each real scriptid — prefer the companion's label
+      // when the base entry has no label of its own
+      const labelById: Record<string, string> = {};
+      for (let i = 0; i < formElems.length; i++) {
+        const raw = formElems[i];
+        if (typeof raw !== 'string' || !raw) continue;
+        const label = typeof tableLabels[i] === 'string' ? tableLabels[i] : '';
+        if (!label) continue;
+        const base = baseOf(raw);
+        if (base && realIds.has(base)) {
+          if (!labelById[base]) labelById[base] = label;
+        } else {
+          labelById[raw] = label;
+        }
+      }
+
+      // Pass 3: emit columns in Machine order (base ids only, companions dropped)
+      const cols: Array<{ id: string; label: string; mandatory: boolean }> = [];
+      const emitted = new Set<string>();
+      for (let i = 0; i < formElems.length; i++) {
+        const raw = formElems[i];
+        if (typeof raw !== 'string' || !raw) continue;
+        if (isInternalId(raw)) continue;
+        // Drop display companion — its label is already mapped to the base id
+        if (baseOf(raw) && realIds.has(baseOf(raw)!)) continue;
+
+        const id = raw;
+        if (emitted.has(id)) continue;
+        const label = labelById[id] || '';
+        const isCustom = id.startsWith('custcol_');
+        // Visible columns (any label) and hidden custom columns — drop plumbing
+        if (!label && !isCustom) continue;
+        emitted.add(id);
+
+        let mandatory = false;
+        let resolvedLabel = label;
+        try {
+          const field = w.nlapiGetLineItemField?.(sublistId, id, 1);
+          if (field) {
+            if (!resolvedLabel && field.getLabel) resolvedLabel = field.getLabel() || '';
+            if (field.isMandatory) mandatory = !!field.isMandatory();
+          }
+        } catch {}
+
+        cols.push({ id, label: resolvedLabel || id, mandatory });
+      }
+      return cols.length > 0 ? cols : null;
+    }
+
+    /** Priority 2: resolve columns via SuiteScript 2 N/currentRecord. */
+    function resolveColumnsViaCurrentRecord(sublistId: string):
+      Array<{ id: string; label: string; mandatory: boolean }> | null {
+      const req = w.require;
+      if (typeof req !== 'function') return null;
+      let rec: any;
+      try {
+        const mod = req('N/currentRecord');
+        if (!mod || typeof mod.get !== 'function') return null;
+        rec = mod.get();
+      } catch { return null; }
+      if (!rec || typeof rec.getSublistFields !== 'function') return null;
+
+      let ids: unknown;
+      try { ids = rec.getSublistFields({ sublistId }); } catch { return null; }
+      if (!Array.isArray(ids) || ids.length === 0) return null;
+
+      const cols: Array<{ id: string; label: string; mandatory: boolean }> = [];
+      const seenIds = new Set<string>();
+      for (const raw of ids) {
+        const fieldId = typeof raw === 'string' ? raw : '';
+        if (!fieldId || isInternalId(fieldId) || seenIds.has(fieldId)) continue;
+        seenIds.add(fieldId);
+        let label = fieldId;
+        let mandatory = false;
+        try {
+          const field = typeof rec.getSublistField === 'function'
+            ? rec.getSublistField({ sublistId, fieldId, line: 0 })
+            : null;
+          if (field) {
+            label = field.label || fieldId;
+            mandatory = !!field.isMandatory;
+          }
+        } catch {}
+        cols.push({ id: fieldId, label, mandatory });
+      }
+      return cols.length > 0 ? cols : null;
+    }
+
+    /**
+     * Priority 3 fallback: parse DOM headers + data rows + hidden inputs.
+     * Used only when neither SuiteScript bridge is available — column IDs
+     * will be display aliases for form-only columns.
+     */
+    function resolveColumnsViaDom(
       container: Element,
       sublistId: string,
     ): Array<{ id: string; label: string; mandatory: boolean }> {
-      // Phase 1: Parse header cells with column-index tracking
       const headerEntries: Array<{ cellIndex: number; id: string; label: string; mandatory: boolean }> = [];
       const headerCells = container.querySelectorAll('td.listheadertd, th.listheadertd');
       headerCells.forEach((cell, idx) => {
         const parsed = parseHeader(cell);
-        if (parsed) headerEntries.push({ cellIndex: idx, ...parsed });
+        if (parsed && !isInternalId(parsed.id)) headerEntries.push({ cellIndex: idx, ...parsed });
       });
 
-      // Phase 2: Scan first data row to resolve real field scriptids
       const table = container.querySelector('table') || container;
       const rows = table.querySelectorAll('tr');
       for (const row of rows) {
@@ -384,19 +510,15 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
         const dataCells = row.querySelectorAll('td');
         if (dataCells.length === 0) continue;
 
-        // Override header-derived IDs with real IDs from data row elements
         for (const entry of headerEntries) {
           const dataCell = dataCells[entry.cellIndex];
           if (!dataCell) continue;
           const el = dataCell.querySelector('[id]');
           if (!el) continue;
           const realId = extractFieldId(el.id);
-          if (realId && !isInternalId(realId)) {
-            entry.id = realId;
-          }
+          if (realId && !isInternalId(realId)) entry.id = realId;
         }
 
-        // Discover extra columns in data cells with no corresponding header
         const headerPositions = new Set(headerEntries.map(h => h.cellIndex));
         dataCells.forEach((cell, idx) => {
           if (headerPositions.has(idx)) return;
@@ -417,10 +539,9 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
           } catch {}
         });
 
-        break; // first data row only
+        break;
       }
 
-      // Phase 3: Scan container for hidden field elements (custom columns not in the table)
       const knownIds = new Set(headerEntries.map(e => e.id));
       const allInputs = container.querySelectorAll('input[id], select[id], textarea[id]');
       for (const el of allInputs) {
@@ -440,7 +561,6 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
         } catch {}
       }
 
-      // Fallback: if 0 columns and no data rows, try input scan from first row
       if (headerEntries.length === 0) {
         const fallbackTable = container.querySelector('table');
         if (fallbackTable) {
@@ -458,6 +578,16 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
       }
 
       return headerEntries.map(e => ({ id: e.id, label: e.label, mandatory: e.mandatory }));
+    }
+
+    /** Resolve columns using best-available source. */
+    function resolveColumns(
+      container: Element,
+      sublistId: string,
+    ): Array<{ id: string; label: string; mandatory: boolean }> {
+      return resolveColumnsViaMachine(sublistId)
+        ?? resolveColumnsViaCurrentRecord(sublistId)
+        ?? resolveColumnsViaDom(container, sublistId);
     }
 
     // Strategy A: div[id$="_splits"] containers (e.g. "item_splits" → sublist "item")
@@ -513,7 +643,14 @@ async function discoverSublists(bm: BrowserManager): Promise<NsSublistData[]> {
           for (let i = 1; i <= count; i++) {
             const values: Record<string, string> = {};
             for (const colId of columnIds) {
-              values[colId] = w.nlapiGetLineItemValue(sublistId, colId, i) ?? '';
+              // nlobjError throws on fields that aren't line-readable (e.g.
+              // computed, read-only, or metadata-only fields). Skip those.
+              try {
+                const v = w.nlapiGetLineItemValue(sublistId, colId, i);
+                values[colId] = v ?? '';
+              } catch {
+                values[colId] = '';
+              }
             }
             lines.push({ line: i, values });
           }

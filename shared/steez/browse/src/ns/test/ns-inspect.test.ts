@@ -168,19 +168,60 @@ describe('ns inspect', () => {
     expect(output.display).toContain('percent');
   });
 
-  test('inspect --sublists resolves real scriptids from data row elements', async () => {
+  test('inspect --sublists resolves real scriptids from nlapi bridge', async () => {
     const page = bm.getPage();
     await page.goto(baseUrl + '/ns-form.html');
 
     const output = await nsInspect(['--sublists'], bm);
 
     expect(output.ok).toBe(true);
-    // Header "Est. GP %" would produce display alias "estgp" without data row resolution.
-    // With the fix, data row element span#custcol_est_gp_pctval1 reveals the real scriptid.
+    // nlapiGetLineItemFields returns real scriptids from the record schema,
+    // not DOM display aliases like "estgp" derived from header text.
     expect(output.display).toContain('custcol_est_gp_pct');
     expect(output.display).not.toContain('estgp');
-    // Hidden column custcol_margin has no header but is discovered via container scan
+    // Bridge returns the full field set including hidden custom columns
     expect(output.display).toContain('custcol_margin');
+  });
+
+  test('inspect --sublists filters DOM artifacts like qsTarget_* when falling back to DOM', async () => {
+    const page = bm.getPage();
+    // Stub page with a table but no nlapi bridges — forces DOM fallback path.
+    await page.setContent(`
+      <html><body>
+        <div id="main_form"></div>
+        <div id="custom_splits">
+          <table class="uir-machine-table">
+            <thead>
+              <tr>
+                <td class="listheadertd"><div class="listheadertextb">Vendor Name</div></td>
+                <td class="listheadertd"><div class="listheadertextb">Quantity</div></td>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="uir-machine-row">
+                <td><span id="qsTarget_12345">ACME</span></td>
+                <td><span id="quantityval1">5</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <script>
+          window.nlapiGetFieldIds = function() { return []; };
+          window.nlapiGetField = function() { return null; };
+          window.nlapiGetFieldValue = function() { return null; };
+          window.nlapiGetFieldText = function() { return null; };
+          window.nlapiGetLineItemCount = function() { return 0; };
+        </script>
+      </body></html>
+    `);
+
+    const output = await nsInspect(['--sublists'], bm);
+
+    expect(output.ok).toBe(true);
+    // DOM artifact must never leak through as a column id
+    expect(output.display).not.toContain('qsTarget_');
+
+    await page.goto(baseUrl + '/ns-form.html');
   });
 
   test('inspect without --sublists does not include Sublist lines', async () => {

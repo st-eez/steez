@@ -178,6 +178,21 @@ window.nlapiGetLineItemField = function(sublistId, fieldId, line) {
   };
 };
 
+// NS edit-mode Machine: form_elems/table_labels exposing real scriptids.
+// Include a display companion, an internal-plumbing field, and a hidden
+// custom column to exercise the full Machine-based resolution path.
+var SUBLIST_MACHINES = {
+  item: {
+    form_elems:          ['item_display', 'item', 'quantity', 'rate', 'amount', 'custcol_est_gp_pct', 'custcol_margin', 'itemtype'],
+    table_labels:        ['Item',          '',      'Quantity', 'Rate', 'Amount', 'Est. GP %',        '',                ''],
+    miniform_elem_types: ['text',          'integer','integer', 'currency','currency','percent',     'currency',         'text'],
+  },
+};
+
+window.getMachine = function(sublistId) {
+  return SUBLIST_MACHINES[sublistId] || null;
+};
+
 // Mock sublist APIs
 var SUBLIST_LINES = {
   item: [
