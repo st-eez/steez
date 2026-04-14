@@ -168,7 +168,7 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "spawn-agent")
 	claudeTarget := filepath.Join(skillsDir, "spawn-agent")
-	codexTarget := filepath.Join(home, ".agents", "skills", "spawn-agent")
+	codexTarget := filepath.Join(home, ".codex", "skills", "spawn-agent")
 	CreateSymlink(source, claudeTarget, false, false)
 	CreateSymlink(source, codexTarget, false, false)
 

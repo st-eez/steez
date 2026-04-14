@@ -60,7 +60,7 @@ func TestDoctor_AllPass(t *testing.T) {
 	skillSource := filepath.Join(repoPath, "skills", "alpha")
 	os.MkdirAll(skillSource, 0o755)
 	claudeTarget := filepath.Join(home, ".claude", "skills", "alpha")
-	codexTarget := filepath.Join(home, ".agents", "skills", "alpha")
+	codexTarget := filepath.Join(home, ".codex", "skills", "alpha")
 	os.Symlink(skillSource, claudeTarget)
 	os.Symlink(skillSource, codexTarget)
 

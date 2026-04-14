@@ -404,14 +404,14 @@ func (m *setupModel) runInstall() {
 	}
 
 	skillsTarget := filepath.Join(home, ".claude", "skills")
-	codexSkillsTarget := filepath.Join(home, ".agents", "skills")
+	codexSkillsTarget := filepath.Join(home, ".codex", "skills")
 
 	// Ensure skills directory.
 	os.MkdirAll(skillsTarget, 0o755)
 	for _, name := range m.skillNames {
 		if installsGloballyInCodex(name) {
 			if err := os.MkdirAll(codexSkillsTarget, 0o755); err != nil {
-				m.results = append(m.results, installResult{"~/.agents/skills/", false, err.Error()})
+				m.results = append(m.results, installResult{"~/.codex/skills/", false, err.Error()})
 				return
 			}
 			break
@@ -493,6 +493,8 @@ func (m *setupModel) runInstall() {
 		}
 
 		codexTarget := filepath.Join(codexSkillsTarget, name)
+		_ = installer.RemoveSymlink(filepath.Join(home, ".agents", "skills", name))
+
 		if err := installer.CreateSymlink(source, codexTarget, false, true); err != nil {
 			m.results = append(m.results, installResult{"codex/" + name, false, err.Error()})
 		} else {

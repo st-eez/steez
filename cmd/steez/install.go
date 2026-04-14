@@ -71,7 +71,7 @@ func cmdInstall(args []string) int {
 	}
 
 	skillsTarget := filepath.Join(home, ".claude", "skills")
-	codexSkillsTarget := filepath.Join(home, ".agents", "skills")
+	codexSkillsTarget := filepath.Join(home, ".codex", "skills")
 
 	// Ensure target directory exists (Case C: missing).
 	if migResult.State == installer.StateMissing {
@@ -222,6 +222,10 @@ func cmdInstall(args []string) int {
 		}
 
 		codexTarget := filepath.Join(codexSkillsTarget, name)
+		if !*dryRun {
+			_ = installer.RemoveSymlink(filepath.Join(home, ".agents", "skills", name))
+		}
+
 		if err := installer.CreateSymlink(source, codexTarget, *dryRun, *force); err != nil {
 			fmt.Fprintf(os.Stderr, "  error: codex/%s: %v\n", name, err)
 			failed++

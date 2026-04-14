@@ -119,7 +119,8 @@ func displayScope(scope, target string) string {
 	switch {
 	case strings.Contains(target, string(filepath.Separator)+".claude"+string(filepath.Separator)+"skills"+string(filepath.Separator)):
 		return "claude-global"
-	case strings.Contains(target, string(filepath.Separator)+".agents"+string(filepath.Separator)+"skills"+string(filepath.Separator)):
+	case strings.Contains(target, string(filepath.Separator)+".codex"+string(filepath.Separator)+"skills"+string(filepath.Separator)),
+		strings.Contains(target, string(filepath.Separator)+".agents"+string(filepath.Separator)+"skills"+string(filepath.Separator)):
 		return "codex-global"
 	default:
 		return "legacy"
