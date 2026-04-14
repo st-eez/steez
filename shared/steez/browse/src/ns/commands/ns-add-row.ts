@@ -34,7 +34,7 @@ interface RejectedColumn {
 }
 
 function formatRejection(rc: RejectedColumn, prefix: string): string {
-  return `${prefix}: ${rc.column}=${rc.requested} — value cleared by NetSuite (likely subsidiary mismatch)`;
+  return `${prefix}: ${rc.column}=${rc.requested} — value cleared by NetSuite — rejected by form logic`;
 }
 
 interface NsAddRowData {
@@ -212,8 +212,9 @@ export async function nsAddRow(args: string[], bm: BrowserManager): Promise<NsCo
             // Re-acquire target — sourcing may have reloaded the NS iframe
             target = bm.getActiveFrameOrPage();
 
-            // Read back the value to detect silent rejection (e.g. subsidiary mismatch
-            // causes NS to clear entity-ref columns like location/department/class)
+            // Read back the value to detect silent rejection — form logic (subsidiary
+            // mismatch, item/location gating, client scripts) can clear entity-ref columns
+            // like location/department/class without raising an error
             const readBack = await createLineItemGetter(target, sublistId)([column]);
             const actual = readBack[column];
             if (actual !== value && !actual) {

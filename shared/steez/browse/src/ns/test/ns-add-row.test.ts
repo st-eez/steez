@@ -114,8 +114,8 @@ describe('ns add-row', () => {
     expect(output.display).toContain('ADD-ROW OK');
   });
 
-  test('reports rejected entity-ref column on subsidiary mismatch', async () => {
-    // Simulate NS clearing a location value (subsidiary mismatch)
+  test('reports rejected entity-ref column when NetSuite clears the value', async () => {
+    // Simulate NS clearing a location value (rejected by form logic)
     await bm.getPage().evaluate(() => {
       (window as any).__rejectColumns = ['location'];
     });
@@ -125,7 +125,7 @@ describe('ns add-row', () => {
     expect(output.ok).toBe(false);
     expect(output.display).toContain('REJECTED: location=42');
     expect(output.display).toContain('cleared by NetSuite');
-    expect(output.display).toContain('subsidiary mismatch');
+    expect(output.display).toContain('rejected by form logic');
     expect(output.display).toContain('ADD-ROW FAILED');
 
     // Clean up
