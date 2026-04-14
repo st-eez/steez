@@ -28,6 +28,7 @@ import type { NsFieldMetadata } from '../utils/introspect-field';
 import { guardNsApi, validationError } from '../errors';
 import { introspectAllFields } from '../utils/introspect-field';
 import { createPageGetter, waitForFieldConvergence } from '../convergence';
+import { parseSetArgs } from '../utils/parse-set-args';
 import { withMutex, nsMutex } from '../mutex';
 
 // ─── Types ──────────────────────────────────────────────────
@@ -62,35 +63,6 @@ function toSnapshotMap(fields: NsFieldMetadata[]): Record<string, FieldSnapshot>
   return map;
 }
 
-/**
- * Parse `set <fieldId> <value> [--source|--fire-field-changed|--no-source]`.
- * Mirrors ns-set's parseSetArgs so the two commands share a flag vocabulary.
- */
-function parseSetActionArgs(args: string[]): {
-  fieldId: string | null;
-  value: string | null;
-  forceSource: boolean | null;
-} {
-  let forceSource: boolean | null = null;
-  const positional: string[] = [];
-
-  for (const arg of args) {
-    if (arg === '--source' || arg === '--fire-field-changed') {
-      forceSource = true;
-    } else if (arg === '--no-source') {
-      forceSource = false;
-    } else {
-      positional.push(arg);
-    }
-  }
-
-  return {
-    fieldId: positional[0] ?? null,
-    value: positional[1] ?? null,
-    forceSource,
-  };
-}
-
 // ─── ns diff ────────────────────────────────────────────────
 
 export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsCommandOutput> {
@@ -108,8 +80,6 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
       const beforeMap = toSnapshotMap(beforeFields);
 
       // ── Parse action args ────────────────────────────────────
-      // Format: ns diff [action] [actionArgs...]
-      // Currently only "set" is supported as an action.
       let actionLabel: string | null = null;
 
       if (args.length > 0) {
@@ -122,7 +92,7 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
           };
         }
 
-        const { fieldId, value, forceSource } = parseSetActionArgs(args.slice(1));
+        const { fieldId, value, forceSource } = parseSetArgs(args.slice(1));
 
         if (!fieldId || value === null) {
           return {
@@ -144,15 +114,12 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
           };
         }
 
-        // Cascading strategy (aligned with ns set):
-        //   nlapiSetFieldValue(fld, val, firefieldchanged, synchronous)
-        //   Always fire by default — --no-source opts out.
         const fireFieldChanged = forceSource !== false;
         const synchronous = true;
 
-        // Convergence wait is a separate axis: only worth polling for
-        // entity-ref fields (which have sourcing handlers) or when --source
-        // is explicitly requested.
+        // Convergence wait is a separate axis from fireFieldChanged: only
+        // worth polling when sourcing handlers may run (entity-ref) or when
+        // --source is forced.
         let trackConvergence: boolean;
         if (forceSource === true) {
           trackConvergence = true;

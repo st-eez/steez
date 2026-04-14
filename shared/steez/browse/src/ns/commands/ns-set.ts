@@ -27,6 +27,7 @@ import { introspectField, introspectAllFields } from '../utils/introspect-field'
 import { createPageGetter, waitForFieldConvergence } from '../convergence';
 import { withDialogHandler } from '../utils/with-dialog-handler';
 import { waitForSettle } from '../utils/with-retry';
+import { parseSetArgs } from '../utils/parse-set-args';
 import { withMutex, nsMutex } from '../mutex';
 
 // ─── Types ──────────────────────────────────────────────────
@@ -56,34 +57,6 @@ interface SubsidiarySnapshot {
 
 // OneWorld redirect uses this field ID on every transaction form.
 const SUBSIDIARY_FIELD_ID = 'subsidiary';
-
-// ─── Arg Parsing ────────────────────────────────────────────
-
-function parseSetArgs(args: string[]): {
-  fieldId: string | null;
-  value: string | null;
-  forceSource: boolean | null;
-} {
-  let fieldId: string | null = null;
-  let value: string | null = null;
-  let forceSource: boolean | null = null;
-
-  const positional: string[] = [];
-  for (const arg of args) {
-    if (arg === '--source' || arg === '--fire-field-changed') {
-      forceSource = true;
-    } else if (arg === '--no-source') {
-      forceSource = false;
-    } else {
-      positional.push(arg);
-    }
-  }
-
-  fieldId = positional[0] ?? null;
-  value = positional[1] ?? null;
-
-  return { fieldId, value, forceSource };
-}
 
 // ─── ns set ─────────────────────────────────────────────────
 
