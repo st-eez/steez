@@ -829,6 +829,32 @@ watch_tick() {
     fi
   fi}
 
+# watch_pane_close <pane>
+# Terminal watcher event for a tmux pane going away (spec: Pane close
+# and restart). Applies the per-state transitions for the live watch
+# on the pane. Draining watches are untouched — their delivery
+# continues against spawner_pane (spec).
+#
+# Per-state behavior:
+#   - pending → close without delivery (reason=pane_closed)
+#   - armed   → one final reconciliation; terminal != baseline resolves
+#               normally, anything else resolves to blocked:unknown
+#   - no live → no-op
+watch_pane_close() {
+  local pane="$1"
+  [[ -n "$pane" ]] || { echo "watch_pane_close: missing pane" >&2; return 2; }
+  local live state wid
+  live=$(watch_get_live "$pane")
+  [[ -n "$live" ]] || return 0
+  wid=$(printf '%s' "$live" | jq -r .watch_id)
+  state=$(printf '%s' "$live" | jq -r .state)
+  case "$state" in
+    pending)
+      _eventsd_close "$wid" "$pane" "pane_closed"
+      ;;
+  esac
+}
+
 # watch_list — print JSONL of every known watch record.
 watch_list() {
   local dir="$_EVENTSD_STATE_DIR/watches"
