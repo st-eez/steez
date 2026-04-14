@@ -54,6 +54,9 @@ interface SubsidiarySnapshot {
   text: string | null;
 }
 
+// OneWorld redirect uses this field ID on every transaction form.
+const SUBSIDIARY_FIELD_ID = 'subsidiary';
+
 // ─── Arg Parsing ────────────────────────────────────────────
 
 function parseSetArgs(args: string[]): {
@@ -155,10 +158,11 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
       }
 
       // ── Snapshot subsidiary (OneWorld redirect detection) ────
-      // In OneWorld accounts, setting entity can trigger a server-side form
-      // reload when the entity's subsidiary differs from the form's current one.
-      // Capture the pre-set value so we can report the shift after recovery.
-      const preSubsidiary = await readSubsidiarySnapshot(target);
+      // Only entity-ref sets can trigger a server-side form reload (when the
+      // entity's subsidiary differs from the form's current one), so skip the
+      // extra roundtrip for text/select/etc. sets.
+      const canRedirect = fieldMeta.isEntityRef;
+      const preSubsidiary = canRedirect ? await readSubsidiarySnapshot(target) : null;
 
       // ── Set the field value with dialog capture ──────────────
       let setResult: { settled: boolean };
@@ -171,7 +175,6 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
           async () => {
             const page = bm.getPage();
 
-            // Set the value
             await page.evaluate(
               ({ fid, val, ffc, sync }: { fid: string; val: string; ffc: boolean; sync: boolean }) => {
                 (window as any).nlapiSetFieldValue(fid, val, ffc, sync);
@@ -240,9 +243,12 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
         if (!isNavigationDestroyedError(err)) throw err;
         // OneWorld subsidiary redirect: NS reloaded the form server-side.
         // Wait for the new page to settle, then re-acquire the NS API.
+        // Dialogs captured before the throw are lost — withDialogHandler
+        // doesn't expose them on error; acceptable because redirects
+        // preempt any alert UX.
         reloaded = true;
         dialogs = [];
-        await recoverFromRedirect(bm);
+        await recoverFromRedirect(bm.getPage());
         target = bm.getActiveFrameOrPage();
         setResult = { settled: true };
       }
@@ -252,13 +258,18 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
       target = bm.getActiveFrameOrPage();
       const changed: FieldChange[] = [];
       if (trackConvergence && watchFieldIds.length > 0) {
+        // When reloaded, subsidiary is reported separately with display text —
+        // drop it from the raw-value diff to avoid a duplicate entry.
+        const diffFieldIds = reloaded
+          ? watchFieldIds.filter(id => id !== SUBSIDIARY_FIELD_ID)
+          : watchFieldIds;
         // After a redirect the page evaluated a fresh form — fields may 404
         // on read. Wrap in try so a partial read still produces a diff.
         try {
           const getter = createPageGetter(target);
-          const afterValues = await getter(watchFieldIds);
+          const afterValues = await getter(diffFieldIds);
 
-          for (const fid of watchFieldIds) {
+          for (const fid of diffFieldIds) {
             const before = beforeValues[fid] ?? null;
             const after = afterValues[fid] ?? null;
             if (before !== after) {
@@ -270,37 +281,30 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
         }
       }
 
-      // Subsidiary diff: always report when the form reloaded, and prefer
-      // display text over internal IDs. If the generic watch-field diff
-      // already added a raw-ID subsidiary entry, upgrade it in place.
+      // Subsidiary diff is the human-readable signal that the redirect fired —
+      // prefer display text over raw IDs so the hint surfaces "Parent Co." not "1".
       if (reloaded) {
         const postSubsidiary = await readSubsidiarySnapshot(target);
         if (subsidiaryChanged(preSubsidiary, postSubsidiary)) {
-          const before = preSubsidiary?.text ?? preSubsidiary?.value ?? null;
-          const after = postSubsidiary?.text ?? postSubsidiary?.value ?? null;
-          const existing = changed.findIndex(c => c.id === 'subsidiary');
-          if (existing >= 0) {
-            changed[existing] = { id: 'subsidiary', before, after };
-          } else {
-            changed.push({ id: 'subsidiary', before, after });
-          }
+          changed.push({
+            id: SUBSIDIARY_FIELD_ID,
+            before: preSubsidiary?.text ?? preSubsidiary?.value ?? null,
+            after: postSubsidiary?.text ?? postSubsidiary?.value ?? null,
+          });
         }
       }
 
       const elapsed = Date.now() - start;
 
-      // Hint: client scripts watching non-entity body fields (trandate, currency, ...)
-      // won't fire when cascading is suppressed. Surface the recovery flag inline
-      // so callers testing a handler don't have to dig for the workaround.
       let hint: string | null = null;
       if (reloaded) {
-        const postSub = changed.find(c => c.id === 'subsidiary');
-        if (postSub) {
-          hint = `form reloaded — subsidiary changed from ${truncateValue(postSub.before)} to ${truncateValue(postSub.after)}`;
-        } else {
-          hint = 'form reloaded — subsidiary shift triggered server-side redirect';
-        }
+        const postSub = changed.find(c => c.id === SUBSIDIARY_FIELD_ID);
+        hint = postSub
+          ? `form reloaded — subsidiary changed from ${truncateValue(postSub.before)} to ${truncateValue(postSub.after)}`
+          : 'form reloaded — subsidiary shift triggered server-side redirect';
       } else if (cascadingLabel === 'suppressed' && !fieldMeta.isEntityRef && forceSource === null) {
+        // Cascading suppressed on a non-entity field: caller may be testing
+        // a client script handler that needs fieldChanged to fire.
         hint = `HINT: fieldChanged not fired for '${fieldId}'. If testing a client script handler, retry with --fire-field-changed (or --source).`;
       }
 
@@ -352,25 +356,16 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
 // ─── Helpers ────────────────────────────────────────────────
 
 /**
- * Read the current subsidiary value + display text from the form.
- * Returns null when the field isn't present (non-OneWorld accounts or
- * forms without a subsidiary field).
+ * Read subsidiary value + display text. Returns null when the field isn't
+ * present (non-OneWorld accounts or forms without a subsidiary field).
  */
 async function readSubsidiarySnapshot(
   target: import('playwright').Page | import('playwright').Frame,
 ): Promise<SubsidiarySnapshot | null> {
   try {
-    return await target.evaluate(() => {
-      const w = window as any;
-      if (typeof w.nlapiGetField !== 'function') return null;
-      const field = w.nlapiGetField('subsidiary');
-      if (!field) return null;
-      let value: string | null = null;
-      let text: string | null = null;
-      try { value = w.nlapiGetFieldValue?.('subsidiary') ?? null; } catch {}
-      try { text = w.nlapiGetFieldText?.('subsidiary') ?? null; } catch {}
-      return { value, text };
-    });
+    const meta = await introspectField(target, SUBSIDIARY_FIELD_ID);
+    if (!meta) return null;
+    return { value: meta.value, text: meta.displayValue };
   } catch {
     return null;
   }
@@ -387,19 +382,17 @@ function subsidiaryChanged(
 
 /**
  * Wait for the page to finish loading after an NS server-side redirect,
- * then wait for the NS client API to be available again.
+ * then wait for the NS client API to be available again. `load` fires after
+ * `domcontentloaded` and after subresources, so it covers both.
  *
- * Timeouts are generous: the form may be heavy and server round-trips can
- * take 5s+ on slow connections. Soft-failing on each step is fine —
- * the caller re-tries via waitForFunction for the NS API.
+ * Total ceiling: ~10s. Each step soft-fails because the NS-API waitForFunction
+ * is the real readiness signal — the earlier waits just amortize load time.
  */
-async function recoverFromRedirect(bm: BrowserManager): Promise<void> {
-  const page = bm.getPage();
-  await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
-  await page.waitForLoadState('load', { timeout: 15_000 }).catch(() => {});
-  await waitForSettle(page, { timeoutMs: 5_000, stableMs: 500 });
+async function recoverFromRedirect(page: import('playwright').Page): Promise<void> {
+  await page.waitForLoadState('load', { timeout: 6_000 }).catch(() => {});
+  await waitForSettle(page, { timeoutMs: 3_000, stableMs: 500 });
   await page.waitForFunction(
     () => typeof (window as any).nlapiGetField === 'function',
-    { timeout: 10_000 },
+    { timeout: 6_000 },
   ).catch(() => {});
 }
