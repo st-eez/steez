@@ -6,6 +6,23 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 
 Six scripts manage AI coding agents across tmux panes: state detection, message delivery, completion watching, and transcript parsing. See `specs/README.md` for contracts, dependency graph, and data flow. Quick reference in CLAUDE.md Commands section.
 
+## Agent and Skill Locations
+
+Do not guess which verifier is in play. Check the actual layer.
+
+- **Codex custom agents** live in `~/.codex/agents/*.toml`
+  - Codex verifier: `/Users/stevedimakos/.codex/agents/verifier.toml`
+  - Source of truth: `/Users/stevedimakos/Projects/Personal/ren/.codex/agents/verifier.toml`
+- **Claude custom agents** live in `~/.claude/agents/*.md`
+  - Claude verifier: `/Users/stevedimakos/.claude/agents/verifier.md`
+  - Source of truth: `/Users/stevedimakos/Projects/Personal/ren/agents/verifier.md`
+- **Codex global skills** live in `~/.codex/skills`
+  - `~/.agents/skills` is legacy. Do not treat it as the Codex skill home.
+- **Repo-local skills** live in `/Users/stevedimakos/Projects/Personal/steez/skills`
+  - Example: `/Users/stevedimakos/Projects/Personal/steez/skills/spawn-agent`
+
+When verifier behavior looks wrong, inspect the parent spawn call and whether it used `fork_context=true` before blaming the verifier file.
+
 ## Quick Reference
 
 ```bash
