@@ -145,4 +145,262 @@ test_create_pending_errors_when_pane_already_has_live_watch() {
 }
 run_test "create_pending errors when pane already has a live watch" test_create_pending_errors_when_pane_already_has_live_watch
 
+# ----- lifecycle FSM (bead 2) -----
+#
+# Fake deliver: tests install a stub at $MOCK_BIN/agent-deliver that logs
+# every invocation and returns an exit code controlled by MOCK_DELIVER_EXIT.
+# The daemon resolves the deliver command via AGENT_DELIVER_CMD (default
+# `agent-deliver` on PATH). Fake clock: timeouts are fired by calling
+# watch_pending_timeout directly — no real timers in bead 2.
+
+suite "lifecycle"
+
+_deliver_log_path() { printf '%s' "$TEST_TMP/deliver.log"; }
+
+_install_deliver_mock() {
+  export DELIVER_LOG
+  DELIVER_LOG=$(_deliver_log_path)
+  : > "$DELIVER_LOG"
+  cat > "$MOCK_BIN/agent-deliver" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${DELIVER_LOG:-/dev/null}"
+exit "${MOCK_DELIVER_EXIT:-0}"
+MOCK
+  chmod +x "$MOCK_BIN/agent-deliver"
+  export AGENT_DELIVER_CMD="$MOCK_BIN/agent-deliver"
+  export MOCK_DELIVER_EXIT=0
+}
+
+_deliver_call_count() {
+  [[ -s "${DELIVER_LOG:-/dev/null}" ]] || { echo 0; return; }
+  wc -l < "$DELIVER_LOG" | tr -d ' '
+}
+
+test_pending_watch_never_notifies_and_armed_promotion_records_start_seq() {
+  # Spec: pending never notifies; watch.start must match the pending
+  # watch_id on the same pane and records start_seq.
+  _install_deliver_mock
+  declare -F watch_arm >/dev/null || { echo "    missing function: watch_arm"; return 1; }
+  local wid rec
+  wid=$(_mk_pending "%40" "%0" "codex")
+  # While pending, no deliver call may be issued.
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called while pending"; return 1; }
+  # watch.start — match watch_id on same pane, record start_seq.
+  watch_arm --pane "%40" --watch-id "$wid" --start-seq 12 || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .start_seq 12 || return 1
+  # Arming alone does not notify (no evidence yet).
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called after arm"; return 1; }
+}
+run_test "pending_watch_never_notifies_and_armed_promotion_records_start_seq" test_pending_watch_never_notifies_and_armed_promotion_records_start_seq
+
+test_watch_arm_rejects_mismatched_watch_id_on_same_pane() {
+  # Spec: watch.start must match a pending watch_id on the same pane.
+  _install_deliver_mock
+  local wid rc=0
+  wid=$(_mk_pending "%41")
+  watch_arm --pane "%41" --watch-id "not-$wid" --start-seq 3 >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] || { echo "    mismatched watch_id must be rejected"; return 1; }
+  # Original watch remains pending, untouched.
+  local rec
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state pending || return 1
+  assert_json_field "$rec" .start_seq null || return 1
+}
+run_test "watch_arm rejects mismatched watch_id on same pane" test_watch_arm_rejects_mismatched_watch_id_on_same_pane
+
+test_watch_arm_rejects_when_pane_has_no_live_watch() {
+  _install_deliver_mock
+  local rc=0
+  watch_arm --pane "%42" --watch-id "no-such" --start-seq 1 >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] || { echo "    arm on empty pane must be rejected"; return 1; }
+}
+run_test "watch_arm rejects when pane has no live watch" test_watch_arm_rejects_when_pane_has_no_live_watch
+
+test_pending_timeout_closes_pending_without_delivery() {
+  # Spec: "If watch.start never arrives, the watch closes with
+  # pending_timeout." No delivery ever occurs for such a watch.
+  _install_deliver_mock
+  declare -F watch_pending_timeout >/dev/null || { echo "    missing: watch_pending_timeout"; return 1; }
+  local wid
+  wid=$(_mk_pending "%43")
+  watch_pending_timeout "$wid" || return 1
+  local rec
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state closed || return 1
+  assert_json_field "$rec" .close_reason pending_timeout || return 1
+  # Pane's live slot must be freed (next prearm can occupy it).
+  assert_eq "" "$(watch_get_live "%43")" || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on pending_timeout"; return 1; }
+}
+run_test "pending_timeout closes pending without delivery" test_pending_timeout_closes_pending_without_delivery
+
+test_pending_timeout_refuses_to_close_armed_watch() {
+  # Guard: pending_timeout only applies to pending. Once armed, the
+  # daemon is past the watch.start deadline.
+  _install_deliver_mock
+  declare -F watch_pending_timeout >/dev/null || { echo "    missing: watch_pending_timeout"; return 1; }
+  local wid rc=0
+  wid=$(_mk_pending "%44")
+  watch_arm --pane "%44" --watch-id "$wid" --start-seq 5 >/dev/null || return 1
+  watch_pending_timeout "$wid" >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] || { echo "    pending_timeout must reject armed watch"; return 1; }
+  local rec
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+}
+run_test "pending_timeout refuses to close armed watch" test_pending_timeout_refuses_to_close_armed_watch
+
+test_watch_remove_closes_pending_without_delivery() {
+  # Spec: "Explicit removal ... closes an unresolved watch without delivery."
+  _install_deliver_mock
+  declare -F watch_remove >/dev/null || { echo "    missing: watch_remove"; return 1; }
+  local wid
+  wid=$(_mk_pending "%45")
+  watch_remove "%45" || return 1
+  local rec
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state closed || return 1
+  assert_json_field "$rec" .close_reason removed || return 1
+  assert_eq "" "$(watch_get_live "%45")" || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on remove"; return 1; }
+}
+run_test "watch_remove closes pending without delivery" test_watch_remove_closes_pending_without_delivery
+
+test_watch_remove_closes_armed_without_delivery() {
+  _install_deliver_mock
+  local wid
+  wid=$(_mk_pending "%46")
+  watch_arm --pane "%46" --watch-id "$wid" --start-seq 9 >/dev/null || return 1
+  watch_remove "%46" || return 1
+  local rec
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state closed || return 1
+  assert_json_field "$rec" .close_reason removed || return 1
+  assert_eq "" "$(watch_get_live "%46")" || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on remove"; return 1; }
+}
+run_test "watch_remove closes armed without delivery" test_watch_remove_closes_armed_without_delivery
+
+# Helper: arm the watch on <pane> (and return the watch_id). All resolve
+# and deliver tests start from an armed watch.
+_arm_on() {
+  local pane="$1" wid
+  wid=$(_mk_pending "$pane")
+  watch_arm --pane "$pane" --watch-id "$wid" --start-seq 1 >/dev/null || return 1
+  printf '%s' "$wid"
+}
+
+test_resolve_promotes_armed_to_resolved_and_records_terminal_state() {
+  _install_deliver_mock
+  declare -F watch_resolve >/dev/null || { echo "    missing: watch_resolve"; return 1; }
+  local wid rec
+  wid=$(_arm_on "%50") || return 1
+  watch_resolve "$wid" idle || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+  # Resolve alone does not notify; delivery is a separate transition.
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on resolve"; return 1; }
+}
+run_test "resolve promotes armed to resolved and records terminal state" test_resolve_promotes_armed_to_resolved_and_records_terminal_state
+
+test_resolve_refuses_to_act_on_pending_watch() {
+  _install_deliver_mock
+  declare -F watch_resolve >/dev/null || { echo "    missing: watch_resolve"; return 1; }
+  local wid rc=0
+  wid=$(_mk_pending "%51")
+  watch_resolve "$wid" idle >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] || { echo "    resolve on pending must be rejected"; return 1; }
+  assert_json_field "$(watch_get "$wid")" .state pending || return 1
+}
+run_test "resolve refuses to act on pending watch" test_resolve_refuses_to_act_on_pending_watch
+
+test_resolve_is_one_shot_later_calls_for_same_watch_id_are_ignored() {
+  # Spec: "Once resolved, the watch is one-shot. Later evidence for
+  # that watch_id is ignored."
+  _install_deliver_mock
+  declare -F watch_resolve >/dev/null || { echo "    missing: watch_resolve"; return 1; }
+  local wid rec
+  wid=$(_arm_on "%52") || return 1
+  watch_resolve "$wid" idle || return 1
+  # Second resolve with a different terminal state must not overwrite.
+  watch_resolve "$wid" "blocked:question" >/dev/null 2>&1 || true
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+}
+run_test "resolve is one-shot — later calls for same watch_id are ignored" test_resolve_is_one_shot_later_calls_for_same_watch_id_are_ignored
+
+test_deliver_after_resolve_transitions_to_delivered_on_success() {
+  _install_deliver_mock
+  declare -F watch_deliver_attempt >/dev/null || { echo "    missing: watch_deliver_attempt"; return 1; }
+  local wid rec
+  wid=$(_arm_on "%53") || return 1
+  watch_resolve "$wid" idle || return 1
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$wid" || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state delivered || return 1
+  # Pane's live slot is freed — the watch is terminal.
+  assert_eq "" "$(watch_get_live "%53")" || return 1
+  # Exactly one deliver call; first arg is the watch_id.
+  assert_eq 1 "$(_deliver_call_count)" || return 1
+  local first
+  first=$(head -1 "$DELIVER_LOG" | awk '{print $1}')
+  assert_eq "$wid" "$first" || return 1
+}
+run_test "deliver after resolve transitions to delivered on success" test_deliver_after_resolve_transitions_to_delivered_on_success
+
+test_deliver_failure_moves_to_delivery_failed_and_retry_uses_same_watch_id() {
+  # Spec: "A failed or timed-out delivery attempt moves the watch to
+  # delivery_failed. The daemon may retry only with the same watch_id."
+  _install_deliver_mock
+  declare -F watch_resolve watch_deliver_attempt >/dev/null || { echo "    missing lifecycle fn"; return 1; }
+  local wid rec
+  wid=$(_arm_on "%54") || return 1
+  watch_resolve "$wid" idle || return 1
+  # First attempt fails.
+  MOCK_DELIVER_EXIT=7 watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state delivery_failed || return 1
+  assert_json_field "$rec" .delivery_attempts 1 || return 1
+  # Retry from delivery_failed; succeeds. Must reuse the same watch_id.
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$wid" || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state delivered || return 1
+  assert_json_field "$rec" .delivery_attempts 2 || return 1
+  # Two calls, same watch_id on both.
+  assert_eq 2 "$(_deliver_call_count)" || return 1
+  local ids
+  ids=$(awk '{print $1}' "$DELIVER_LOG" | sort -u)
+  assert_eq "$wid" "$ids" || return 1
+}
+run_test "delivery failure moves to delivery_failed and retry uses same watch_id" test_deliver_failure_moves_to_delivery_failed_and_retry_uses_same_watch_id
+
+test_delivery_exhausted_closes_with_reason_after_MAX_DELIVERY_ATTEMPTS() {
+  # Spec: "Retries are bounded by MAX_DELIVERY_ATTEMPTS. Exhaustion
+  # closes the watch with delivery_exhausted."
+  _install_deliver_mock
+  declare -F watch_resolve watch_deliver_attempt >/dev/null || { echo "    missing lifecycle fn"; return 1; }
+  [[ -n "${MAX_DELIVERY_ATTEMPTS:-}" ]] || { echo "    MAX_DELIVERY_ATTEMPTS unset"; return 1; }
+  local wid rec rc=0 i
+  wid=$(_arm_on "%55") || return 1
+  watch_resolve "$wid" idle || return 1
+  # Drive MAX_DELIVERY_ATTEMPTS failures. The last one exhausts.
+  for ((i=1; i<=MAX_DELIVERY_ATTEMPTS; i++)); do
+    MOCK_DELIVER_EXIT=9 watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  done
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state closed || return 1
+  assert_json_field "$rec" .close_reason delivery_exhausted || return 1
+  assert_json_field "$rec" .delivery_attempts "$MAX_DELIVERY_ATTEMPTS" || return 1
+  assert_eq "" "$(watch_get_live "%55")" || return 1
+  # Further retries after exhaustion are refused (no extra deliver call).
+  watch_deliver_attempt "$wid" >/dev/null 2>&1 || rc=$?
+  [[ "$rc" -ne 0 ]] || { echo "    retry after exhaustion must be refused"; return 1; }
+  assert_eq "$MAX_DELIVERY_ATTEMPTS" "$(_deliver_call_count)" || return 1
+}
+run_test "delivery exhausted closes with delivery_exhausted after MAX_DELIVERY_ATTEMPTS" test_delivery_exhausted_closes_with_reason_after_MAX_DELIVERY_ATTEMPTS
+
 report

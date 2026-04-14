@@ -16,6 +16,12 @@ set -uo pipefail
 # pane. Each pane has its own seq counter.
 _EVENTSD_STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}/eventsd"
 
+# Spec defaults. Tests may override via env before sourcing or before
+# calling a lifecycle transition. The daemon reads them at call time so
+# overrides always win.
+: "${MAX_DELIVERY_ATTEMPTS:=5}"
+: "${AGENT_DELIVER_CMD:=agent-deliver}"
+
 # Map arbitrary pane ids (e.g. '%42', 'main:0.1') to filesystem-safe
 # keys. Non-alphanumerics become '_'. Collisions are possible in
 # theory but not in the pane-id grammar tmux actually emits.
@@ -188,6 +194,233 @@ watch_get_draining() {
     [[ -n "$wid" ]] || continue
     watch_get "$wid"
   done < "$draining_file"
+}
+
+# _eventsd_write_record <watch_id> <json>
+# Overwrites the on-disk record file for a watch.
+_eventsd_write_record() {
+  local wid="$1" json="$2"
+  printf '%s\n' "$json" > "$(_eventsd_watch_file "$wid")"
+}
+
+# watch_arm — promote a pending watch to armed (spec: watch.start).
+#
+# Flags:
+#   --pane <id>       (required) pane carrying the live pending watch
+#   --watch-id <id>   (required) must match the pane's live watch_id
+#   --start-seq <n>   (required) monotonic seq assigned to watch.start
+#
+# Rejects (non-zero) when the pane has no live watch, the live watch_id
+# does not match, or the watch is not in `pending`.
+watch_arm() {
+  local pane="" wid="" start_seq=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pane) pane="$2"; shift 2 ;;
+      --watch-id) wid="$2"; shift 2 ;;
+      --start-seq) start_seq="$2"; shift 2 ;;
+      *) echo "watch_arm: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+  local f
+  for f in pane wid start_seq; do
+    if [[ -z "${!f}" ]]; then
+      echo "watch_arm: missing --${f//_/-}" >&2
+      return 2
+    fi
+  done
+
+  local live rec state live_wid
+  live=$(watch_get_live "$pane")
+  [[ -n "$live" ]] || { echo "watch_arm: pane $pane has no live watch" >&2; return 1; }
+  live_wid=$(printf '%s' "$live" | jq -r .watch_id)
+  [[ "$live_wid" == "$wid" ]] || {
+    echo "watch_arm: watch_id $wid does not match live watch $live_wid on $pane" >&2
+    return 1
+  }
+  state=$(printf '%s' "$live" | jq -r .state)
+  [[ "$state" == "pending" ]] || {
+    echo "watch_arm: watch $wid is in state $state, expected pending" >&2
+    return 1
+  }
+
+  rec=$(printf '%s' "$live" | jq -c \
+    --argjson start_seq "$start_seq" \
+    '.state = "armed" | .start_seq = $start_seq')
+  _eventsd_write_record "$wid" "$rec"
+}
+
+# _eventsd_clear_live <pane>
+# Removes the pane's live-index pointer. Idempotent.
+_eventsd_clear_live() {
+  local live_file
+  live_file=$(_eventsd_live_file "$1")
+  rm -f "$live_file"
+}
+
+# _eventsd_close <watch_id> <pane> <reason>
+# Marks a watch as closed with a reason and frees the pane's live slot.
+# Internal helper used by watch_pending_timeout, watch_remove, and
+# delivery exhaustion.
+_eventsd_close() {
+  local wid="$1" pane="$2" reason="$3"
+  local rec cur
+  cur=$(watch_get "$wid")
+  [[ -n "$cur" ]] || { echo "_eventsd_close: no record for $wid" >&2; return 1; }
+  rec=$(printf '%s' "$cur" | jq -c \
+    --arg reason "$reason" \
+    '.state = "closed" | .close_reason = $reason')
+  _eventsd_write_record "$wid" "$rec"
+  _eventsd_clear_live "$pane"
+}
+
+# watch_pending_timeout <watch_id>
+# Close a pending watch because watch.start never arrived. Refuses to
+# act on watches in any other state — once armed, the daemon is past
+# the prearm deadline.
+watch_pending_timeout() {
+  local wid="$1"
+  [[ -n "$wid" ]] || { echo "watch_pending_timeout: missing watch_id" >&2; return 2; }
+  local cur state pane
+  cur=$(watch_get "$wid")
+  [[ -n "$cur" ]] || { echo "watch_pending_timeout: no record for $wid" >&2; return 1; }
+  state=$(printf '%s' "$cur" | jq -r .state)
+  [[ "$state" == "pending" ]] || {
+    echo "watch_pending_timeout: watch $wid is in state $state, expected pending" >&2
+    return 1
+  }
+  pane=$(printf '%s' "$cur" | jq -r .pane_id)
+  _eventsd_close "$wid" "$pane" "pending_timeout"
+}
+
+# watch_remove <pane>
+# Explicit removal (spec: "closes an unresolved watch without
+# delivery"). Acts on the pane's live watch in pending or armed; no-op
+# if there is no live watch.
+watch_remove() {
+  local pane="$1"
+  [[ -n "$pane" ]] || { echo "watch_remove: missing pane" >&2; return 2; }
+  local cur state wid
+  cur=$(watch_get_live "$pane")
+  [[ -n "$cur" ]] || return 0
+  state=$(printf '%s' "$cur" | jq -r .state)
+  case "$state" in
+    pending|armed) ;;
+    *)
+      echo "watch_remove: watch is in state $state, cannot remove" >&2
+      return 1
+      ;;
+  esac
+  wid=$(printf '%s' "$cur" | jq -r .watch_id)
+  _eventsd_close "$wid" "$pane" "removed"
+}
+
+# watch_resolve <watch_id> <terminal_state>
+#
+# Promote an armed watch to `resolved` (spec: canonical resolver). The
+# watch is one-shot: later resolve calls for the same watch_id are
+# ignored so duplicate evidence cannot fire a second notification.
+#
+# Evidence semantics (fresh/baseline/source) are the resolver bead's
+# job. Bead 2 only owns the state transition.
+watch_resolve() {
+  local wid="$1" terminal="${2:-}"
+  [[ -n "$wid" ]] || { echo "watch_resolve: missing watch_id" >&2; return 2; }
+  [[ -n "$terminal" ]] || { echo "watch_resolve: missing terminal state" >&2; return 2; }
+  local cur state
+  cur=$(watch_get "$wid")
+  [[ -n "$cur" ]] || { echo "watch_resolve: no record for $wid" >&2; return 1; }
+  state=$(printf '%s' "$cur" | jq -r .state)
+  case "$state" in
+    armed) ;;
+    resolved|delivering|delivery_failed|delivered|closed)
+      # One-shot: ignore later evidence for this watch_id.
+      return 0
+      ;;
+    *)
+      echo "watch_resolve: watch $wid is in state $state, cannot resolve" >&2
+      return 1
+      ;;
+  esac
+  local rec
+  rec=$(printf '%s' "$cur" | jq -c \
+    --arg terminal "$terminal" \
+    '.state = "resolved"
+     | .resolved_state = $terminal
+     | .delivery_attempts = 0')
+  _eventsd_write_record "$wid" "$rec"
+}
+
+# watch_deliver_attempt <watch_id>
+#
+# Drive one delivery attempt from the daemon. Legal entry states:
+# `resolved` (first attempt) or `delivery_failed` (retry). The watch
+# transitions through `delivering` (persisted before invoking the
+# external deliver command, per spec), then to `delivered` on success
+# or `delivery_failed` on non-zero exit. Each attempt reuses the same
+# watch_id (idempotency key). Exhausting MAX_DELIVERY_ATTEMPTS closes
+# the watch with close_reason=delivery_exhausted.
+watch_deliver_attempt() {
+  local wid="$1"
+  [[ -n "$wid" ]] || { echo "watch_deliver_attempt: missing watch_id" >&2; return 2; }
+  local cur state pane spawner attempts max cmd
+  cur=$(watch_get "$wid")
+  [[ -n "$cur" ]] || { echo "watch_deliver_attempt: no record for $wid" >&2; return 1; }
+  state=$(printf '%s' "$cur" | jq -r .state)
+  case "$state" in
+    resolved|delivery_failed) ;;
+    *)
+      echo "watch_deliver_attempt: watch $wid is in state $state, not deliverable" >&2
+      return 1
+      ;;
+  esac
+
+  pane=$(printf '%s' "$cur" | jq -r .pane_id)
+  spawner=$(printf '%s' "$cur" | jq -r .spawner_pane)
+  attempts=$(printf '%s' "$cur" | jq -r '.delivery_attempts // 0')
+  max="${MAX_DELIVERY_ATTEMPTS:-5}"
+  cmd="${AGENT_DELIVER_CMD:-agent-deliver}"
+
+  # Persist `delivering` before invoking the deliver command. If the
+  # daemon crashes between persist and reply, restart recovery can
+  # reclassify as delivery_failed and retry with the same watch_id.
+  local pre
+  pre=$(printf '%s' "$cur" | jq -c '.state = "delivering"')
+  _eventsd_write_record "$wid" "$pre"
+
+  local rc=0
+  "$cmd" "$wid" "$spawner" >/dev/null 2>&1 || rc=$?
+  attempts=$((attempts + 1))
+
+  cur=$(watch_get "$wid")
+  if [[ "$rc" -eq 0 ]]; then
+    local rec
+    rec=$(printf '%s' "$cur" | jq -c \
+      --argjson attempts "$attempts" \
+      '.state = "delivered" | .delivery_attempts = $attempts')
+    _eventsd_write_record "$wid" "$rec"
+    _eventsd_clear_live "$pane"
+    return 0
+  fi
+
+  if (( attempts >= max )); then
+    local rec
+    rec=$(printf '%s' "$cur" | jq -c \
+      --argjson attempts "$attempts" \
+      '.state = "closed"
+       | .close_reason = "delivery_exhausted"
+       | .delivery_attempts = $attempts')
+    _eventsd_write_record "$wid" "$rec"
+    _eventsd_clear_live "$pane"
+    return 1
+  fi
+
+  local rec
+  rec=$(printf '%s' "$cur" | jq -c \
+    --argjson attempts "$attempts" \
+    '.state = "delivery_failed" | .delivery_attempts = $attempts')
+  _eventsd_write_record "$wid" "$rec"
+  return 1
 }
 
 # watch_list — print JSONL of every known watch record.
