@@ -84,10 +84,8 @@ Safety check: if `NEW_TARGET == SELF_ID`, the split failed — exits with error.
 
 1. Resolve launch command from model: `ren` -> `ren`, `claude` -> `claude --dangerously-skip-permissions`, `codex` -> `codex --dangerously-bypass-approvals-and-sandbox`.
 2. Type the command into the target pane via `tmux send-keys`, then Enter after 300ms.
-3. **Boot wait:** Hybrid readiness detection, up to 30 iterations at 500ms (15s total):
-   - **Claude/Ren:** Poll for `@session_id` tmux pane variable (set by SessionStart hook).
-   - **Codex/Ren-Codex:** Poll screen for `›` prompt character via `tmux capture-pane` (Codex's SessionStart hook fires on first message, not launch).
-4. If prompt is provided, deliver via `agent-send` with `--spawner $SELF_ID`, `--label "$MODEL <first-40-chars>"`, and `--emit-watch-line`.
+3. **Boot wait:** Fixed 5-second sleep. Long enough for every supported agent to finish its SessionStart hook in practice; short enough that a dead launch surfaces quickly. Polling `@session_id` or the Codex `›` prompt was considered but adds tmux-version coupling for no real win at the cadence `spawn.sh` actually runs at.
+4. If prompt is provided, deliver via `agent-send` with `--spawner $SELF_ID`, `--label "$MODEL <first-40-chars>"`, and `--emit-watch-line` (or `--no-watch` when `--no-watch` was passed to spawn.sh). Without a prompt, emit `IDLE` and return.
 
 ## SKILL.md Intent Parsing
 
@@ -154,12 +152,12 @@ REN_PROMPT
 - **agent-watch** is auto-registered via `agent-send` after prompt delivery.
 - **agent-state** is used for boot-wait and post-spawn state checking.
 - **agent-history** is used for post-spawn output reading.
-- **SessionStart hook** sets `@session_id` and `@transcript_path` pane variables that spawn.sh polls for boot readiness.
+- **SessionStart hook** sets `@session_id` and `@transcript_path` pane variables, which downstream helpers (`agent-state`, `agent-history`) read. `spawn.sh` itself does not poll these — it hands off to `agent-send` after the fixed 5-second boot wait.
 
 ## Behavioral Contracts
 
 1. The agent is always launched bare (no inline prompt). Prompts go through `agent-send` after boot wait.
-2. Boot readiness is hybrid: `@session_id` pane variable for Claude/Ren, screen `›` prompt detection for Codex/Ren-Codex.
+2. Boot readiness is a fixed 5-second sleep between launch and prompt delivery — no per-agent polling.
 3. Pane IDs in output are stable `%N` format.
 4. `SELF` in output is always the spawner's pane ID, `TARGET` is the new pane.
 5. Directory resolution never auto-resolves ambiguous matches — reports candidates for user selection.

@@ -137,11 +137,18 @@ MOCK
   chmod +x "$path"
 }
 
-# Mock tmux. Handles only the subcommands the test suite exercises
-# (display-message, load-buffer, paste-buffer, send-keys, delete-buffer).
+# Stateful mock tmux. Pane table lives in MOCK_TMUX_PANES_FILE, one row per
+# pane, SOH-delimited (\001) across 7 columns: id, pid, title, cwd, session,
+# window, canonical_pane_id. SOH survives empty fields; $'\t' would collapse
+# runs of tabs and shift columns whenever a title is empty.
+#
+# The canonical column is empty for regular panes. mock_pane_alias writes a
+# row whose id is a session:window.pane string and whose canonical is the
+# %N the alias resolves to — display-message returns canonical for
+# #{pane_id} so tests can verify downstream calls use the resolved %N.
+#
 # Unknown subcommands, unknown flags, unknown format strings, and panes
-# absent from MOCK_TMUX_PANES_FILE all fail non-zero, so tests cannot pass
-# theatrically on a tmux call that real tmux would reject.
+# absent from the table all fail non-zero so tests cannot pass theatrically.
 create_mock_tmux() {
   MOCK_TMUX_VARS_FILE="$TEST_TMP/tmux-vars.tsv"
   MOCK_TMUX_LAYOUT_FILE="$TEST_TMP/tmux-layout.tsv"
@@ -152,20 +159,101 @@ create_mock_tmux() {
 
   cat > "$MOCK_BIN/tmux" <<'TMUX_MOCK'
 #!/usr/bin/env bash
+set -uo pipefail
+
 # Optional call log. When MOCK_TMUX_LOG is set, every tmux invocation
 # appends a line with its argv so tests can assert *which* pane was used
 # for paste-buffer / send-keys downstream of pane resolution.
 [[ -n "${MOCK_TMUX_LOG:-}" ]] && printf '%s\n' "$*" >> "$MOCK_TMUX_LOG"
 
-_lookup_pane() {
-  # stdout: tab-separated pane row, exit 1 if absent
-  [[ -n "$1" && -f "${MOCK_TMUX_PANES_FILE:-}" ]] || return 1
-  local line
-  line=$(grep -m1 -F "${1}"$'\t' "$MOCK_TMUX_PANES_FILE") || return 1
-  printf '%s' "$line"
+SEP=$'\001'
+
+_emit_row() {
+  # Emit one SOH-delimited 7-column pane row to stdout.
+  # args: id pid title cwd session window [canonical]
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$1" "$SEP" "$2" "$SEP" "$3" "$SEP" "$4" "$SEP" \
+    "$5" "$SEP" "$6" "$SEP" "${7:-}"
 }
 
-cmd="$1"; shift
+_normalize() {
+  # Fill in defaults so every downstream reader sees a 7-column row.
+  local id pid title cwd session window canon
+  IFS="$SEP" read -r id pid title cwd session window canon <<< "$1"
+  : "${session:=test}"
+  : "${window:=0}"
+  _emit_row "$id" "$pid" "$title" "$cwd" "$session" "$window" "${canon:-}"
+}
+
+_lookup_by_id() {
+  [[ -n "$1" && -f "${MOCK_TMUX_PANES_FILE:-}" ]] || return 1
+  local row
+  row=$(grep -m1 -F "${1}${SEP}" "$MOCK_TMUX_PANES_FILE") || return 1
+  _normalize "$row"
+}
+
+_filter_target() {
+  # Writes normalized rows matching target (pane_id, session, session:window,
+  # or session:window.pane). No match → no output.
+  local target="$1"
+  [[ -f "${MOCK_TMUX_PANES_FILE:-}" ]] || return 0
+  local sess window raw norm id _pid _title _cwd rs rw _canon
+  if [[ "$target" == %* ]]; then
+    while IFS= read -r raw; do
+      [[ -z "$raw" ]] && continue
+      norm=$(_normalize "$raw")
+      IFS="$SEP" read -r id _pid _title _cwd rs rw _canon <<< "$norm"
+      [[ "$id" == "$target" ]] && printf '%s\n' "$norm"
+    done < "$MOCK_TMUX_PANES_FILE"
+    return 0
+  fi
+  sess="${target%%:*}"
+  window=""
+  if [[ "$target" == *:* ]]; then
+    local rest="${target#*:}"
+    window="${rest%%.*}"
+  fi
+  while IFS= read -r raw; do
+    [[ -z "$raw" ]] && continue
+    norm=$(_normalize "$raw")
+    IFS="$SEP" read -r id _pid _title _cwd rs rw _canon <<< "$norm"
+    [[ "$rs" != "$sess" ]] && continue
+    [[ -n "$window" && "$rw" != "$window" ]] && continue
+    printf '%s\n' "$norm"
+  done < "$MOCK_TMUX_PANES_FILE"
+}
+
+_next_id() {
+  local counter="${MOCK_TMUX_PANES_FILE}.id"
+  local n=100
+  [[ -f "$counter" ]] && n=$(cat "$counter")
+  printf '%%%s' "$n"
+  echo $((n + 1)) > "$counter"
+}
+
+_append_pane() {
+  # id pid title cwd session window [canonical]
+  _emit_row "$@" >> "$MOCK_TMUX_PANES_FILE"
+}
+
+_emit_fmt() {
+  local id pid title cwd session window canon
+  IFS="$SEP" read -r id pid title cwd session window canon <<< "$1"
+  local resolved="${canon:-$id}"
+  case "$2" in
+    '#{pane_id}')                                     printf '%s\n' "$resolved" ;;
+    '#{pane_pid}')                                    printf '%s\n' "$pid" ;;
+    '#{pane_title}')                                  printf '%s\n' "$title" ;;
+    '#{pane_current_path}')                           printf '%s\n' "$cwd" ;;
+    '#{session_name}:#{window_index}.#{pane_index}')  printf '%s:%s.0\n' "$session" "$window" ;;
+    '#{session_name}:#{window_index}')                printf '%s:%s\n' "$session" "$window" ;;
+    '#{pane_id} #{session_name}:#{window_index}')     printf '%s %s:%s\n' "$resolved" "$session" "$window" ;;
+    '#{pane_id} #{session_name} #{window_index}')     printf '%s %s %s\n' "$resolved" "$session" "$window" ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd="${1:-}"; shift || true
 case "$cmd" in
   display-message)
     pane="" fmt=""
@@ -176,21 +264,126 @@ case "$cmd" in
         *) exit 1 ;;
       esac
     done
-    line=$(_lookup_pane "$pane") || exit 1
-    # Rows written by mock_pane_alias carry a 5th field: the canonical
-    # pane id that the alias resolves to. When present, '#{pane_id}'
-    # returns it so callers get a stable %N downstream of resolution.
-    IFS=$'\t' read -r _id _pid _title _cwd _canon <<< "$line"
-    case "$fmt" in
-      '#{pane_id}') echo "${_canon:-$_id}" ;;
-      '#{pane_pid}') echo "$_pid" ;;
-      '#{pane_title}') echo "$_title" ;;
-      '#{pane_current_path}') echo "$_cwd" ;;
-      '#{session_name}:#{window_index}.#{pane_index}') echo "test:0.0" ;;
-      '#{session_name}:#{window_index}') echo "test:0" ;;
-      *) exit 1 ;;
-    esac
+    [[ -n "$pane" ]] || pane="${TMUX_PANE:-}"
+    if [[ "$pane" == %* ]]; then
+      row=$(_lookup_by_id "$pane") || exit 1
+    else
+      # session or session:window target — active pane is the most recently
+      # created pane under that target (matches real tmux after new-window /
+      # new-session / split-window, which promote the new pane to active).
+      row=$(_filter_target "$pane" | tail -1)
+      [[ -n "$row" ]] || exit 1
+    fi
+    _emit_fmt "$row" "$fmt" || exit 1
     ;;
+
+  list-panes)
+    all=false target="" fmt="#{pane_id}"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -a) all=true; shift ;;
+        -t) target="$2"; shift 2 ;;
+        -F) fmt="$2"; shift 2 ;;
+        *) exit 1 ;;
+      esac
+    done
+
+    # agent-state --layout: dump pre-seeded layout rows from a separate
+    # table. The format is a 10-column geometry record assembled by
+    # mock_layout_pane; reusing the pane table would require synthesizing
+    # geometry tests don't control.
+    if [[ "$fmt" == *'#{pane_left}'* ]]; then
+      [[ -s "${MOCK_TMUX_LAYOUT_FILE:-}" ]] && cat "$MOCK_TMUX_LAYOUT_FILE"
+      exit 0
+    fi
+
+    # agent-state compact format: id<TAB>pid<TAB>title<TAB>cwd. Detected by
+    # the pane_current_path field combined with a literal tab separator so
+    # the single-field display-message format '#{pane_current_path}' still
+    # routes to _emit_fmt below.
+    if [[ "$fmt" == *'#{pane_current_path}'* && "$fmt" == *$'\t'* ]]; then
+      if $all; then
+        [[ -f "$MOCK_TMUX_PANES_FILE" ]] || exit 0
+        while IFS= read -r raw; do
+          [[ -z "$raw" ]] && continue
+          IFS="$SEP" read -r id pid title cwd _s _w canon <<< "$(_normalize "$raw")"
+          printf '%s\t%s\t%s\t%s\n' "${canon:-$id}" "$pid" "$title" "$cwd"
+        done < "$MOCK_TMUX_PANES_FILE"
+        exit 0
+      else
+        exit 1
+      fi
+    fi
+
+    # Short composite formats via _emit_fmt (used by spawn.sh).
+    if $all; then
+      [[ -f "$MOCK_TMUX_PANES_FILE" ]] || exit 0
+      while IFS= read -r raw; do
+        [[ -z "$raw" ]] && continue
+        _emit_fmt "$(_normalize "$raw")" "$fmt" || exit 1
+      done < "$MOCK_TMUX_PANES_FILE"
+    else
+      [[ -n "$target" ]] || exit 1
+      _filter_target "$target" | while IFS= read -r row; do
+        [[ -z "$row" ]] && continue
+        _emit_fmt "$row" "$fmt" || exit 1
+      done
+    fi
+    ;;
+
+  split-window)
+    target="" dir=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        -h|-v) dir="$1"; shift ;;
+        *) exit 1 ;;
+      esac
+    done
+    [[ -n "$target" && -n "$dir" ]] || exit 1
+    row=$(_lookup_by_id "$target") || exit 1
+    IFS="$SEP" read -r _id _pid _title cwd session window _canon <<< "$row"
+    _append_pane "$(_next_id)" "$$" "" "$cwd" "$session" "$window" ""
+    ;;
+
+  new-window)
+    target=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t) target="$2"; shift 2 ;;
+        *) exit 1 ;;
+      esac
+    done
+    [[ -n "$target" ]] || exit 1
+    session="${target%%:*}"
+    # Next window index = max existing window in session + 1.
+    max_w=""
+    while IFS= read -r row; do
+      [[ -z "$row" ]] && continue
+      IFS="$SEP" read -r _ _ _ _ _ rw _canon <<< "$row"
+      if [[ -z "$max_w" || "$rw" -gt "$max_w" ]]; then max_w="$rw"; fi
+    done < <(_filter_target "$session")
+    [[ -n "$max_w" ]] || { echo "no such session: $session" >&2; exit 1; }
+    _append_pane "$(_next_id)" "$$" "" "/tmp" "$session" "$((max_w + 1))" ""
+    ;;
+
+  new-session)
+    sname=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -d) shift ;;
+        -s) sname="$2"; shift 2 ;;
+        *) exit 1 ;;
+      esac
+    done
+    [[ -n "$sname" ]] || exit 1
+    if _filter_target "$sname" | grep -q .; then
+      echo "duplicate session: $sname" >&2
+      exit 1
+    fi
+    _append_pane "$(_next_id)" "$$" "" "/tmp" "$sname" "0" ""
+    ;;
+
   send-keys|paste-buffer)
     # Every known flag to send-keys / paste-buffer the tests use takes an
     # argument; the positional tail is the key stream. We only validate the
@@ -205,39 +398,17 @@ case "$cmd" in
         *) shift ;;
       esac
     done
-    _lookup_pane "$pane" >/dev/null || exit 1
+    _lookup_by_id "$pane" >/dev/null || exit 1
     ;;
+
   load-buffer)
     # real tmux reads the buffer body from `-` via stdin; drain to avoid SIGPIPE
     cat >/dev/null
     ;;
+
   delete-buffer)
     ;;
-  list-panes)
-    # Supports `-a -F <fmt>`. Format selection by substring — agent-state calls
-    # this with two distinct formats (geometry-bearing for --layout, compact
-    # for --all). Unknown formats are rejected so drift surfaces.
-    all=false fmt=""
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        -a) all=true; shift ;;
-        -F) fmt="$2"; shift 2 ;;
-        *) exit 1 ;;
-      esac
-    done
-    [[ "$all" == "true" ]] || exit 1
-    case "$fmt" in
-      *'#{pane_left}'*)
-        [[ -s "${MOCK_TMUX_LAYOUT_FILE:-}" ]] && cat "$MOCK_TMUX_LAYOUT_FILE"
-        ;;
-      *'#{pane_current_path}'*)
-        cat "${MOCK_TMUX_PANES_FILE:-/dev/null}"
-        ;;
-      *)
-        exit 1
-        ;;
-    esac
-    ;;
+
   show-options)
     # Usage: show-options -pv -t <pane> <var>. -pv or split -p -v both work.
     # Missing option returns exit 1 with empty stdout (real tmux behavior).
@@ -254,6 +425,7 @@ case "$cmd" in
       '$1==p && $2==v { print $3; found=1; exit } END { exit (found ? 0 : 1) }' \
       "${MOCK_TMUX_VARS_FILE:-/dev/null}"
     ;;
+
   capture-pane)
     # Usage: capture-pane -t <pane> -p [-S -]. Returns content from
     # $MOCK_TMUX_CAPTURE_DIR/<pane> or empty if unset.
@@ -271,6 +443,7 @@ case "$cmd" in
       cat "${MOCK_TMUX_CAPTURE_DIR}/$pane"
     fi
     ;;
+
   *)
     exit 1
     ;;
@@ -279,21 +452,59 @@ TMUX_MOCK
   chmod +x "$MOCK_BIN/tmux"
 }
 
-mock_pane() {
-  local pane_id="$1" pane_pid="$2" title="${3:-}" cwd="${4:-/tmp}"
-  printf '%s\t%s\t%s\t%s\n' "$pane_id" "$pane_pid" "$title" "$cwd" >> "$MOCK_TMUX_PANES_FILE"
+# Append a SOH-delimited 7-column pane row to the pane table. Shared by
+# mock_pane and mock_pane_alias so the storage format stays single-sourced.
+_append_pane_row() {
+  local sep=$'\001'
+  printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+    "$1" "$sep" "$2" "$sep" "$3" "$sep" "$4" "$sep" \
+    "$5" "$sep" "$6" "$sep" "${7:-}" \
+    >> "$MOCK_TMUX_PANES_FILE"
 }
 
-# Register a pane alias (e.g., "session:0.0") that resolves to a canonical
+# Register a mock pane. session and window default to test/0 so existing
+# tests that don't care about placement keep working.
+mock_pane() {
+  local pane_id="$1" pane_pid="$2" title="${3:-}" cwd="${4:-/tmp}"
+  local session="${5:-test}" window="${6:-0}"
+  _append_pane_row "$pane_id" "$pane_pid" "$title" "$cwd" "$session" "$window" ""
+}
+
+# Register a pane alias (e.g., "session:0.1") that resolves to a canonical
 # %N via `tmux display-message -p '#{pane_id}'`. Used to verify downstream
 # tmux calls target the resolved %N, not the raw alias the caller passed.
 #
-# Fields must all be non-empty: IFS=$'\t' in the mock's `read` treats tab
-# as IFS whitespace and collapses runs of tabs into a single delimiter, so
-# empty middle fields would shift _canon into an earlier slot.
+# Session and window are derived from the alias so `display-message -t alias`
+# routes through _filter_target to this row. Canonical is stored in the
+# 7th column; _emit_fmt returns it for #{pane_id} when present.
 mock_pane_alias() {
   local alias="$1" canonical="$2"
-  printf '%s\t0\talias\t/tmp\t%s\n' "$alias" "$canonical" >> "$MOCK_TMUX_PANES_FILE"
+  local session="${alias%%:*}" window="0"
+  if [[ "$alias" == *:* ]]; then
+    local rest="${alias#*:}"
+    window="${rest%%.*}"
+  fi
+  _append_pane_row "$alias" "0" "alias" "/tmp" "$session" "$window" "$canonical"
+}
+
+# Read one column (1=id, 2=pid, 3=title, 4=cwd, 5=session, 6=window,
+# 7=canonical) from the mock pane-table row for `pane_id`. Exits 1 if no
+# such pane. Tests use this instead of grepping the file directly so they
+# stay agnostic of the storage format (currently SOH-delimited rows).
+pane_attr() {
+  local pane_id="$1" col="$2"
+  local sep=$'\001'
+  local row
+  row=$(grep -m1 -F "${pane_id}${sep}" "$MOCK_TMUX_PANES_FILE") || return 1
+  awk -F"${sep}" -v n="$col" '{print $n}' <<< "$row"
+}
+
+# Does any row in the mock pane table have this session name? Exits 0/1.
+pane_has_session() {
+  local session="$1"
+  local sep=$'\001'
+  awk -F"${sep}" -v s="$session" '$5==s {found=1; exit} END{exit !found}' \
+    "$MOCK_TMUX_PANES_FILE"
 }
 
 # Append a row to the 10-field pane layout table consumed by `agent-state --layout`.
@@ -377,6 +588,7 @@ setup_agent_mocks() {
      echo "error: pane '\''$PANE'\'' is not a recognized AI agent" >&2
      exit 1'
 
+  # Matches real agent-deliver: wrong arg count → 1; empty message → 1; non-agent pane → 2.
   create_mock_script "$HOME/.steez/bin/agent-deliver" \
     '[[ $# -eq 2 ]] || { echo "error: usage: agent-deliver <pane> \"message\"" >&2; exit 1; }
      PANE="$1" MSG="$2"
