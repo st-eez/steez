@@ -28,13 +28,9 @@ setup_test_env() {
   mkdir -p "$HOME/.codex/log"
   mkdir -p "$STEEZ_STATE_DIR"
   mkdir -p "$TEST_TMP/mock-bin"
-  mkdir -p "$TEST_TMP/tmux-captures"
-  mkdir -p "$TEST_TMP/tmux-pane-vars"
 
   export MOCK_BIN="$TEST_TMP/mock-bin"
   export MOCK_TMUX_PANES_FILE="$TEST_TMP/tmux-panes.tsv"
-  export MOCK_TMUX_CAPTURE_DIR="$TEST_TMP/tmux-captures"
-  export MOCK_TMUX_PANE_VARS_DIR="$TEST_TMP/tmux-pane-vars"
 
   touch "$MOCK_TMUX_PANES_FILE"
 
@@ -141,19 +137,34 @@ MOCK
   chmod +x "$path"
 }
 
+# Mock tmux. Handles only the subcommands the test suite exercises
+# (display-message, load-buffer, paste-buffer, send-keys, delete-buffer).
+# Unknown subcommands, unknown flags, unknown format strings, and panes
+# absent from MOCK_TMUX_PANES_FILE all fail non-zero, so tests cannot pass
+# theatrically on a tmux call that real tmux would reject.
 create_mock_tmux() {
   cat > "$MOCK_BIN/tmux" <<'TMUX_MOCK'
 #!/usr/bin/env bash
+_lookup_pane() {
+  # stdout: tab-separated pane row, exit 1 if absent
+  [[ -n "$1" && -f "${MOCK_TMUX_PANES_FILE:-}" ]] || return 1
+  local line
+  line=$(grep -m1 -F "${1}"$'\t' "$MOCK_TMUX_PANES_FILE") || return 1
+  printf '%s' "$line"
+}
+
 cmd="$1"; shift
 case "$cmd" in
   display-message)
     pane="" fmt=""
     while [[ $# -gt 0 ]]; do
-      case "$1" in -t) pane="$2"; shift 2 ;; -p) fmt="$2"; shift 2 ;; *) shift ;; esac
+      case "$1" in
+        -t) pane="$2"; shift 2 ;;
+        -p) fmt="$2"; shift 2 ;;
+        *) exit 1 ;;
+      esac
     done
-    [[ -z "$pane" || -z "${MOCK_TMUX_PANES_FILE:-}" ]] && exit 1
-    line=$(grep -F "${pane}	" "$MOCK_TMUX_PANES_FILE" 2>/dev/null | head -1 || true)
-    [[ -z "$line" ]] && exit 1
+    line=$(_lookup_pane "$pane") || exit 1
     IFS=$'\t' read -r _id _pid _title _cwd <<< "$line"
     case "$fmt" in
       '#{pane_id}') echo "$_id" ;;
@@ -162,33 +173,33 @@ case "$cmd" in
       '#{pane_current_path}') echo "$_cwd" ;;
       '#{session_name}:#{window_index}.#{pane_index}') echo "test:0.0" ;;
       '#{session_name}:#{window_index}') echo "test:0" ;;
-      *) echo "" ;;
+      *) exit 1 ;;
     esac
     ;;
-  list-panes)
-    [[ -f "${MOCK_TMUX_PANES_FILE:-}" ]] && cat "$MOCK_TMUX_PANES_FILE"
-    ;;
-  capture-pane)
+  send-keys|paste-buffer)
+    # Every known flag to send-keys / paste-buffer the tests use takes an
+    # argument; the positional tail is the key stream. We only validate the
+    # pane target — extra flags would just shift, but an explicit unknown
+    # short flag is rejected to stay consistent with display-message strictness.
     pane=""
     while [[ $# -gt 0 ]]; do
-      case "$1" in -t) pane="$2"; shift 2 ;; *) shift ;; esac
+      case "$1" in
+        -t) pane="$2"; shift 2 ;;
+        -b|-d) shift ;;
+        -*) exit 1 ;;
+        *) shift ;;
+      esac
     done
-    [[ -n "$pane" && -d "${MOCK_TMUX_CAPTURE_DIR:-}" ]] && cat "${MOCK_TMUX_CAPTURE_DIR}/${pane}.txt" 2>/dev/null || true
-    ;;
-  show-options)
-    pane="" var=""
-    while [[ $# -gt 0 ]]; do
-      case "$1" in -pv) shift ;; -t) pane="$2"; shift 2 ;; @*) var="${1#@}"; shift ;; *) shift ;; esac
-    done
-    [[ -n "$pane" && -n "$var" && -d "${MOCK_TMUX_PANE_VARS_DIR:-}" ]] || exit 1
-    cat "${MOCK_TMUX_PANE_VARS_DIR}/${pane}/${var}.txt" 2>/dev/null || exit 1
-    ;;
-  send-keys|paste-buffer|delete-buffer|split-window|new-window|new-session)
+    _lookup_pane "$pane" >/dev/null || exit 1
     ;;
   load-buffer)
-    cat > /dev/null 2>/dev/null || true
+    # real tmux reads the buffer body from `-` via stdin; drain to avoid SIGPIPE
+    cat >/dev/null
+    ;;
+  delete-buffer)
     ;;
   *)
+    exit 1
     ;;
 esac
 TMUX_MOCK
@@ -200,26 +211,35 @@ mock_pane() {
   printf '%s\t%s\t%s\t%s\n' "$pane_id" "$pane_pid" "$title" "$cwd" >> "$MOCK_TMUX_PANES_FILE"
 }
 
-mock_pane_content() {
-  local pane_id="$1" content="$2"
-  printf '%s' "$content" > "$MOCK_TMUX_CAPTURE_DIR/${pane_id}.txt"
-}
-
-mock_pane_var() {
-  local pane_id="$1" var="$2" value="$3"
-  mkdir -p "$MOCK_TMUX_PANE_VARS_DIR/${pane_id}"
-  printf '%s' "$value" > "$MOCK_TMUX_PANE_VARS_DIR/${pane_id}/${var}.txt"
-}
-
-# Install mock agent scripts at $HOME/.steez/bin/ paths where real scripts expect them
+# Install mock agent scripts at $HOME/.steez/bin/ paths where real scripts
+# expect them. Only the scripts actually invoked during the test suite
+# (agent-state, agent-deliver) are stubbed. Each mock rejects inputs the
+# real script rejects, so fidelity bugs cannot hide behind unconditional
+# success.
 setup_agent_mocks() {
-  # Mock agent-state: succeeds for panes in MOCK_AGENT_PANES env
-  create_mock_script "$HOME/.steez/bin/agent-state" \
-    'PANE="${1:-}"; if [[ "${MOCK_AGENT_PANES:-}" == *"$PANE"* ]] && [[ -n "$PANE" ]]; then echo "{\"pane\":\"$PANE\",\"agent\":\"claude\",\"state\":\"idle\",\"name\":\"test\"}"; exit 0; fi; exit 1'
+  # MOCK_AGENT_PANES is a whitespace-separated allow-list. Pad-then-match so
+  # `%1` doesn't substring-match inside `%10` and so empty PANE can't match
+  # anywhere.
 
-  # Mock agent-deliver: succeeds for panes in MOCK_AGENT_PANES
+  # Matches real agent-state: missing pane → exit 1 with error on stderr.
+  create_mock_script "$HOME/.steez/bin/agent-state" \
+    '[[ $# -ge 1 && -n "$1" ]] || { echo "error: specify a pane target or use --all" >&2; exit 1; }
+     PANE="$1"
+     if [[ " ${MOCK_AGENT_PANES:-} " == *" $PANE "* ]]; then
+       printf "{\"pane\":\"%s\",\"agent\":\"claude\",\"state\":\"idle\",\"name\":\"test\"}\n" "$PANE"
+       exit 0
+     fi
+     echo "error: pane '\''$PANE'\'' is not a recognized AI agent" >&2
+     exit 1'
+
+  # Matches real agent-deliver: wrong arg count → 1; empty message → 1; non-agent pane → 2.
   create_mock_script "$HOME/.steez/bin/agent-deliver" \
-    '[[ $# -eq 2 ]] || exit 1; PANE="$1"; if [[ "${MOCK_AGENT_PANES:-}" == *"$PANE"* ]] && [[ -n "$PANE" ]]; then exit 0; fi; exit 2'
+    '[[ $# -eq 2 ]] || { echo "error: usage: agent-deliver <pane> \"message\"" >&2; exit 1; }
+     PANE="$1" MSG="$2"
+     [[ -n "$MSG" ]] || { echo "error: message body is empty" >&2; exit 1; }
+     if [[ " ${MOCK_AGENT_PANES:-} " == *" $PANE "* ]]; then exit 0; fi
+     echo "error: pane '\''$PANE'\'' is not a recognized AI agent" >&2
+     exit 2'
 
   # Mock agent-watch: always succeeds
   create_mock_script "$HOME/.steez/bin/agent-watch" \
