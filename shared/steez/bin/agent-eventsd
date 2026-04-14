@@ -139,6 +139,37 @@ _eventsd_draining_file() {
   printf '%s/index/draining/%s' "$_EVENTSD_STATE_DIR" "$(_eventsd_pane_key "$1")"
 }
 
+# _eventsd_add_draining <pane> <watch_id>
+# Append <watch_id> to the pane's draining ledger. The ledger records every
+# watch that has left the live slot but has not yet finished delivery
+# (spec: Live and draining watches — resolved, delivering, delivery_failed).
+# Many draining watches may coexist per pane; they are independent of the
+# live slot and of each other.
+_eventsd_add_draining() {
+  local pane="$1" wid="$2" file
+  file=$(_eventsd_draining_file "$pane")
+  mkdir -p "$(dirname "$file")"
+  printf '%s\n' "$wid" >> "$file"
+}
+
+# _eventsd_remove_draining <pane> <watch_id>
+# Drop <watch_id> from the pane's draining ledger. Called when a draining
+# watch reaches a terminal delivery outcome (delivered or delivery_exhausted).
+# Idempotent: missing file or missing id is a no-op.
+_eventsd_remove_draining() {
+  local pane="$1" wid="$2" file
+  file=$(_eventsd_draining_file "$pane")
+  [[ -f "$file" ]] || return 0
+  local tmp
+  tmp=$(mktemp "${file}.XXXXXX")
+  grep -Fvx -- "$wid" "$file" > "$tmp" || true
+  if [[ -s "$tmp" ]]; then
+    mv "$tmp" "$file"
+  else
+    rm -f "$tmp" "$file"
+  fi
+}
+
 # watch_create_pending — materialize a pending watch record.
 #
 # Flags:
@@ -182,11 +213,19 @@ watch_create_pending() {
     fi
   done
 
+  # Spec (Live and draining watches): "A new turn.prearm supersedes any
+  # existing live watch on that pane without waiting for draining delivery
+  # to finish." The prior live watch closes with close_reason=superseded
+  # (spec: watch lifecycle — "Explicit removal or live-watch supersession
+  # closes an unresolved watch without delivery"). Draining watches on the
+  # same pane are untouched — they occupy the draining ledger, not the
+  # live slot.
   local live_file
   live_file=$(_eventsd_live_file "$pane")
   if [[ -s "$live_file" ]]; then
-    echo "watch_create_pending: pane $pane already has a live watch" >&2
-    return 1
+    local prior_wid
+    prior_wid=$(cat "$live_file")
+    _eventsd_close "$prior_wid" "$pane" "superseded"
   fi
 
   [[ -n "$watch_id" ]] || watch_id=$(_eventsd_gen_id)
@@ -407,13 +446,19 @@ watch_resolve() {
       return 1
       ;;
   esac
-  local rec
+  local rec pane
   rec=$(printf '%s' "$cur" | jq -c \
     --arg terminal "$terminal" \
     '.state = "resolved"
      | .resolved_state = $terminal
      | .delivery_attempts = 0')
   _eventsd_write_record "$wid" "$rec"
+  # Resolved watches are draining (spec: Live and draining watches). Free
+  # the pane's live slot and move the watch to the draining ledger so a
+  # later turn.prearm does not block on it.
+  pane=$(printf '%s' "$cur" | jq -r .pane_id)
+  _eventsd_clear_live "$pane"
+  _eventsd_add_draining "$pane" "$wid"
 }
 
 # watch_deliver_attempt <watch_id>
@@ -464,7 +509,10 @@ watch_deliver_attempt() {
       --argjson attempts "$attempts" \
       '.state = "delivered" | .delivery_attempts = $attempts')
     _eventsd_write_record "$wid" "$rec"
-    _eventsd_clear_live "$pane"
+    # Watch left the draining ledger when delivery completed — it is no
+    # longer pending/armed (live) nor resolved/delivering/delivery_failed
+    # (draining). It is terminal.
+    _eventsd_remove_draining "$pane" "$wid"
     return 0
   fi
 
@@ -476,7 +524,7 @@ watch_deliver_attempt() {
        | .close_reason = "delivery_exhausted"
        | .delivery_attempts = $attempts')
     _eventsd_write_record "$wid" "$rec"
-    _eventsd_clear_live "$pane"
+    _eventsd_remove_draining "$pane" "$wid"
     return 1
   fi
 

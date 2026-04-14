@@ -133,17 +133,12 @@ test_list_returns_all_created_watches() {
 }
 run_test "list returns all created watches" test_list_returns_all_created_watches
 
-test_create_pending_errors_when_pane_already_has_live_watch() {
-  # Invariant: at most one live watch per pane (spec: Live and
-  # draining watches). Bead 1 enforces it by refusing duplicates.
-  # Supersession is a later bead's lifecycle transition.
-  _require_store_api || return 1
-  _mk_pending "%30" >/dev/null || return 1
-  local rc=0
-  _mk_pending "%30" >/dev/null 2>&1 || rc=$?
-  [[ "$rc" -ne 0 ]] || { echo "    second create_pending on same pane must fail"; return 1; }
-}
-run_test "create_pending errors when pane already has a live watch" test_create_pending_errors_when_pane_already_has_live_watch
+# Bead 1 shipped a stricter duplicate-prevention form of the live-per-pane
+# invariant. Bead 4 replaces that with supersession (see the
+# "live-watch supersession" suite below): a second create_pending on a
+# pane with an unresolved live watch closes the prior and installs the
+# new one instead of erroring. The invariant itself ("<=1 live watch per
+# pane") is preserved; the enforcement mechanism changed.
 
 # ----- lifecycle FSM (bead 2) -----
 #
@@ -549,6 +544,224 @@ test_pre_arm_fresh_evidence_is_buffered_and_resolves_on_arm() {
   assert_json_field "$rec" .resolved_state idle || return 1
 }
 run_test "pre-arm fresh evidence is buffered and resolves on arm" test_pre_arm_fresh_evidence_is_buffered_and_resolves_on_arm
+
+# ----- live-watch supersession (bead 4) -----
+#
+# Acceptance #3 (spec: TDD relationship): "A new turn.prearm supersedes an
+# unresolved live watch without blocking the new turn." Spec language
+# anchors: "Live and draining watches" (live = pending|armed, draining =
+# resolved|delivering|delivery_failed, <=1 live per pane, supersession
+# does not wait for draining) and "delivered, delivery_failed, closed"
+# ("Explicit removal or live-watch supersession closes an unresolved
+# watch without delivery").
+
+suite "live-watch supersession"
+
+test_new_prearm_supersedes_live_watch_without_blocking_draining_delivery() {
+  # Red test for bead 4. Drives the whole contract end to end:
+  #
+  #   (a) prearm on a pane with a pending live watch supersedes it —
+  #       prior closes with close_reason=superseded, no delivery fires,
+  #       pane's live slot now points at the new watch.
+  #   (b) a watch that has moved to a draining state (delivery_failed
+  #       after a first failed attempt) is NOT live — it leaves the
+  #       live slot empty and occupies the draining ledger instead.
+  #   (c) a new prearm on a pane whose only prior watch is draining
+  #       creates a new live watch WITHOUT touching the draining one.
+  #   (d) the draining watch can complete its delivery independently
+  #       of the new live watch, and removes itself from the draining
+  #       ledger on success. Invariant "<=1 live watch per pane" holds
+  #       throughout.
+  _install_deliver_mock
+  declare -F watch_create_pending watch_arm watch_resolve \
+    watch_deliver_attempt watch_get_live watch_get_draining >/dev/null \
+    || { echo "    missing required fn"; return 1; }
+
+  local pane="%80" rec drain live_rec
+
+  # (a) Pending watch on %80 gets superseded by a new prearm.
+  local w_prior w_live
+  w_prior=$(_mk_pending "$pane") || return 1
+  w_live=$(watch_create_pending \
+    --pane "$pane" \
+    --spawner "%0" \
+    --label "codex" \
+    --baseline-state working \
+    --prearm-screen-hash "hash-$pane-new" \
+    --prearm-transcript-cursor 8192 \
+    --prearm-seq 20) || return 1
+  [[ "$w_live" != "$w_prior" ]] \
+    || { echo "    new prearm reused prior watch_id"; return 1; }
+  rec=$(watch_get "$w_prior")
+  assert_json_field "$rec" .state closed || return 1
+  assert_json_field "$rec" .close_reason superseded || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] \
+    || { echo "    deliver fired on supersede"; return 1; }
+  live_rec=$(watch_get_live "$pane")
+  assert_json_field "$live_rec" .watch_id "$w_live" || return 1
+  assert_json_field "$live_rec" .state pending || return 1
+
+  # (b) Advance the new live watch to delivery_failed so it becomes draining.
+  watch_arm --pane "$pane" --watch-id "$w_live" --start-seq 21 >/dev/null \
+    || return 1
+  watch_resolve "$w_live" idle || return 1
+  MOCK_DELIVER_EXIT=7 watch_deliver_attempt "$w_live" >/dev/null 2>&1 || true
+  rec=$(watch_get "$w_live")
+  assert_json_field "$rec" .state delivery_failed || return 1
+  assert_json_field "$rec" .delivery_attempts 1 || return 1
+  # Draining now owns the watch; live slot is empty (spec: resolved/
+  # delivering/delivery_failed are draining, not live).
+  assert_eq "" "$(watch_get_live "$pane")" || return 1
+  drain=$(watch_get_draining "$pane")
+  assert_eq 1 "$(printf '%s\n' "$drain" | jq -s 'length')" || return 1
+  assert_json_field "$(printf '%s' "$drain" | jq -sc '.[0]')" \
+    .watch_id "$w_live" || return 1
+
+  # (c) New prearm on the same pane must not block on the draining watch.
+  local w_next
+  w_next=$(watch_create_pending \
+    --pane "$pane" \
+    --spawner "%0" \
+    --label "codex" \
+    --baseline-state working \
+    --prearm-screen-hash "hash-$pane-next" \
+    --prearm-transcript-cursor 9000 \
+    --prearm-seq 40) || return 1
+  # Draining record untouched — same state, same retry budget.
+  rec=$(watch_get "$w_live")
+  assert_json_field "$rec" .state delivery_failed || return 1
+  assert_json_field "$rec" .delivery_attempts 1 || return 1
+  # New live watch is the only live watch on the pane.
+  live_rec=$(watch_get_live "$pane")
+  assert_json_field "$live_rec" .watch_id "$w_next" || return 1
+  assert_json_field "$live_rec" .state pending || return 1
+  # Draining ledger still holds exactly the prior watch.
+  drain=$(watch_get_draining "$pane")
+  assert_eq 1 "$(printf '%s\n' "$drain" | jq -s 'length')" || return 1
+  assert_json_field "$(printf '%s' "$drain" | jq -sc '.[0]')" \
+    .watch_id "$w_live" || return 1
+
+  # (d) Draining delivery completes independently and exits the ledger.
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$w_live" || return 1
+  rec=$(watch_get "$w_live")
+  assert_json_field "$rec" .state delivered || return 1
+  assert_eq "" "$(watch_get_draining "$pane")" || return 1
+  # New live watch still untouched throughout.
+  live_rec=$(watch_get_live "$pane")
+  assert_json_field "$live_rec" .watch_id "$w_next" || return 1
+  assert_json_field "$live_rec" .state pending || return 1
+}
+run_test "new_prearm_supersedes_live_watch_without_blocking_draining_delivery" test_new_prearm_supersedes_live_watch_without_blocking_draining_delivery
+
+# _assert_live_count <pane> <0|1>
+# Invariant probe: watch_get_live returns either an empty string or one
+# JSON record. Counts records in a way that catches either a bad
+# multi-record store layout (shouldn't happen) or a missed clear after
+# transition.
+_assert_live_count() {
+  local pane="$1" expected="$2" live n
+  live=$(watch_get_live "$pane")
+  if [[ "$expected" == "0" ]]; then
+    [[ -z "$live" ]] || { echo "    expected 0 live, got: $live"; return 1; }
+    return 0
+  fi
+  [[ -n "$live" ]] || { echo "    expected 1 live, got empty"; return 1; }
+  n=$(printf '%s\n' "$live" | jq -s 'length')
+  assert_eq 1 "$n" || return 1
+}
+
+test_at_most_one_live_watch_per_pane_under_concurrent_turn_sequences() {
+  # Spec invariant (Live and draining watches): "At most one live watch
+  # may exist per pane." Every transition below is followed by a live
+  # count check. Exercises the three concurrent sequences the spec must
+  # survive:
+  #
+  #   (1) rapid prearm -> prearm -> prearm, superseding while pending;
+  #   (2) prearm over an armed live watch (supersede a live that has
+  #       already received watch.start);
+  #   (3) multiple draining watches coexisting on the same pane while a
+  #       fresh live turn runs ahead of them.
+  _install_deliver_mock
+  local pane="%81"
+
+  # (1) pending-phase rapid supersession.
+  local w1 w2 w3
+  w1=$(_mk_pending "$pane") || return 1
+  _assert_live_count "$pane" 1 || return 1
+  w2=$(watch_create_pending --pane "$pane" --spawner "%0" --label codex \
+    --baseline-state working --prearm-screen-hash "h-a" \
+    --prearm-transcript-cursor 100 --prearm-seq 10) || return 1
+  _assert_live_count "$pane" 1 || return 1
+  assert_json_field "$(watch_get "$w1")" .state closed || return 1
+  assert_json_field "$(watch_get "$w1")" .close_reason superseded || return 1
+  w3=$(watch_create_pending --pane "$pane" --spawner "%0" --label codex \
+    --baseline-state working --prearm-screen-hash "h-b" \
+    --prearm-transcript-cursor 200 --prearm-seq 20) || return 1
+  _assert_live_count "$pane" 1 || return 1
+  assert_json_field "$(watch_get "$w2")" .state closed || return 1
+  assert_json_field "$(watch_get "$w2")" .close_reason superseded || return 1
+  assert_json_field "$(watch_get_live "$pane")" .watch_id "$w3" || return 1
+
+  # (2) armed-phase supersession. Arm w3, then prearm w4.
+  watch_arm --pane "$pane" --watch-id "$w3" --start-seq 21 >/dev/null \
+    || return 1
+  _assert_live_count "$pane" 1 || return 1
+  local w4
+  w4=$(watch_create_pending --pane "$pane" --spawner "%0" --label codex \
+    --baseline-state working --prearm-screen-hash "h-c" \
+    --prearm-transcript-cursor 300 --prearm-seq 30) || return 1
+  _assert_live_count "$pane" 1 || return 1
+  assert_json_field "$(watch_get "$w3")" .state closed || return 1
+  assert_json_field "$(watch_get "$w3")" .close_reason superseded || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] \
+    || { echo "    supersede fired a delivery"; return 1; }
+
+  # (3) pile up two draining watches on the pane and start a new live
+  # turn ahead of them.
+  watch_arm --pane "$pane" --watch-id "$w4" --start-seq 31 >/dev/null \
+    || return 1
+  watch_resolve "$w4" idle || return 1
+  _assert_live_count "$pane" 0 || return 1
+  MOCK_DELIVER_EXIT=7 watch_deliver_attempt "$w4" >/dev/null 2>&1 || true
+  assert_json_field "$(watch_get "$w4")" .state delivery_failed || return 1
+  _assert_live_count "$pane" 0 || return 1
+
+  local w5 w6
+  w5=$(watch_create_pending --pane "$pane" --spawner "%0" --label codex \
+    --baseline-state working --prearm-screen-hash "h-d" \
+    --prearm-transcript-cursor 400 --prearm-seq 40) || return 1
+  _assert_live_count "$pane" 1 || return 1
+  watch_arm --pane "$pane" --watch-id "$w5" --start-seq 41 >/dev/null \
+    || return 1
+  watch_resolve "$w5" "blocked:question" || return 1
+  MOCK_DELIVER_EXIT=7 watch_deliver_attempt "$w5" >/dev/null 2>&1 || true
+  assert_json_field "$(watch_get "$w5")" .state delivery_failed || return 1
+  _assert_live_count "$pane" 0 || return 1
+
+  w6=$(watch_create_pending --pane "$pane" --spawner "%0" --label codex \
+    --baseline-state working --prearm-screen-hash "h-e" \
+    --prearm-transcript-cursor 500 --prearm-seq 50) || return 1
+  _assert_live_count "$pane" 1 || return 1
+
+  # Two draining watches share the pane with one live watch.
+  local drain ids
+  drain=$(watch_get_draining "$pane")
+  assert_eq 2 "$(printf '%s\n' "$drain" | jq -s 'length')" || return 1
+  ids=$(printf '%s\n' "$drain" | jq -r .watch_id | sort)
+  assert_eq "$(printf '%s\n%s' "$w4" "$w5" | sort)" "$ids" || return 1
+
+  # Drain both to completion via retry; live stays on w6 throughout.
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$w4" || return 1
+  _assert_live_count "$pane" 1 || return 1
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$w5" || return 1
+  _assert_live_count "$pane" 1 || return 1
+  assert_json_field "$(watch_get "$w4")" .state delivered || return 1
+  assert_json_field "$(watch_get "$w5")" .state delivered || return 1
+  assert_eq "" "$(watch_get_draining "$pane")" || return 1
+  assert_json_field "$(watch_get_live "$pane")" .watch_id "$w6" || return 1
+  assert_json_field "$(watch_get_live "$pane")" .state pending || return 1
+}
+run_test "at_most_one_live_watch_per_pane_under_concurrent_turn_sequences" test_at_most_one_live_watch_per_pane_under_concurrent_turn_sequences
 
 # ----- delivery idempotency and bounded retries (bead 5) -----
 #
