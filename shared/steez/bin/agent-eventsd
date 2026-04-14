@@ -21,6 +21,21 @@ _EVENTSD_STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}/eventsd"
 # overrides always win.
 : "${MAX_DELIVERY_ATTEMPTS:=5}"
 : "${AGENT_DELIVER_CMD:=agent-deliver}"
+: "${AGENT_STATE_CMD:=agent-state}"
+: "${SILENCE_WINDOW_MS:=30000}"
+: "${RECONCILE_INTERVAL_MS:=5000}"
+: "${INDETERMINATE_TIMEOUT_MS:=120000}"
+
+# Monotonic clock in ms. Tests set EVENTSD_NOW_MS to drive the fake clock
+# deterministically. Real daemon reads wall time; sub-second precision is
+# not required by the spec, so a ms-from-seconds reading is fine.
+_eventsd_now_ms() {
+  if [[ -n "${EVENTSD_NOW_MS:-}" ]]; then
+    printf '%s' "$EVENTSD_NOW_MS"
+    return
+  fi
+  printf '%s' "$(( $(date +%s) * 1000 ))"
+}
 
 # Map arbitrary pane ids (e.g. '%42', 'main:0.1') to filesystem-safe
 # keys. Non-alphanumerics become '_'. Collisions are possible in
@@ -342,9 +357,20 @@ watch_arm() {
     return 1
   }
 
+  # Seed last_evidence_ms at arm — it marks the start of the fresh-evidence
+  # window used by the degraded-fallback silence detector (spec: Degraded
+  # fallback). Prearm itself is never evidence, but arm is the earliest
+  # point at which the daemon expects fresh evidence to arrive.
+  local now
+  now=$(_eventsd_now_ms)
   rec=$(printf '%s' "$live" | jq -c \
     --argjson start_seq "$start_seq" \
-    '.state = "armed" | .start_seq = $start_seq')
+    --argjson now "$now" \
+    '.state = "armed"
+     | .start_seq = $start_seq
+     | .last_evidence_ms = $now
+     | .degraded_since_ms = null
+     | .last_reconcile_ms = null')
   _eventsd_write_record "$wid" "$rec"
   # Spec: "The daemon records start_seq and immediately re-evaluates
   # buffered evidence." Pre-arm fresh evidence can resolve the watch here.
@@ -549,7 +575,7 @@ watch_deliver_attempt() {
 # evidence handling (working vs terminal vs baseline) comes with later
 # tests in this bead.
 watch_feed_evidence() {
-  local wid="" seq="" state="" cursor="" hash=""
+  local wid="" seq="" state="" cursor="" hash="" source="fast"
   local has_cursor=0 has_hash=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -558,9 +584,14 @@ watch_feed_evidence() {
       --candidate-state) state="$2"; shift 2 ;;
       --transcript-cursor) cursor="$2"; has_cursor=1; shift 2 ;;
       --screen-hash) hash="$2"; has_hash=1; shift 2 ;;
+      --source) source="$2"; shift 2 ;;
       *) echo "watch_feed_evidence: unknown flag: $1" >&2; return 2 ;;
     esac
   done
+  case "$source" in
+    fast|reconcile) ;;
+    *) echo "watch_feed_evidence: invalid --source: $source" >&2; return 2 ;;
+  esac
   local f
   for f in wid seq state; do
     if [[ -z "${!f}" ]]; then
@@ -607,6 +638,23 @@ watch_feed_evidence() {
   fi
   (( fresh )) || return 0
 
+  # Fast-path fresh evidence returns the watch to healthy (spec: Degraded
+  # fallback — "Returning to healthy clears the degraded timer"). Stamp
+  # last_evidence_ms against the current clock and drop the degraded
+  # markers so the next silence starts a brand-new window. Reconcile
+  # evidence must never do this: by definition it is not a sign that a
+  # fast observer is alive again.
+  if [[ "$source" == "fast" ]]; then
+    local now
+    now=$(_eventsd_now_ms)
+    cur=$(printf '%s' "$cur" | jq -c \
+      --argjson now "$now" \
+      '.last_evidence_ms = $now
+       | .degraded_since_ms = null
+       | .last_reconcile_ms = null')
+    _eventsd_write_record "$wid" "$cur"
+  fi
+
   # `working` can keep the watch open but never resolves (spec rule 2).
   [[ "$state" == "working" ]] && return 0
   # Baseline is never evidence: a terminal state matching baseline does not
@@ -614,6 +662,97 @@ watch_feed_evidence() {
   [[ "$state" == "$baseline" ]] && return 0
   # First fresh terminal state different from baseline_state resolves.
   watch_resolve "$wid" "$state"
+}
+
+# watch_tick <watch_id>
+#
+# Drive the degraded-fallback state machine for one armed watch against
+# the current clock (spec: Degraded fallback). One call is one "tick" —
+# tests drive ticks manually via the fake clock (EVENTSD_NOW_MS); a real
+# daemon would call this on a timer.
+#
+# Per spec:
+#   - silence past SILENCE_WINDOW_MS transitions the watch to degraded;
+#   - in degraded, agent-state <pane> runs every RECONCILE_INTERVAL_MS and
+#     its result is fed through the canonical resolver (no second state
+#     machine);
+#   - a degraded episode lasting INDETERMINATE_TIMEOUT_MS without a
+#     terminal state resolves the watch to blocked:unknown.
+#
+# Non-armed watches are a no-op — the degraded machinery is irrelevant
+# for pending/draining/terminal states.
+watch_tick() {
+  local wid="$1"
+  [[ -n "$wid" ]] || { echo "watch_tick: missing watch_id" >&2; return 2; }
+  local rec state
+  rec=$(watch_get "$wid")
+  [[ -n "$rec" ]] || return 0
+  state=$(printf '%s' "$rec" | jq -r .state)
+  [[ "$state" == "armed" ]] || return 0
+
+  local now last_evidence degraded_since last_reconcile pane
+  now=$(_eventsd_now_ms)
+  last_evidence=$(printf '%s' "$rec" | jq -r '.last_evidence_ms // 0')
+  degraded_since=$(printf '%s' "$rec" | jq -r '.degraded_since_ms // 0')
+  last_reconcile=$(printf '%s' "$rec" | jq -r '.last_reconcile_ms // 0')
+  pane=$(printf '%s' "$rec" | jq -r .pane_id)
+
+  local silence_window reconcile_interval indeterminate_timeout
+  silence_window="${SILENCE_WINDOW_MS:-30000}"
+  reconcile_interval="${RECONCILE_INTERVAL_MS:-5000}"
+  indeterminate_timeout="${INDETERMINATE_TIMEOUT_MS:-120000}"
+
+  # Detect the healthy->degraded transition. Silence is measured from the
+  # most recent fast-path evidence (arm seeds the baseline).
+  if (( degraded_since == 0 )); then
+    if (( now - last_evidence >= silence_window )); then
+      degraded_since=$now
+      rec=$(printf '%s' "$rec" | jq -c \
+        --argjson t "$degraded_since" '.degraded_since_ms = $t')
+      _eventsd_write_record "$wid" "$rec"
+    else
+      return 0
+    fi
+  fi
+
+  # Indeterminate timeout takes priority over further reconciliation — once
+  # the episode has run its course, the spec mandates blocked:unknown.
+  if (( now - degraded_since >= indeterminate_timeout )); then
+    watch_resolve "$wid" "blocked:unknown"
+    return 0
+  fi
+
+  # Run a reconcile if one is due. First reconcile (last_reconcile == 0) is
+  # due immediately on entering degraded.
+  if (( last_reconcile == 0 || now - last_reconcile >= reconcile_interval )); then
+    local cmd out observed seq hash
+    cmd="${AGENT_STATE_CMD:-agent-state}"
+    out=$("$cmd" "$pane" 2>/dev/null || true)
+    if [[ -n "$out" ]]; then
+      observed=$(printf '%s' "$out" | jq -r '.state // empty' 2>/dev/null || true)
+      if [[ -n "$observed" ]]; then
+        # Reconcile evidence must pass the canonical resolver's freshness
+        # gate (spec: "Deadman reconciliation uses the same canonical states
+        # and the same terminal rule as fast evidence"). Fresh seq via
+        # seq_next (per-pane monotonic); screen hash synthesized from the
+        # tick time guarantees it differs from the prearm capture.
+        seq=$(seq_next "$pane")
+        hash="degraded-$now"
+        watch_feed_evidence --watch-id "$wid" --seq "$seq" \
+          --candidate-state "$observed" --screen-hash "$hash" \
+          --source reconcile >/dev/null || true
+      fi
+    fi
+    # Only stamp last_reconcile_ms if the watch is still armed (the reconcile
+    # may have resolved it via the canonical resolver).
+    rec=$(watch_get "$wid")
+    state=$(printf '%s' "$rec" | jq -r .state)
+    if [[ "$state" == "armed" ]]; then
+      rec=$(printf '%s' "$rec" | jq -c \
+        --argjson t "$now" '.last_reconcile_ms = $t')
+      _eventsd_write_record "$wid" "$rec"
+    fi
+  fi
 }
 
 # watch_list — print JSONL of every known watch record.

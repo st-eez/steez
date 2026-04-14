@@ -901,4 +901,239 @@ test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_an
 }
 run_test "one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries" test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries
 
+# ----- degraded fallback (bead 6) -----
+#
+# Spec (Degraded fallback + acceptance #5):
+#   - healthy while at least one fast observer produces fresh evidence
+#   - silence past SILENCE_WINDOW_MS => degraded
+#   - in degraded, run agent-state <pane> every RECONCILE_INTERVAL_MS
+#   - deadman reconciliation feeds the same canonical resolver
+#   - if a degraded episode lasts INDETERMINATE_TIMEOUT_MS without a terminal
+#     state, the watch resolves to blocked:unknown
+#   - returning to healthy clears the degraded timer; a later degraded episode
+#     starts a new window
+#
+# Tests use a fake clock (EVENTSD_NOW_MS) and a fake agent-state so the whole
+# degraded machinery can be exercised without real timers.
+
+suite "degraded fallback"
+
+_set_now() { export EVENTSD_NOW_MS="$1"; }
+
+# Install a fake agent-state at $MOCK_BIN/agent-state. Logs argv per call to
+# AGENT_STATE_LOG and emits AGENT_STATE_RESPONSE (default: state=working, so
+# reconciles never resolve on their own and the indeterminate-timeout path is
+# the only resolution route).
+_install_agent_state_mock() {
+  export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
+  : > "$AGENT_STATE_LOG"
+  : "${AGENT_STATE_RESPONSE:='{"pane":"%0","agent":"codex","state":"working","name":"t"}'}"
+  export AGENT_STATE_RESPONSE
+  cat > "$MOCK_BIN/agent-state" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${AGENT_STATE_LOG:-/dev/null}"
+printf '%s\n' "${AGENT_STATE_RESPONSE:-{\"state\":\"working\"}}"
+exit 0
+MOCK
+  chmod +x "$MOCK_BIN/agent-state"
+  export AGENT_STATE_CMD="$MOCK_BIN/agent-state"
+}
+
+_agent_state_call_count() {
+  [[ -s "${AGENT_STATE_LOG:-/dev/null}" ]] || { echo 0; return; }
+  wc -l < "$AGENT_STATE_LOG" | tr -d ' '
+}
+
+# Seed the pane's seq counter so prearm_seq / start_seq / reconcile seqs stay
+# monotonic across the whole bead-6 fixture. Without this, the shared _arm_on
+# helper hard-codes prearm_seq=7 while seq_next starts at 1, which would make
+# every reconcile seq stale by the freshness rule (seq > prearm_seq).
+_arm_on_bead6() {
+  local pane="$1" wid prearm_seq start_seq
+  prearm_seq=$(seq_next "$pane")
+  wid=$(watch_create_pending \
+    --pane "$pane" \
+    --spawner "%0" \
+    --label "codex" \
+    --baseline-state working \
+    --prearm-screen-hash "hash-$pane" \
+    --prearm-transcript-cursor 4096 \
+    --prearm-seq "$prearm_seq") || return 1
+  start_seq=$(seq_next "$pane")
+  watch_arm --pane "$pane" --watch-id "$wid" --start-seq "$start_seq" \
+    >/dev/null || return 1
+  printf '%s' "$wid"
+}
+
+test_silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state() {
+  # Required first red test for bead 6. Drives acceptance #5 end to end:
+  #
+  #   (a) under the silence window, ticks must neither degrade nor call
+  #       agent-state;
+  #   (b) at SILENCE_WINDOW_MS of silence the watch degrades and the first
+  #       agent-state reconcile fires;
+  #   (c) across the full 120s degraded episode, agent-state is invoked
+  #       once per RECONCILE_INTERVAL_MS and `working` reconciles never
+  #       resolve the watch via the canonical resolver;
+  #   (d) at INDETERMINATE_TIMEOUT_MS past degraded-start the watch resolves
+  #       to blocked:unknown regardless of what agent-state is reporting;
+  #   (e) every agent-state invocation carries the watched pane as argv.
+  _install_deliver_mock
+  _install_agent_state_mock
+  declare -F watch_tick >/dev/null \
+    || { echo "    missing: watch_tick"; return 1; }
+
+  # Spec defaults are load-bearing for this test.
+  [[ "${SILENCE_WINDOW_MS:-0}" == "30000" ]] \
+    || { echo "    SILENCE_WINDOW_MS must default to 30000"; return 1; }
+  [[ "${RECONCILE_INTERVAL_MS:-0}" == "5000" ]] \
+    || { echo "    RECONCILE_INTERVAL_MS must default to 5000"; return 1; }
+  [[ "${INDETERMINATE_TIMEOUT_MS:-0}" == "120000" ]] \
+    || { echo "    INDETERMINATE_TIMEOUT_MS must default to 120000"; return 1; }
+
+  local pane="%90" wid rec t0=1000000 t
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # (a) Inside the silence window — no reconcile, no degradation.
+  _set_now $((t0 + 29999))
+  watch_tick "$wid" >/dev/null || return 1
+  assert_eq 0 "$(_agent_state_call_count)" || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+
+  # (b) Crossing SILENCE_WINDOW_MS degrades the watch and triggers the
+  # first reconcile.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  assert_eq 1 "$(_agent_state_call_count)" || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+
+  # (c) Drive the full degraded episode at RECONCILE_INTERVAL_MS cadence.
+  # Every tick must see a working reconcile and keep the watch armed.
+  for (( t = t0 + 35000; t < t0 + 30000 + 120000; t += 5000 )); do
+    _set_now "$t"
+    watch_tick "$wid" >/dev/null || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed || return 1
+  done
+
+  # (d) At INDETERMINATE_TIMEOUT_MS past the degraded transition the watch
+  # must resolve to blocked:unknown without requiring a terminal reconcile.
+  _set_now $((t0 + 30000 + 120000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+
+  # Resolved watches are draining — pane's live slot is freed.
+  assert_eq "" "$(watch_get_live "$pane")" || return 1
+
+  # Across 120s at 5s cadence we expect ~24 reconciles; the timeout tick
+  # resolves without adding a reconcile.
+  local calls
+  calls=$(_agent_state_call_count)
+  (( calls >= 24 )) || {
+    echo "    expected >=24 agent-state calls, got: $calls"; return 1; }
+
+  # (e) Every invocation targets the watched pane.
+  local panes
+  panes=$(sort -u "$AGENT_STATE_LOG")
+  assert_eq "$pane" "$panes" || return 1
+}
+run_test "silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state" test_silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state
+
+test_fresh_fast_evidence_after_degraded_returns_to_healthy_and_clears_degraded_timer() {
+  # Spec (Degraded fallback): "Returning to healthy clears the degraded
+  # timer." Proves the marker fields are actually cleared on fresh
+  # fast-path evidence — not just that the resolver keeps the watch armed.
+  _install_deliver_mock
+  _install_agent_state_mock
+
+  local pane="%91" wid rec ds t0=2000000
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # Cross silence window: the next tick degrades the watch and runs a
+  # first reconcile.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  ds=$(printf '%s' "$rec" | jq -r '.degraded_since_ms // null')
+  [[ "$ds" != null && -n "$ds" ]] \
+    || { echo "    degraded_since_ms not recorded"; return 1; }
+  local lr
+  lr=$(printf '%s' "$rec" | jq -r '.last_reconcile_ms // null')
+  [[ "$lr" != null && -n "$lr" ]] \
+    || { echo "    last_reconcile_ms not recorded"; return 1; }
+
+  # Fresh fast-path evidence arrives — `working` keeps the watch open but
+  # must return it to healthy: last_evidence_ms refreshed, degraded_since
+  # and last_reconcile cleared.
+  _set_now $((t0 + 40000))
+  watch_feed_evidence --watch-id "$wid" --seq 50 \
+    --candidate-state working --transcript-cursor 5000 \
+    --screen-hash "fast-recover" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms null || return 1
+  assert_json_field "$rec" .last_reconcile_ms null || return 1
+  assert_json_field "$rec" .last_evidence_ms $((t0 + 40000)) || return 1
+}
+run_test "fresh_fast_evidence_after_degraded_returns_to_healthy_and_clears_degraded_timer" test_fresh_fast_evidence_after_degraded_returns_to_healthy_and_clears_degraded_timer
+
+test_second_degraded_episode_starts_a_new_indeterminate_timeout_window() {
+  # Spec (Degraded fallback): "A later degraded episode starts a new
+  # timeout window." A first episode that returns to healthy must not
+  # leak its elapsed time into the next one. Proves the window is timed
+  # from the most recent degraded_since_ms, not from arm.
+  _install_deliver_mock
+  _install_agent_state_mock
+
+  local pane="%92" wid rec t0=3000000
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # First degraded episode — cross silence, then return to healthy after
+  # 30s of degraded time (well under INDETERMINATE_TIMEOUT_MS).
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+
+  local healthy_at=$((t0 + 60000))
+  _set_now "$healthy_at"
+  watch_feed_evidence --watch-id "$wid" --seq 50 \
+    --candidate-state working --transcript-cursor 5000 \
+    --screen-hash "fast-recover-1" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms null || return 1
+
+  # Second degraded episode starts SILENCE_WINDOW_MS after the last fast
+  # evidence. The first episode's elapsed time must not carry over.
+  local second_degraded_at=$((healthy_at + 30000))
+  _set_now "$second_degraded_at"
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms "$second_degraded_at" || return 1
+
+  # One tick just before the new indeterminate window closes — still armed.
+  _set_now $((second_degraded_at + 120000 - 1))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+
+  # Crossing the full window from the new degraded_since_ms resolves
+  # blocked:unknown.
+  _set_now $((second_degraded_at + 120000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+}
+run_test "second_degraded_episode_starts_a_new_indeterminate_timeout_window" test_second_degraded_episode_starts_a_new_indeterminate_timeout_window
+
 report
