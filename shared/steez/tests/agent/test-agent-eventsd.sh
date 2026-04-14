@@ -403,4 +403,151 @@ test_delivery_exhausted_closes_with_reason_after_MAX_DELIVERY_ATTEMPTS() {
 }
 run_test "delivery exhausted closes with delivery_exhausted after MAX_DELIVERY_ATTEMPTS" test_delivery_exhausted_closes_with_reason_after_MAX_DELIVERY_ATTEMPTS
 
+# ----- canonical resolver (bead 3) -----
+#
+# Pure resolver over (watch, evidence) -> {resolve(state), keep_open, ignore}.
+# Fresh iff seq > prearm_seq AND (transcript cursor advanced OR screen hash
+# differs). `working` keeps open, never resolves. First fresh terminal state
+# != baseline_state resolves. Post-resolution evidence is ignored. Baseline
+# is never evidence. Pre-watch.start fresh evidence is buffered and
+# re-evaluated on arm. See specs/agent-events.md.
+
+suite "canonical resolver"
+
+# Create a pending watch with explicit baseline; overrides _mk_pending's
+# hard-coded working baseline so resolver tests can exercise baseline rules
+# on already-terminal panes.
+_mk_pending_baseline() {
+  local pane="$1" baseline="$2"
+  watch_create_pending \
+    --pane "$pane" \
+    --spawner "%0" \
+    --label "codex" \
+    --baseline-state "$baseline" \
+    --prearm-screen-hash "hash-$pane" \
+    --prearm-transcript-cursor 4096 \
+    --prearm-seq 7
+}
+
+test_manual_add_on_already_idle_pane_does_not_resolve_without_fresh_post_prearm_evidence() {
+  # Spec (Baseline rules): "a pane already showing idle at prearm does not
+  # resolve immediately ... Those watches require fresh post-prearm
+  # evidence to resolve." Manual add on an idle pane sets baseline=idle.
+  # Evidence that is not fresh (seq <= prearm_seq, or no progress since
+  # prearm) must leave the watch armed, never resolved.
+  _install_deliver_mock
+  declare -F watch_feed_evidence >/dev/null || { echo "    missing: watch_feed_evidence"; return 1; }
+  local wid rec
+  wid=$(_mk_pending_baseline "%60" idle) || return 1
+  watch_arm --pane "%60" --watch-id "$wid" --start-seq 8 >/dev/null || return 1
+  # Stale seq (seq <= prearm_seq): not fresh.
+  watch_feed_evidence --watch-id "$wid" --seq 5 --candidate-state idle \
+    --transcript-cursor 4096 --screen-hash "hash-%60" >/dev/null || true
+  # seq advances but transcript cursor unchanged AND screen hash identical:
+  # still not fresh, because "transcript evidence comes from bytes appended
+  # after the prearm transcript cursor" and "screen evidence ... differs
+  # from the prearm capture".
+  watch_feed_evidence --watch-id "$wid" --seq 12 --candidate-state idle \
+    --transcript-cursor 4096 --screen-hash "hash-%60" >/dev/null || true
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver fired without fresh evidence"; return 1; }
+}
+run_test "manual_add_on_already_idle_pane_does_not_resolve_without_fresh_post_prearm_evidence" test_manual_add_on_already_idle_pane_does_not_resolve_without_fresh_post_prearm_evidence
+
+test_fresh_terminal_state_different_from_baseline_resolves_watch() {
+  # Spec (Canonical resolver rule 3): "The first fresh terminal state
+  # different from baseline_state resolves the watch."
+  _install_deliver_mock
+  local wid rec
+  wid=$(_mk_pending_baseline "%61" working) || return 1
+  watch_arm --pane "%61" --watch-id "$wid" --start-seq 8 >/dev/null || return 1
+  # Fresh (seq advanced, cursor advanced) terminal != baseline.
+  watch_feed_evidence --watch-id "$wid" --seq 9 --candidate-state idle \
+    --transcript-cursor 8192 --screen-hash "hash-%61-new" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+}
+run_test "fresh terminal state different from baseline resolves watch" test_fresh_terminal_state_different_from_baseline_resolves_watch
+
+test_working_evidence_keeps_watch_open_and_never_resolves() {
+  # Spec (Canonical resolver rule 2): "working can keep the watch open,
+  # but it can never resolve it."
+  _install_deliver_mock
+  local wid rec
+  wid=$(_mk_pending_baseline "%62" working) || return 1
+  watch_arm --pane "%62" --watch-id "$wid" --start-seq 8 >/dev/null || return 1
+  # Fresh working evidence — progress visible, but state is non-terminal.
+  watch_feed_evidence --watch-id "$wid" --seq 9 --candidate-state working \
+    --transcript-cursor 8192 --screen-hash "hash-%62-step1" >/dev/null || return 1
+  watch_feed_evidence --watch-id "$wid" --seq 10 --candidate-state working \
+    --transcript-cursor 9000 --screen-hash "hash-%62-step2" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on working"; return 1; }
+}
+run_test "working evidence keeps watch open and never resolves" test_working_evidence_keeps_watch_open_and_never_resolves
+
+test_fresh_terminal_state_matching_baseline_does_not_resolve() {
+  # Spec (Baseline rules): "The prearm baseline itself is never resolution
+  # evidence." A manual add with baseline=blocked:question must not resolve
+  # on fresh evidence that reports the same blocked:question state.
+  _install_deliver_mock
+  local wid rec
+  wid=$(_mk_pending_baseline "%63" "blocked:question") || return 1
+  watch_arm --pane "%63" --watch-id "$wid" --start-seq 8 >/dev/null || return 1
+  watch_feed_evidence --watch-id "$wid" --seq 11 \
+    --candidate-state "blocked:question" \
+    --transcript-cursor 8192 --screen-hash "hash-%63-new" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+}
+run_test "fresh terminal state matching baseline does not resolve" test_fresh_terminal_state_matching_baseline_does_not_resolve
+
+test_resolver_is_one_shot_later_evidence_is_ignored() {
+  # Spec (Canonical resolver rule 4): "After resolution, later evidence is
+  # ignored." Feeding a different terminal state after resolve must not
+  # overwrite the resolved_state.
+  _install_deliver_mock
+  local wid rec
+  wid=$(_mk_pending_baseline "%64" working) || return 1
+  watch_arm --pane "%64" --watch-id "$wid" --start-seq 8 >/dev/null || return 1
+  watch_feed_evidence --watch-id "$wid" --seq 9 --candidate-state idle \
+    --transcript-cursor 8192 --screen-hash "hash-%64-a" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+  # Later fresh evidence with a different terminal state: must be ignored.
+  watch_feed_evidence --watch-id "$wid" --seq 10 \
+    --candidate-state "blocked:question" \
+    --transcript-cursor 9000 --screen-hash "hash-%64-b" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+}
+run_test "resolver is one-shot — later evidence is ignored" test_resolver_is_one_shot_later_evidence_is_ignored
+
+test_pre_arm_fresh_evidence_is_buffered_and_resolves_on_arm() {
+  # Spec (Ordering and freshness): "Evidence that arrives after turn.prearm
+  # and before watch.start is buffered. It becomes eligible when the watch
+  # moves to armed." Acceptance #1: "Evidence with seq > prearm_seq that
+  # lands before watch.start is buffered and can resolve on start."
+  _install_deliver_mock
+  local wid rec
+  wid=$(_mk_pending_baseline "%65" working) || return 1
+  # Feed fresh terminal evidence while still pending — must not resolve
+  # (pending never notifies), but must be buffered for re-evaluation on arm.
+  watch_feed_evidence --watch-id "$wid" --seq 9 --candidate-state idle \
+    --transcript-cursor 8192 --screen-hash "hash-%65-new" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state pending || return 1
+  # Arm the watch — buffered fresh terminal != baseline must now resolve.
+  watch_arm --pane "%65" --watch-id "$wid" --start-seq 10 >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+}
+run_test "pre-arm fresh evidence is buffered and resolves on arm" test_pre_arm_fresh_evidence_is_buffered_and_resolves_on_arm
+
 report

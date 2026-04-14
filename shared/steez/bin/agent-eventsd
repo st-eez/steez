@@ -72,6 +72,65 @@ _eventsd_watch_file() {
   printf '%s/watches/%s.json' "$_EVENTSD_STATE_DIR" "$1"
 }
 
+# Per-watch pre-arm evidence buffer. One JSONL file per watch, appended in
+# arrival order. Consumed and removed by _eventsd_flush_buffer on arm, and
+# by _eventsd_close on pending-state close/remove.
+_eventsd_buffer_file() {
+  printf '%s/buffer/%s.jsonl' "$_EVENTSD_STATE_DIR" "$1"
+}
+
+_eventsd_buffer_evidence() {
+  local wid="$1" seq="$2" state="$3"
+  local has_cursor="$4" cursor="$5" has_hash="$6" hash="$7"
+  local file
+  file=$(_eventsd_buffer_file "$wid")
+  mkdir -p "$(dirname "$file")"
+  local rec
+  if (( has_cursor )) && (( has_hash )); then
+    rec=$(jq -cn --argjson seq "$seq" --arg state "$state" \
+      --argjson cursor "$cursor" --arg hash "$hash" \
+      '{seq:$seq,state:$state,cursor:$cursor,hash:$hash}')
+  elif (( has_cursor )); then
+    rec=$(jq -cn --argjson seq "$seq" --arg state "$state" \
+      --argjson cursor "$cursor" \
+      '{seq:$seq,state:$state,cursor:$cursor}')
+  elif (( has_hash )); then
+    rec=$(jq -cn --argjson seq "$seq" --arg state "$state" \
+      --arg hash "$hash" \
+      '{seq:$seq,state:$state,hash:$hash}')
+  else
+    rec=$(jq -cn --argjson seq "$seq" --arg state "$state" \
+      '{seq:$seq,state:$state}')
+  fi
+  printf '%s\n' "$rec" >> "$file"
+}
+
+# Replay buffered evidence through the resolver in arrival order. Stops at
+# the first event that resolves (or otherwise moves) the watch out of
+# armed. The buffer file is removed on completion regardless of outcome.
+_eventsd_flush_buffer() {
+  local wid="$1"
+  local file
+  file=$(_eventsd_buffer_file "$wid")
+  [[ -f "$file" ]] || return 0
+  local line seq state cursor hash cur cur_state
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    cur=$(watch_get "$wid")
+    cur_state=$(printf '%s' "$cur" | jq -r .state)
+    [[ "$cur_state" == "armed" ]] || break
+    seq=$(printf '%s' "$line" | jq -r .seq)
+    state=$(printf '%s' "$line" | jq -r .state)
+    cursor=$(printf '%s' "$line" | jq -r '.cursor // empty')
+    hash=$(printf '%s' "$line" | jq -r '.hash // empty')
+    local args=(--watch-id "$wid" --seq "$seq" --candidate-state "$state")
+    [[ -n "$cursor" ]] && args+=(--transcript-cursor "$cursor")
+    [[ -n "$hash" ]] && args+=(--screen-hash "$hash")
+    watch_feed_evidence "${args[@]}" >/dev/null || true
+  done < "$file"
+  rm -f "$file"
+}
+
 _eventsd_live_file() {
   printf '%s/index/live/%s' "$_EVENTSD_STATE_DIR" "$(_eventsd_pane_key "$1")"
 }
@@ -248,6 +307,9 @@ watch_arm() {
     --argjson start_seq "$start_seq" \
     '.state = "armed" | .start_seq = $start_seq')
   _eventsd_write_record "$wid" "$rec"
+  # Spec: "The daemon records start_seq and immediately re-evaluates
+  # buffered evidence." Pre-arm fresh evidence can resolve the watch here.
+  _eventsd_flush_buffer "$wid"
 }
 
 # _eventsd_clear_live <pane>
@@ -272,6 +334,9 @@ _eventsd_close() {
     '.state = "closed" | .close_reason = $reason')
   _eventsd_write_record "$wid" "$rec"
   _eventsd_clear_live "$pane"
+  # Closing discards any pre-arm buffered evidence — a closed watch never
+  # re-arms, so the buffer would otherwise leak.
+  rm -f "$(_eventsd_buffer_file "$wid")"
 }
 
 # watch_pending_timeout <watch_id>
@@ -421,6 +486,86 @@ watch_deliver_attempt() {
     '.state = "delivery_failed" | .delivery_attempts = $attempts')
   _eventsd_write_record "$wid" "$rec"
   return 1
+}
+
+# watch_feed_evidence — canonical resolver for one evidence event.
+#
+# Flags:
+#   --watch-id <id>         (required) target watch
+#   --seq <n>               (required) monotonic seq assigned to this event
+#   --candidate-state <s>   (required) observed pane state at this event
+#   --transcript-cursor <n> (optional) transcript byte cursor at observation
+#   --screen-hash <h>       (optional) screen capture hash at observation
+#
+# Bead 3 minimum: freshness gate only. Non-fresh evidence is ignored. Fresh
+# evidence handling (working vs terminal vs baseline) comes with later
+# tests in this bead.
+watch_feed_evidence() {
+  local wid="" seq="" state="" cursor="" hash=""
+  local has_cursor=0 has_hash=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --watch-id) wid="$2"; shift 2 ;;
+      --seq) seq="$2"; shift 2 ;;
+      --candidate-state) state="$2"; shift 2 ;;
+      --transcript-cursor) cursor="$2"; has_cursor=1; shift 2 ;;
+      --screen-hash) hash="$2"; has_hash=1; shift 2 ;;
+      *) echo "watch_feed_evidence: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+  local f
+  for f in wid seq state; do
+    if [[ -z "${!f}" ]]; then
+      echo "watch_feed_evidence: missing --${f//_/-}" >&2
+      return 2
+    fi
+  done
+
+  local cur cur_state
+  cur=$(watch_get "$wid")
+  [[ -n "$cur" ]] || { echo "watch_feed_evidence: no record for $wid" >&2; return 1; }
+  cur_state=$(printf '%s' "$cur" | jq -r .state)
+  case "$cur_state" in
+    pending)
+      # Pre-arm fresh evidence is buffered and re-evaluated on arm (spec:
+      # "Evidence that arrives after turn.prearm and before watch.start is
+      # buffered"). Freshness is still evaluated on flush against the
+      # captured prearm reference, so staleness filtering happens once.
+      _eventsd_buffer_evidence "$wid" "$seq" "$state" \
+        "$has_cursor" "$cursor" "$has_hash" "$hash"
+      return 0
+      ;;
+    armed) ;;
+    *) return 0 ;;
+  esac
+
+  local prearm_seq prearm_cursor prearm_hash baseline
+  prearm_seq=$(printf '%s' "$cur" | jq -r .prearm_seq)
+  prearm_cursor=$(printf '%s' "$cur" | jq -r .prearm_transcript_cursor)
+  prearm_hash=$(printf '%s' "$cur" | jq -r .prearm_screen_hash)
+  baseline=$(printf '%s' "$cur" | jq -r .baseline_state)
+
+  # Freshness rule 1: seq must strictly exceed prearm_seq.
+  (( seq > prearm_seq )) || return 0
+  # Freshness rule 2: evidence must show progress since prearm — either the
+  # transcript cursor advanced past the prearm cursor, or the screen hash
+  # differs from the prearm hash. Evidence lacking both is not fresh.
+  local fresh=0
+  if (( has_cursor )) && (( cursor > prearm_cursor )); then
+    fresh=1
+  fi
+  if (( has_hash )) && [[ "$hash" != "$prearm_hash" ]]; then
+    fresh=1
+  fi
+  (( fresh )) || return 0
+
+  # `working` can keep the watch open but never resolves (spec rule 2).
+  [[ "$state" == "working" ]] && return 0
+  # Baseline is never evidence: a terminal state matching baseline does not
+  # resolve the watch (spec: Baseline rules).
+  [[ "$state" == "$baseline" ]] && return 0
+  # First fresh terminal state different from baseline_state resolves.
+  watch_resolve "$wid" "$state"
 }
 
 # watch_list — print JSONL of every known watch record.
