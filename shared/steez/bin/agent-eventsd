@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# agent-eventsd — event-driven watch daemon for AI agent panes.
+#
+# Bead 1 scope (kernel): per-pane seq assigner, watch record struct,
+# in-memory store with live/draining partitions. No lifecycle
+# transitions, no resolver, no transport. See specs/agent-events.md.
+#
+# The kernel is a pure library: sourcing this file defines functions
+# and does not start a daemon. A later bead adds the transport layer
+# and a main entrypoint.
+
+set -uo pipefail
+
+# State lives under STEEZ_STATE_DIR so the daemon can recover across
+# restarts (spec: Pane close and restart). The store is keyed by
+# pane. Each pane has its own seq counter.
+_EVENTSD_STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}/eventsd"
+
+# Map arbitrary pane ids (e.g. '%42', 'main:0.1') to filesystem-safe
+# keys. Non-alphanumerics become '_'. Collisions are possible in
+# theory but not in the pane-id grammar tmux actually emits.
+_eventsd_pane_key() {
+  local raw="$1"
+  printf '%s' "${raw//[^a-zA-Z0-9]/_}"
+}
+
+# seq_next <pane> — assign the next monotonic seq for <pane> and
+# print it. Counter is independent per pane. First call returns 1.
+seq_next() {
+  local pane="$1"
+  local key dir file cur next
+  key=$(_eventsd_pane_key "$pane")
+  dir="$_EVENTSD_STATE_DIR/seq"
+  file="$dir/$key"
+  mkdir -p "$dir"
+  if [[ -f "$file" ]]; then
+    cur=$(cat "$file")
+  else
+    cur=0
+  fi
+  next=$((cur + 1))
+  printf '%s' "$next" > "$file"
+  printf '%s' "$next"
+}
+
+# ----- watch store -----
+#
+# Storage layout (canonical, file-backed for daemon-restart recovery):
+#   $_EVENTSD_STATE_DIR/watches/<watch_id>.json  — one record per watch
+#   $_EVENTSD_STATE_DIR/index/live/<pane_key>    — file with watch_id
+#   $_EVENTSD_STATE_DIR/index/draining/<pane_key> — newline list
+#
+# Bead 1 never populates the draining index because no lifecycle
+# transition exists that moves a watch out of live. Later beads own
+# those transitions and will write the draining index.
+
+_eventsd_gen_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  else
+    printf '%s-%s-%s' "$(date +%s)" "$$" "$RANDOM$RANDOM"
+  fi
+}
+
+_eventsd_watch_file() {
+  printf '%s/watches/%s.json' "$_EVENTSD_STATE_DIR" "$1"
+}
+
+_eventsd_live_file() {
+  printf '%s/index/live/%s' "$_EVENTSD_STATE_DIR" "$(_eventsd_pane_key "$1")"
+}
+
+_eventsd_draining_file() {
+  printf '%s/index/draining/%s' "$_EVENTSD_STATE_DIR" "$(_eventsd_pane_key "$1")"
+}
+
+# watch_create_pending — materialize a pending watch record.
+#
+# Flags:
+#   --pane <id>                    (required)
+#   --spawner <id>                 (required)
+#   --label <string>               (required)
+#   --baseline-state <state>       (required)
+#   --prearm-screen-hash <hash>    (required)
+#   --prearm-transcript-cursor <n> (required)
+#   --prearm-seq <n>               (required)
+#   --turn-id <id>                 (optional, auto-generated)
+#   --watch-id <id>                (optional, auto-generated)
+#
+# Prints watch_id on success. Exits non-zero if the pane already has
+# a live watch (at-most-one-live invariant; spec: Live and draining
+# watches). Lifecycle transitions that would free the slot live in a
+# later bead.
+watch_create_pending() {
+  local pane="" spawner="" label="" baseline="" hash="" cursor="" prearm_seq=""
+  local watch_id="" turn_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pane) pane="$2"; shift 2 ;;
+      --spawner) spawner="$2"; shift 2 ;;
+      --label) label="$2"; shift 2 ;;
+      --baseline-state) baseline="$2"; shift 2 ;;
+      --prearm-screen-hash) hash="$2"; shift 2 ;;
+      --prearm-transcript-cursor) cursor="$2"; shift 2 ;;
+      --prearm-seq) prearm_seq="$2"; shift 2 ;;
+      --turn-id) turn_id="$2"; shift 2 ;;
+      --watch-id) watch_id="$2"; shift 2 ;;
+      *) echo "watch_create_pending: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+
+  local f
+  for f in pane spawner label baseline hash cursor prearm_seq; do
+    if [[ -z "${!f}" ]]; then
+      echo "watch_create_pending: missing --${f//_/-}" >&2
+      return 2
+    fi
+  done
+
+  local live_file
+  live_file=$(_eventsd_live_file "$pane")
+  if [[ -s "$live_file" ]]; then
+    echo "watch_create_pending: pane $pane already has a live watch" >&2
+    return 1
+  fi
+
+  [[ -n "$watch_id" ]] || watch_id=$(_eventsd_gen_id)
+  [[ -n "$turn_id" ]] || turn_id=$(_eventsd_gen_id)
+
+  mkdir -p "$_EVENTSD_STATE_DIR/watches" "$_EVENTSD_STATE_DIR/index/live"
+
+  local record
+  record=$(jq -cn \
+    --arg watch_id "$watch_id" \
+    --arg turn_id "$turn_id" \
+    --arg pane_id "$pane" \
+    --arg spawner_pane "$spawner" \
+    --arg label "$label" \
+    --arg baseline_state "$baseline" \
+    --arg prearm_screen_hash "$hash" \
+    --argjson prearm_transcript_cursor "$cursor" \
+    --argjson prearm_seq "$prearm_seq" \
+    '{
+       watch_id: $watch_id,
+       turn_id: $turn_id,
+       pane_id: $pane_id,
+       spawner_pane: $spawner_pane,
+       label: $label,
+       baseline_state: $baseline_state,
+       prearm_screen_hash: $prearm_screen_hash,
+       prearm_transcript_cursor: $prearm_transcript_cursor,
+       prearm_seq: $prearm_seq,
+       start_seq: null,
+       state: "pending"
+     }')
+
+  printf '%s\n' "$record" > "$(_eventsd_watch_file "$watch_id")"
+  printf '%s' "$watch_id" > "$live_file"
+  printf '%s' "$watch_id"
+}
+
+# watch_get <watch_id> — print the stored record (compact JSON) or
+# nothing if it does not exist. Private helper.
+watch_get() {
+  local file
+  file=$(_eventsd_watch_file "$1")
+  [[ -f "$file" ]] && cat "$file"
+}
+
+# watch_get_live <pane> — print the live watch record for pane, or
+# nothing if the pane has no live watch.
+watch_get_live() {
+  local live_file wid
+  live_file=$(_eventsd_live_file "$1")
+  [[ -s "$live_file" ]] || return 0
+  wid=$(cat "$live_file")
+  watch_get "$wid"
+}
+
+# watch_get_draining <pane> — print JSONL (one record per line) for
+# every draining watch on pane. Bead 1 always returns nothing
+# because no transition populates the draining index yet.
+watch_get_draining() {
+  local draining_file wid
+  draining_file=$(_eventsd_draining_file "$1")
+  [[ -f "$draining_file" ]] || return 0
+  while IFS= read -r wid; do
+    [[ -n "$wid" ]] || continue
+    watch_get "$wid"
+  done < "$draining_file"
+}
+
+# watch_list — print JSONL of every known watch record.
+watch_list() {
+  local dir="$_EVENTSD_STATE_DIR/watches"
+  [[ -d "$dir" ]] || return 0
+  local file
+  for file in "$dir"/*.json; do
+    [[ -f "$file" ]] || continue
+    cat "$file"
+  done
+}
