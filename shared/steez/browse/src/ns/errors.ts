@@ -172,6 +172,21 @@ export function detectValidationFromMessage(message: string): NsError | null {
   return null;
 }
 
+// ─── Navigation Detection ───────────────────────────────────
+
+/**
+ * Detect the "Execution context was destroyed" family of errors from Playwright.
+ *
+ * These fire when a page.evaluate() is mid-flight and the page navigates —
+ * for ns set on a OneWorld form, this happens when the entity's subsidiary
+ * differs from the form's current subsidiary and NS reloads the form server-side.
+ */
+export function isNavigationDestroyedError(err: unknown): boolean {
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /Execution context was destroyed|frame was detached|Target closed|Cannot find context|Navigation failed because/i.test(msg);
+}
+
 // ─── Classify Dialog/DOM Message ────────────────────────────
 
 /**

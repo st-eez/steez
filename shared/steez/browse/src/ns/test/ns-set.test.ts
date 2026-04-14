@@ -175,4 +175,59 @@ describe('ns set', () => {
     expect(output.ok).toBe(true);
     expect(output.display).not.toContain('Dialog');
   });
+
+  test('no Reloaded marker on standard (non-redirecting) set', async () => {
+    const output = await nsSet(['salesrep', '99'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).not.toContain('Reloaded');
+  });
+});
+
+// ─── OneWorld subsidiary redirect ────────────────────────────
+
+describe('ns set — OneWorld subsidiary redirect', () => {
+  beforeEach(async () => {
+    const page = bm.getPage();
+    await page.goto(baseUrl + '/ns-form-oneworld.html');
+  });
+
+  test('recovers from navigation-destroyed error triggered by entity set', async () => {
+    const page = bm.getPage();
+    // Arm the fixture: setting entity now triggers a server-side reload.
+    await page.evaluate(() => { (window as any).__redirectOnEntitySet = true; });
+
+    const output = await nsSet(['entity', '99'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('SET OK');
+    expect(output.display).toContain('Reloaded: yes');
+
+    // The redirect landed on the reloaded fixture.
+    expect(page.url()).toContain('/ns-form-oneworld-reloaded.html');
+
+    // Hint surfaces the subsidiary change from pre-redirect to post-redirect.
+    expect(output.display).toContain('form reloaded');
+    expect(output.display).toContain('Parent Co.');
+    expect(output.display).toContain('Sub B');
+
+    // Diff exposes the subsidiary flip.
+    expect(output.display).toContain('Changed: subsidiary');
+
+    // Post-redirect page has the new entity value active.
+    const entityValue = await page.evaluate(() => (window as any).nlapiGetFieldValue('entity'));
+    expect(entityValue).toBe('99');
+    const subsidiaryValue = await page.evaluate(() => (window as any).nlapiGetFieldValue('subsidiary'));
+    expect(subsidiaryValue).toBe('2');
+  }, 20_000);
+
+  test('non-redirecting entity set on OneWorld form leaves Reloaded off', async () => {
+    // Redirect flag stays false — entity set should behave normally.
+    const output = await nsSet(['entity', '42'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('SET OK');
+    expect(output.display).not.toContain('Reloaded');
+    expect(output.display).not.toContain('form reloaded');
+  });
 });

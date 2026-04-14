@@ -22,10 +22,11 @@ import type { NsCommandOutput } from '../format';
 import { formatNsError, truncateValue } from '../format';
 import type { NsResult } from '../errors';
 import type { CapturedDialog } from '../utils/with-dialog-handler';
-import { guardNsApi, validationError } from '../errors';
+import { guardNsApi, validationError, isNavigationDestroyedError } from '../errors';
 import { introspectField, introspectAllFields } from '../utils/introspect-field';
 import { createPageGetter, waitForFieldConvergence } from '../convergence';
 import { withDialogHandler } from '../utils/with-dialog-handler';
+import { waitForSettle } from '../utils/with-retry';
 import { withMutex, nsMutex } from '../mutex';
 
 // ─── Types ──────────────────────────────────────────────────
@@ -41,10 +42,16 @@ interface NsSetData {
   value: string;
   cascading: 'fired' | 'suppressed';
   settled: boolean;
+  reloaded: boolean;
   elapsedMs: number;
   diff: { changed: FieldChange[] };
   dialogs: CapturedDialog[];
   hint: string | null;
+}
+
+interface SubsidiarySnapshot {
+  value: string | null;
+  text: string | null;
 }
 
 // ─── Arg Parsing ────────────────────────────────────────────
@@ -147,89 +154,135 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
         beforeValues = await getter(watchFieldIds);
       }
 
+      // ── Snapshot subsidiary (OneWorld redirect detection) ────
+      // In OneWorld accounts, setting entity can trigger a server-side form
+      // reload when the entity's subsidiary differs from the form's current one.
+      // Capture the pre-set value so we can report the shift after recovery.
+      const preSubsidiary = await readSubsidiarySnapshot(target);
+
       // ── Set the field value with dialog capture ──────────────
-      const { result: setResult, dialogs } = await withDialogHandler(
-        bm,
-        async () => {
-          const page = bm.getPage();
+      let setResult: { settled: boolean };
+      let dialogs: CapturedDialog[];
+      let reloaded = false;
 
-          // Set the value
-          await page.evaluate(
-            ({ fid, val, ffc, sync }: { fid: string; val: string; ffc: boolean; sync: boolean }) => {
-              (window as any).nlapiSetFieldValue(fid, val, ffc, sync);
-            },
-            { fid: fieldId, val: value, ffc: fireFieldChanged, sync: synchronous },
-          );
+      try {
+        const handled = await withDialogHandler(
+          bm,
+          async () => {
+            const page = bm.getPage();
 
-          // Verify value was set — custom forms with indexed widgets (hddn_{field}_{N})
-          // can silently fail. If the value didn't stick, try syncing the indexed DOM element directly.
-          const verifiedValue = await page.evaluate(
-            (fid: string) => (window as any).nlapiGetFieldValue?.(fid) ?? null,
-            fieldId,
-          );
-          // Compare trimmed values — NS sometimes returns padded strings
-          const valueMatches = verifiedValue !== null && String(verifiedValue).trim() === String(value).trim();
-          if (!valueMatches && fieldMeta.type === 'select') {
-            // Fallback: directly sync indexed hidden/select elements on custom forms
+            // Set the value
             await page.evaluate(
-              ({ fid, val }: { fid: string; val: string }) => {
-                const w = window as any;
-                // Retry the API call once
-                try { w.nlapiSetFieldValue?.(fid, val); } catch {}
-                // Direct DOM fallback: find indexed hidden elements and sync them
-                const form = document.getElementById('main_form');
-                if (!form) return;
-                const hddn = form.querySelector(`[id^="hddn_${fid}_"]`) as HTMLInputElement | null;
-                if (hddn) {
-                  hddn.value = val;
-                  // Also sync the visible select widget (must be an actual <select>)
-                  const inpt = form.querySelector(`select[id^="inpt_${fid}_"]`) as HTMLSelectElement | null;
-                  if (inpt && inpt.options) {
-                    for (let i = 0; i < inpt.options.length; i++) {
-                      if (inpt.options[i].value === val) {
-                        inpt.selectedIndex = i;
-                        break;
+              ({ fid, val, ffc, sync }: { fid: string; val: string; ffc: boolean; sync: boolean }) => {
+                (window as any).nlapiSetFieldValue(fid, val, ffc, sync);
+              },
+              { fid: fieldId, val: value, ffc: fireFieldChanged, sync: synchronous },
+            );
+
+            // Verify value was set — custom forms with indexed widgets (hddn_{field}_{N})
+            // can silently fail. If the value didn't stick, try syncing the indexed DOM element directly.
+            const verifiedValue = await page.evaluate(
+              (fid: string) => (window as any).nlapiGetFieldValue?.(fid) ?? null,
+              fieldId,
+            );
+            // Compare trimmed values — NS sometimes returns padded strings
+            const valueMatches = verifiedValue !== null && String(verifiedValue).trim() === String(value).trim();
+            if (!valueMatches && fieldMeta.type === 'select') {
+              // Fallback: directly sync indexed hidden/select elements on custom forms
+              await page.evaluate(
+                ({ fid, val }: { fid: string; val: string }) => {
+                  const w = window as any;
+                  // Retry the API call once
+                  try { w.nlapiSetFieldValue?.(fid, val); } catch {}
+                  // Direct DOM fallback: find indexed hidden elements and sync them
+                  const form = document.getElementById('main_form');
+                  if (!form) return;
+                  const hddn = form.querySelector(`[id^="hddn_${fid}_"]`) as HTMLInputElement | null;
+                  if (hddn) {
+                    hddn.value = val;
+                    // Also sync the visible select widget (must be an actual <select>)
+                    const inpt = form.querySelector(`select[id^="inpt_${fid}_"]`) as HTMLSelectElement | null;
+                    if (inpt && inpt.options) {
+                      for (let i = 0; i < inpt.options.length; i++) {
+                        if (inpt.options[i].value === val) {
+                          inpt.selectedIndex = i;
+                          break;
+                        }
                       }
                     }
                   }
-                }
-              },
-              { fid: fieldId, val: value },
-            );
-          }
+                },
+                { fid: fieldId, val: value },
+              );
+            }
 
-          // If cascading was fired, wait for convergence
-          // Re-acquire target — sourcing may have reloaded the NS iframe
-          target = bm.getActiveFrameOrPage();
-          let settled = true;
-          if (trackConvergence && watchFieldIds.length > 0) {
-            const convergence = await waitForFieldConvergence(target, watchFieldIds, {
-              stablePolls: 3,
-              initialIntervalMs: 50,
-              maxIntervalMs: 200,
-              timeoutMs: 5000,
-            });
-            settled = convergence.converged;
-          }
+            // If cascading was fired, wait for convergence
+            // Re-acquire target — sourcing may have reloaded the NS iframe
+            target = bm.getActiveFrameOrPage();
+            let settled = true;
+            if (trackConvergence && watchFieldIds.length > 0) {
+              const convergence = await waitForFieldConvergence(target, watchFieldIds, {
+                stablePolls: 3,
+                initialIntervalMs: 50,
+                maxIntervalMs: 200,
+                timeoutMs: 5000,
+              });
+              settled = convergence.converged;
+            }
 
-          return { settled };
-        },
-        { accept: true },
-      );
+            return { settled };
+          },
+          { accept: true },
+        );
+        setResult = handled.result;
+        dialogs = handled.dialogs;
+      } catch (err) {
+        if (!isNavigationDestroyedError(err)) throw err;
+        // OneWorld subsidiary redirect: NS reloaded the form server-side.
+        // Wait for the new page to settle, then re-acquire the NS API.
+        reloaded = true;
+        dialogs = [];
+        await recoverFromRedirect(bm);
+        target = bm.getActiveFrameOrPage();
+        setResult = { settled: true };
+      }
 
       // ── Compute diff ─────────────────────────────────────────
       // Re-acquire target — frame may have shifted during dialog handling
       target = bm.getActiveFrameOrPage();
       const changed: FieldChange[] = [];
       if (trackConvergence && watchFieldIds.length > 0) {
-        const getter = createPageGetter(target);
-        const afterValues = await getter(watchFieldIds);
+        // After a redirect the page evaluated a fresh form — fields may 404
+        // on read. Wrap in try so a partial read still produces a diff.
+        try {
+          const getter = createPageGetter(target);
+          const afterValues = await getter(watchFieldIds);
 
-        for (const fid of watchFieldIds) {
-          const before = beforeValues[fid] ?? null;
-          const after = afterValues[fid] ?? null;
-          if (before !== after) {
-            changed.push({ id: fid, before, after });
+          for (const fid of watchFieldIds) {
+            const before = beforeValues[fid] ?? null;
+            const after = afterValues[fid] ?? null;
+            if (before !== after) {
+              changed.push({ id: fid, before, after });
+            }
+          }
+        } catch {
+          // Post-redirect read failed — diff is best-effort
+        }
+      }
+
+      // Subsidiary diff: always report when the form reloaded, and prefer
+      // display text over internal IDs. If the generic watch-field diff
+      // already added a raw-ID subsidiary entry, upgrade it in place.
+      if (reloaded) {
+        const postSubsidiary = await readSubsidiarySnapshot(target);
+        if (subsidiaryChanged(preSubsidiary, postSubsidiary)) {
+          const before = preSubsidiary?.text ?? preSubsidiary?.value ?? null;
+          const after = postSubsidiary?.text ?? postSubsidiary?.value ?? null;
+          const existing = changed.findIndex(c => c.id === 'subsidiary');
+          if (existing >= 0) {
+            changed[existing] = { id: 'subsidiary', before, after };
+          } else {
+            changed.push({ id: 'subsidiary', before, after });
           }
         }
       }
@@ -240,7 +293,14 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
       // won't fire when cascading is suppressed. Surface the recovery flag inline
       // so callers testing a handler don't have to dig for the workaround.
       let hint: string | null = null;
-      if (cascadingLabel === 'suppressed' && !fieldMeta.isEntityRef && forceSource === null) {
+      if (reloaded) {
+        const postSub = changed.find(c => c.id === 'subsidiary');
+        if (postSub) {
+          hint = `form reloaded — subsidiary changed from ${truncateValue(postSub.before)} to ${truncateValue(postSub.after)}`;
+        } else {
+          hint = 'form reloaded — subsidiary shift triggered server-side redirect';
+        }
+      } else if (cascadingLabel === 'suppressed' && !fieldMeta.isEntityRef && forceSource === null) {
         hint = `HINT: fieldChanged not fired for '${fieldId}'. If testing a client script handler, retry with --fire-field-changed (or --source).`;
       }
 
@@ -251,6 +311,7 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
           value,
           cascading: cascadingLabel,
           settled: setResult.settled,
+          reloaded,
           elapsedMs: elapsed,
           diff: { changed },
           dialogs,
@@ -265,7 +326,14 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
   }
 
   const d = result.data!;
-  const lines = [`SET OK | Field: ${d.fieldId} = ${truncateValue(d.value)} | Cascading: ${d.cascading} | Settled: ${d.settled ? 'yes' : 'no'}`];
+  const headerParts = [
+    `SET OK`,
+    `Field: ${d.fieldId} = ${truncateValue(d.value)}`,
+    `Cascading: ${d.cascading}`,
+    `Settled: ${d.settled ? 'yes' : 'no'}`,
+  ];
+  if (d.reloaded) headerParts.push('Reloaded: yes');
+  const lines = [headerParts.join(' | ')];
   for (const c of d.diff.changed) {
     lines.push(`Changed: ${c.id} ${truncateValue(c.before)} → ${truncateValue(c.after)}`);
   }
@@ -279,4 +347,59 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
   }
 
   return { display: lines.join('\n'), ok: true };
+}
+
+// ─── Helpers ────────────────────────────────────────────────
+
+/**
+ * Read the current subsidiary value + display text from the form.
+ * Returns null when the field isn't present (non-OneWorld accounts or
+ * forms without a subsidiary field).
+ */
+async function readSubsidiarySnapshot(
+  target: import('playwright').Page | import('playwright').Frame,
+): Promise<SubsidiarySnapshot | null> {
+  try {
+    return await target.evaluate(() => {
+      const w = window as any;
+      if (typeof w.nlapiGetField !== 'function') return null;
+      const field = w.nlapiGetField('subsidiary');
+      if (!field) return null;
+      let value: string | null = null;
+      let text: string | null = null;
+      try { value = w.nlapiGetFieldValue?.('subsidiary') ?? null; } catch {}
+      try { text = w.nlapiGetFieldText?.('subsidiary') ?? null; } catch {}
+      return { value, text };
+    });
+  } catch {
+    return null;
+  }
+}
+
+function subsidiaryChanged(
+  before: SubsidiarySnapshot | null,
+  after: SubsidiarySnapshot | null,
+): boolean {
+  if (!before && !after) return false;
+  if (!before || !after) return true;
+  return (before.value ?? null) !== (after.value ?? null);
+}
+
+/**
+ * Wait for the page to finish loading after an NS server-side redirect,
+ * then wait for the NS client API to be available again.
+ *
+ * Timeouts are generous: the form may be heavy and server round-trips can
+ * take 5s+ on slow connections. Soft-failing on each step is fine —
+ * the caller re-tries via waitForFunction for the NS API.
+ */
+async function recoverFromRedirect(bm: BrowserManager): Promise<void> {
+  const page = bm.getPage();
+  await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
+  await page.waitForLoadState('load', { timeout: 15_000 }).catch(() => {});
+  await waitForSettle(page, { timeoutMs: 5_000, stableMs: 500 });
+  await page.waitForFunction(
+    () => typeof (window as any).nlapiGetField === 'function',
+    { timeout: 10_000 },
+  ).catch(() => {});
 }

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head><title>NetSuite OneWorld Form Stub</title></head>
+<body>
+<!--
+  Mock NetSuite OneWorld form — simulates the subsidiary-redirect path on entity set.
+
+  Setting the entity field (via nlapiSetFieldValue) with window.__redirectOnEntitySet = true
+  triggers a synchronous navigation to ns-form-oneworld-reloaded.html, which represents
+  the server-reloaded form with the entity's subsidiary now active. This reproduces the
+  "Execution context was destroyed" error path that ns set must recover from.
+-->
+
+<form id="main_form">
+  <input id="entity" type="hidden" value="" />
+  <span id="entity_display" style="display:none"></span>
+
+  <input id="subsidiary" type="hidden" value="1" />
+
+  <input id="memo" type="text" value="" />
+</form>
+
+<script>
+const FIELDS = {
+  entity: {
+    type: 'select', label: 'Customer', mandatory: true, disabled: false,
+    value: '', text: '',
+  },
+  subsidiary: {
+    type: 'select', label: 'Subsidiary', mandatory: true, disabled: false,
+    value: '1', text: 'Parent Co.',
+  },
+  memo: {
+    type: 'text', label: 'Memo', mandatory: false, disabled: false,
+    value: '', text: '',
+  },
+};
+
+window.nlapiGetField = function(id) {
+  const f = FIELDS[id];
+  if (!f) return null;
+  return {
+    getType: () => f.type,
+    getLabel: () => f.label,
+    isMandatory: () => f.mandatory,
+    isDisabled: () => f.disabled,
+    getSelectOptions: () => f.options || [],
+  };
+};
+
+window.nlapiGetFieldValue = function(id) {
+  const f = FIELDS[id];
+  return f ? f.value : null;
+};
+
+window.nlapiGetFieldText = function(id) {
+  const f = FIELDS[id];
+  return f ? f.text : null;
+};
+
+window.nlapiGetFieldIds = function() {
+  return Object.keys(FIELDS);
+};
+
+// Default: no redirect. Tests set window.__redirectOnEntitySet = true
+// to simulate a OneWorld subsidiary mismatch reload on entity set.
+window.__redirectOnEntitySet = false;
+
+window.nlapiSetFieldValue = function(fieldId, value, fireSlavingWhenever, fireFieldChanged) {
+  if (!FIELDS[fieldId]) return;
+  FIELDS[fieldId].value = value;
+  FIELDS[fieldId].text = value;
+
+  // Simulate OneWorld redirect: setting entity with subsidiary mismatch
+  // triggers a synchronous page load that destroys the execution context.
+  if (fieldId === 'entity' && fireSlavingWhenever && window.__redirectOnEntitySet) {
+    window.location.href = '/ns-form-oneworld-reloaded.html';
+  }
+};
+</script>
+</body>
+</html>

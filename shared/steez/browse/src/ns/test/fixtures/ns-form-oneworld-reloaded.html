@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head><title>NetSuite OneWorld Form (Reloaded)</title></head>
+<body>
+<!--
+  Post-redirect state: NS server reloaded the form with the entity's subsidiary
+  now active. Entity is set, subsidiary has flipped from "Parent Co." (id=1) to
+  "Sub B" (id=2), and the memo field is cleared (fresh form instance).
+-->
+
+<form id="main_form">
+  <input id="entity" type="hidden" value="99" />
+  <span id="entity_display" style="display:none">Acme Intl.</span>
+
+  <input id="subsidiary" type="hidden" value="2" />
+
+  <input id="memo" type="text" value="" />
+</form>
+
+<script>
+const FIELDS = {
+  entity: {
+    type: 'select', label: 'Customer', mandatory: true, disabled: false,
+    value: '99', text: 'Acme Intl.',
+  },
+  subsidiary: {
+    type: 'select', label: 'Subsidiary', mandatory: true, disabled: false,
+    value: '2', text: 'Sub B',
+  },
+  memo: {
+    type: 'text', label: 'Memo', mandatory: false, disabled: false,
+    value: '', text: '',
+  },
+};
+
+window.nlapiGetField = function(id) {
+  const f = FIELDS[id];
+  if (!f) return null;
+  return {
+    getType: () => f.type,
+    getLabel: () => f.label,
+    isMandatory: () => f.mandatory,
+    isDisabled: () => f.disabled,
+    getSelectOptions: () => f.options || [],
+  };
+};
+
+window.nlapiGetFieldValue = function(id) {
+  const f = FIELDS[id];
+  return f ? f.value : null;
+};
+
+window.nlapiGetFieldText = function(id) {
+  const f = FIELDS[id];
+  return f ? f.text : null;
+};
+
+window.nlapiGetFieldIds = function() {
+  return Object.keys(FIELDS);
+};
+
+window.nlapiSetFieldValue = function(fieldId, value) {
+  if (!FIELDS[fieldId]) return;
+  FIELDS[fieldId].value = value;
+  FIELDS[fieldId].text = value;
+};
+</script>
+</body>
+</html>

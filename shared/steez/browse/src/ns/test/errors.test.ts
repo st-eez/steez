@@ -15,6 +15,7 @@ import {
   detectConcurrencyFromMessage,
   detectValidationFromMessage,
   classifyMessage,
+  isNavigationDestroyedError,
   type NsError,
 } from '../errors';
 import * as path from 'path';
@@ -212,5 +213,41 @@ describe('classifyMessage', () => {
 
   test('returns null for empty string', () => {
     expect(classifyMessage('')).toBeNull();
+  });
+});
+
+describe('isNavigationDestroyedError', () => {
+  test('detects Playwright execution-context-destroyed error', () => {
+    const err = new Error('Execution context was destroyed, most likely because of a navigation.');
+    expect(isNavigationDestroyedError(err)).toBe(true);
+  });
+
+  test('detects frame-detached errors', () => {
+    const err = new Error('frame was detached during evaluation');
+    expect(isNavigationDestroyedError(err)).toBe(true);
+  });
+
+  test('detects target-closed errors', () => {
+    const err = new Error('Target closed');
+    expect(isNavigationDestroyedError(err)).toBe(true);
+  });
+
+  test('detects "Cannot find context" errors', () => {
+    const err = new Error('Cannot find context with specified id');
+    expect(isNavigationDestroyedError(err)).toBe(true);
+  });
+
+  test('returns false for unrelated errors', () => {
+    expect(isNavigationDestroyedError(new Error('Validation failed'))).toBe(false);
+  });
+
+  test('returns false for null/undefined', () => {
+    expect(isNavigationDestroyedError(null)).toBe(false);
+    expect(isNavigationDestroyedError(undefined)).toBe(false);
+  });
+
+  test('accepts non-Error thrown values', () => {
+    expect(isNavigationDestroyedError('Execution context was destroyed')).toBe(true);
+    expect(isNavigationDestroyedError('benign string')).toBe(false);
   });
 });
