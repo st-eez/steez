@@ -738,6 +738,7 @@ daemon_recover_restart() {
         ;;
     esac
   done
+}
 
 # watch_tick <watch_id>
 #
@@ -827,7 +828,8 @@ watch_tick() {
         --argjson t "$now" '.last_reconcile_ms = $t')
       _eventsd_write_record "$wid" "$rec"
     fi
-  fi}
+  fi
+}
 
 # watch_pane_close <pane>
 # Terminal watcher event for a tmux pane going away (spec: Pane close
