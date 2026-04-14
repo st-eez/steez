@@ -16,6 +16,12 @@ The agent subsystem manages AI coding agents (ren, ren-codex, claude, codex) acr
 | [agent-history](./agent-history.md) | `shared/steez/bin/agent-history` | transcript parser, conversation reader, last response, blocked detection, history pairs, JSONL parser, agent output |
 | [spawn-agent](./spawn-agent.md) | `skills/spawn-agent/scripts/spawn.sh` + `skills/spawn-agent/SKILL.md` | spawn agent, launch agent, tmux split, new pane, boot wait, directory resolution, multi-agent orchestration, layout |
 
+## Proposed Specs
+
+| Spec | Path | Search Terms |
+|------|------|-------------|
+| [agent-events](./agent-events.md) | `shared/steez/bin/agent-eventsd` | event-driven notifications, PTY tap, pipe-pane, transcript tail, unix socket, fast agent state, near-instant watch service |
+
 ## Data Flow
 
 ```
