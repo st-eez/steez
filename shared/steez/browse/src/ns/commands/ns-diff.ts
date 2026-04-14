@@ -26,7 +26,7 @@ import { formatNsError, truncateValue } from '../format';
 import type { NsResult } from '../errors';
 import type { NsFieldMetadata } from '../utils/introspect-field';
 import { guardNsApi, validationError } from '../errors';
-import { introspectAllFields } from '../utils/introspect-field';
+import { introspectAllFields, introspectField } from '../utils/introspect-field';
 import { createPageGetter, waitForFieldConvergence } from '../convergence';
 import { parseSetArgs } from '../utils/parse-set-args';
 import { withMutex, nsMutex } from '../mutex';
@@ -75,12 +75,11 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
         return { ok: false as const, error: guardErr };
       }
 
-      // ── Snapshot "before" ────────────────────────────────────
-      const beforeFields = await introspectAllFields(target);
-      const beforeMap = toSnapshotMap(beforeFields);
-
       // ── Parse action args ────────────────────────────────────
       let actionLabel: string | null = null;
+      let actionSpec:
+        | { fieldId: string; value: string; forceSource: boolean | null; fieldMeta: NsFieldMetadata }
+        | null = null;
 
       if (args.length > 0) {
         const action = args[0];
@@ -101,18 +100,37 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
           };
         }
 
-        actionLabel = `set ${fieldId} ${value}`;
-
-        // ── Execute the set operation ────────────────────────────
-        const page = bm.getPage();
-
-        const fieldMeta = beforeFields.find(f => f.id === fieldId);
+        // Resolve the target field using the same single-field API that
+        // ns set / ns inspect --field use. The broad discovery path in
+        // introspectAllFields is DOM/heuristic-driven and misses body
+        // fields like `entity` on transaction forms — keeping ns diff
+        // aligned with nlapiGetField avoids that divergence.
+        const fieldMeta = await introspectField(target, fieldId);
         if (!fieldMeta) {
           return {
             ok: false as const,
             error: validationError(`Field "${fieldId}" not found on this form`),
           };
         }
+
+        actionLabel = `set ${fieldId} ${value}`;
+        actionSpec = { fieldId, value, forceSource, fieldMeta };
+      }
+
+      // ── Snapshot "before" ────────────────────────────────────
+      const beforeFields = await introspectAllFields(target);
+      // Ensure the action's target field is in the snapshot even when
+      // broad discovery misses it (see fieldMeta comment above).
+      if (actionSpec && !beforeFields.some(f => f.id === actionSpec!.fieldId)) {
+        beforeFields.push(actionSpec.fieldMeta);
+      }
+      const beforeMap = toSnapshotMap(beforeFields);
+
+      if (actionSpec) {
+        const { fieldId, value, forceSource, fieldMeta } = actionSpec;
+
+        // ── Execute the set operation ────────────────────────────
+        const page = bm.getPage();
 
         const fireFieldChanged = forceSource !== false;
         const synchronous = true;
@@ -155,6 +173,12 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
 
       // ── Snapshot "after" ─────────────────────────────────────
       const afterFields = await introspectAllFields(target);
+      // Mirror the before-snapshot augmentation so the diff can report
+      // a change on fields that broad discovery misses.
+      if (actionSpec && !afterFields.some(f => f.id === actionSpec!.fieldId)) {
+        const afterMeta = await introspectField(target, actionSpec.fieldId);
+        if (afterMeta) afterFields.push(afterMeta);
+      }
       const afterMap = toSnapshotMap(afterFields);
 
       // ── Compare ──────────────────────────────────────────────

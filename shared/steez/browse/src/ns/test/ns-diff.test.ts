@@ -184,4 +184,92 @@ describe('ns diff', () => {
     expect(output.display).toContain('Unknown diff action');
     expect(output.display).toContain('delete');
   });
+
+  // ── Regression: ns-diff must resolve body fields even when broad
+  // discovery (nlapiGetFieldIds + DOM scan) omits them. On real
+  // transaction forms (e.g. Sales Order), the `entity` body field
+  // is accessible via nlapiGetField but the DOM element lives outside
+  // #main_form, so introspectAllFields misses it while introspectField
+  // (used by ns set / ns inspect --field) resolves fine. ns diff must
+  // use the same single-field path as ns set to avoid divergence.
+  test('diff set resolves body field missing from broad discovery', async () => {
+    const page = bm.getPage();
+
+    // Simulate a transaction form where `entity` is a body field:
+    // - resolvable via nlapiGetField('entity')
+    // - NOT returned by nlapiGetFieldIds()
+    // - NOT present as an element inside #main_form
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__entity_value = '42';
+      w.__entity_text = 'Initial Customer';
+
+      const origGetField = w.nlapiGetField;
+      w.nlapiGetField = function (id: string) {
+        if (id === 'entity') {
+          return {
+            getType: () => 'select',
+            getLabel: () => 'Customer',
+            isMandatory: () => true,
+            isDisabled: () => false,
+            getSelectOptions: () => [
+              { id: '42', text: 'Initial Customer' },
+              { id: '12232', text: 'Target Customer' },
+            ],
+          };
+        }
+        return origGetField(id);
+      };
+
+      const origGetValue = w.nlapiGetFieldValue;
+      w.nlapiGetFieldValue = function (id: string) {
+        if (id === 'entity') return w.__entity_value;
+        return origGetValue(id);
+      };
+
+      const origGetText = w.nlapiGetFieldText;
+      w.nlapiGetFieldText = function (id: string) {
+        if (id === 'entity') return w.__entity_text;
+        return origGetText(id);
+      };
+
+      const origSet = w.nlapiSetFieldValue;
+      w.nlapiSetFieldValue = function (
+        id: string,
+        value: string,
+        ffc: boolean,
+        sync: boolean,
+      ) {
+        if (id === 'entity') {
+          w.__entity_value = value;
+          w.__entity_text = value === '12232' ? 'Target Customer' : 'Initial Customer';
+          return;
+        }
+        return origSet(id, value, ffc, sync);
+      };
+      // nlapiGetFieldIds is unchanged — deliberately omits 'entity'.
+      // No #entity element in the DOM — discovery cannot find it.
+    });
+
+    const output = await nsDiff(['set', 'entity', '12232'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('DIFF OK');
+    expect(output.display).toContain('Action: set entity 12232');
+    // Target field must be captured in the diff even though broad
+    // discovery missed it.
+    expect(output.display).toContain('Changed: entity');
+  });
+
+  test('diff set on missing body field still errors when nlapiGetField rejects', async () => {
+    const page = bm.getPage();
+    // Ensure the patch from the prior test doesn't leak — reload fixture.
+    await page.goto(baseUrl + '/ns-form.html');
+
+    const output = await nsDiff(['set', 'entity', '12232'], bm);
+
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('entity');
+    expect(output.display).toContain('not found');
+  });
 });
