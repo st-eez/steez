@@ -550,4 +550,142 @@ test_pre_arm_fresh_evidence_is_buffered_and_resolves_on_arm() {
 }
 run_test "pre-arm fresh evidence is buffered and resolves on arm" test_pre_arm_fresh_evidence_is_buffered_and_resolves_on_arm
 
+# ----- delivery idempotency and bounded retries (bead 5) -----
+#
+# Acceptance #4 (spec: TDD relationship): one watch_id produces one
+# logical notification across duplicate evidence and bounded retries.
+# Every assertion below is grounded in spec language — see
+# "Delivery contract", "resolved" lifecycle, and "delivering" lifecycle
+# sections of specs/agent-events.md. This test exists to guard the
+# woven contract, not to introduce new behavior.
+
+suite "delivery idempotency"
+
+# Deliver mock variant used by bead-5 tests:
+#
+# - Logs every invocation's argv to $DELIVER_LOG so the test can count
+#   attempts and assert all attempts share the same watch_id.
+# - Captures the on-disk record state at the moment agent-deliver is
+#   invoked to $DELIVER_STATE_LOG so the test can assert the spec's
+#   "daemon must persist resolved before it invokes agent-deliver"
+#   gate — i.e. disk state is `delivering` (the persistence checkpoint
+#   following `resolved`) every time the external command runs, never
+#   `armed` or `pending`.
+# - Honors ATTEMPT_EXIT_SEQ, a whitespace-separated list of exit codes
+#   indexed by the 1-based attempt number, so one test can stage a
+#   mixed failure/success sequence without re-exporting MOCK_DELIVER_EXIT
+#   between calls.
+_install_bead5_deliver_mock() {
+  export DELIVER_LOG="$TEST_TMP/deliver.log"
+  export DELIVER_STATE_LOG="$TEST_TMP/deliver-state.log"
+  export DELIVER_STATE_DIR_AT_CALL="$_EVENTSD_STATE_DIR"
+  : > "$DELIVER_LOG"
+  : > "$DELIVER_STATE_LOG"
+  cat > "$MOCK_BIN/agent-deliver" <<'MOCK'
+#!/usr/bin/env bash
+wid="$1"
+printf '%s\n' "$*" >> "${DELIVER_LOG:-/dev/null}"
+if [[ -f "$DELIVER_STATE_DIR_AT_CALL/watches/$wid.json" ]]; then
+  jq -r .state "$DELIVER_STATE_DIR_AT_CALL/watches/$wid.json" \
+    >> "${DELIVER_STATE_LOG:-/dev/null}"
+else
+  echo "NOREC" >> "${DELIVER_STATE_LOG:-/dev/null}"
+fi
+n=$(wc -l < "$DELIVER_LOG" | tr -d ' ')
+val=$(awk -v n="$n" 'BEGIN{split(ENVIRON["ATTEMPT_EXIT_SEQ"],a," "); print a[n]}')
+exit "${val:-0}"
+MOCK
+  chmod +x "$MOCK_BIN/agent-deliver"
+  export AGENT_DELIVER_CMD="$MOCK_BIN/agent-deliver"
+
+  # Spec: "It must call agent-deliver. It must never call agent-send."
+  # Tripwire — if anything in the daemon shells out to agent-send, the
+  # file appears and the sole-notifier assertion fires.
+  export AGENT_SEND_TRIPWIRE="$TEST_TMP/agent-send-tripwire"
+  rm -f "$AGENT_SEND_TRIPWIRE"
+  cat > "$MOCK_BIN/agent-send" <<'SEND'
+#!/usr/bin/env bash
+touch "${AGENT_SEND_TRIPWIRE:-/dev/null}"
+exit 99
+SEND
+  chmod +x "$MOCK_BIN/agent-send"
+}
+
+test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries() {
+  # Required first red test for bead 5. Every assertion ties back to
+  # specs/agent-events.md:
+  #
+  #   (a) One-shot resolve — "Once resolved, the watch is one-shot.
+  #       Later evidence for that watch_id is ignored."
+  #   (b) Retries reuse watch_id — "The daemon may retry only with the
+  #       same watch_id."
+  #   (c) Persist-before-deliver — "The daemon must persist `resolved`
+  #       before it invokes `agent-deliver`." Observed by the mock
+  #       reading on-disk state at call time; must be `delivering` (the
+  #       persistence checkpoint the daemon writes after reading the
+  #       persisted `resolved` record and before invoking the cmd).
+  #   (d) Sole notifier — "It must never call agent-send."
+  #   (e) Bounded retries — "Retries are bounded by
+  #       MAX_DELIVERY_ATTEMPTS."
+  #   (f) One logical notification — "One watch has exactly one logical
+  #       notification."
+  _install_bead5_deliver_mock
+  declare -F watch_resolve watch_deliver_attempt >/dev/null \
+    || { echo "    missing lifecycle fn"; return 1; }
+  [[ "${MAX_DELIVERY_ATTEMPTS:-0}" == "5" ]] \
+    || { echo "    MAX_DELIVERY_ATTEMPTS must default to 5"; return 1; }
+
+  local wid rec
+  wid=$(_arm_on "%70") || return 1
+
+  # (a) Duplicate evidence across the resolve window — only the first
+  # terminal state sticks.
+  watch_resolve "$wid" idle || return 1
+  watch_resolve "$wid" "blocked:question" >/dev/null 2>&1 || true
+  watch_resolve "$wid" idle >/dev/null 2>&1 || true
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .resolved_state idle || return 1
+
+  # (e) Drive four failures and one success — total 5 attempts, the
+  # upper edge of the retry budget. Proves the boundary is usable
+  # rather than off-by-one, and lets (f) distinguish "delivered once"
+  # from "delivered multiple times" across the retry stream.
+  export ATTEMPT_EXIT_SEQ="7 7 7 7 0"
+  local i
+  for ((i=1; i<=4; i++)); do
+    watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+    # Duplicate mid-retry evidence must remain a no-op (a).
+    watch_resolve "$wid" idle >/dev/null 2>&1 || true
+  done
+  watch_deliver_attempt "$wid" || return 1
+
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state delivered || return 1
+  assert_json_field "$rec" .delivery_attempts 5 || return 1
+  assert_eq "" "$(watch_get_live "%70")" || return 1
+
+  # (b) Every deliver call carried the same watch_id.
+  local ids
+  ids=$(awk '{print $1}' "$DELIVER_LOG" | sort -u)
+  assert_eq "$wid" "$ids" || return 1
+  assert_eq 5 "$(_deliver_call_count)" || return 1
+
+  # (c) Persist-before-deliver gate.
+  local bad
+  bad=$(grep -vFx delivering "$DELIVER_STATE_LOG" || true)
+  [[ -z "$bad" ]] || { echo "    non-delivering at-call states: $bad"; return 1; }
+
+  # (d) Sole notifier.
+  [[ ! -e "$AGENT_SEND_TRIPWIRE" ]] || { echo "    daemon called agent-send"; return 1; }
+
+  # (f) One logical notification — post-delivered duplicate evidence
+  # and rogue retry attempts must neither mutate state nor trigger
+  # another agent-deliver invocation.
+  watch_resolve "$wid" "blocked:permission" >/dev/null 2>&1 || true
+  watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  assert_eq 5 "$(_deliver_call_count)" || return 1
+  assert_json_field "$(watch_get "$wid")" .state delivered || return 1
+}
+run_test "one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries" test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries
+
 report
