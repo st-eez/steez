@@ -2,7 +2,7 @@
 
 **Path:** `shared/steez/bin/agent-send`
 
-High-level message delivery to AI agent panes. Wraps `agent-deliver` and auto-registers a completion watch so the spawner gets notified when the agent finishes.
+High-level message delivery to AI agent panes. Wraps `agent-deliver` and drives the two-step turn (`turn.prearm` → deliver → `watch.start`) through `agent-eventsd` so the spawner gets notified when the agent finishes.
 
 ## Interface
 
@@ -21,8 +21,8 @@ agent-send [--no-watch] [--label <str>] [--spawner <pane>] [--emit-watch-line] <
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--no-watch` | false | Skip auto-registering a completion watch |
-| `--label <str>` | Auto-inferred | Override the watch label |
+| `--no-watch` | false | Skip the whole watch wire-up (no prearm, no start) |
+| `--label <str>` | Auto-inferred via `agent-state` | Override the watch label |
 | `--spawner <pane>` | `$TMUX_PANE` | Override which pane gets the completion notification |
 | `--emit-watch-line` | false | Print `WATCHED=<pane> SPAWNER=<pane> BASELINE=working` on success |
 
@@ -34,51 +34,53 @@ agent-send [--no-watch] [--label <str>] [--spawner <pane>] [--emit-watch-line] <
 | 1 | Generic error (bad args, send failed) |
 | 2 | Pane is not a recognized AI agent |
 
-## Delivery
+## Two-step turn
 
-Delegates to `agent-deliver` for the actual tmux send. The exit code is `agent-deliver`'s exit code.
+`agent-send` follows the ordering pinned by `specs/agent-events.md` (Watch lifecycle — armed):
 
-## Watch Registration
+1. `agent-eventsd prearm --baseline-state working …` — creates a pending watch and captures the prearm baseline.
+2. `agent-deliver <pane> <message>` — delivers the prompt bytes via the tmux paste-buffer recipe.
+3. `agent-eventsd start --watch-id <wid>` — promotes the pending watch to armed.
 
-After successful delivery (exit 0), unless `--no-watch`:
+If step 3 fails, `agent-send` does **not** retry it. The watch stays pending and eventually closes with `pending_timeout`. Delivery is the primary contract: watch-wire-up failures never change the exit code.
 
-1. Calls `agent-watch add <pane> --spawner <spawner> --baseline working`.
-2. Baseline is hardcoded to `working` (not observed post-delivery state). This avoids a race: a fast agent can respond and return to idle before any reasonable sleep, making an observed baseline stale.
-3. Label is inferred by `agent-watch` via `agent-state` when `--label` is omitted.
+Baseline is hardcoded to `working`. The semantic intent of every `agent-send` call is "notify me when the agent finishes THIS message", regardless of the pane's state at send time. Observing post-delivery state races — a fast agent can respond and return to idle before any reasonable sleep finishes. `working` is race-free and always correct.
+
+When `--label` is omitted, `agent-send` calls `agent-state <pane>` and uses the `agent` field, falling back to `agent`.
 
 ### `--emit-watch-line` mode
 
-Watch registration runs synchronously. On success, prints:
+On success (delivery OK and start OK), prints:
 
 ```
 WATCHED=%5 SPAWNER=%0 BASELINE=working
 ```
 
-### Default mode
-
-Watch registration runs in a fully detached background subshell (`& disown`). The caller is not blocked. Watch failures are swallowed — delivery is the primary contract.
+If start failed (watch pending), the line is suppressed — callers that rely on the line for orchestration see only armed watches.
 
 ## Dependencies
 
-- `agent-deliver` (message delivery)
-- `agent-watch` (completion watch registration)
+- `agent-deliver` (prompt delivery)
+- `agent-eventsd` (prearm, start)
+- `agent-state` (label inference)
 
 ## Integration Points
 
 - **spawn.sh** calls `agent-send` with `--emit-watch-line` for prompt delivery after agent boot.
 - **spawn-agent SKILL.md** documents `agent-send` as the primary post-spawn messaging tool.
-- **agent-watch-daemon** fires notifications to the spawner registered by this script.
+- **agent-eventsd** fires notifications via `agent-deliver` to the spawner recorded at prearm time.
 
 ## Behavioral Contracts
 
 1. Fire-and-forget from the caller's perspective. Reading the response is the caller's job.
-2. Watch registration is best-effort — a failure never fails the delivery.
+2. Watch wire-up is best-effort — prearm/start failures never fail the delivery.
 3. Escape safety: inherits `agent-deliver`'s tmux paste-buffer path. Backticks, `$vars`, quotes survive.
-4. When `$TMUX_PANE` is empty and `--spawner` is omitted, watch registration is silently skipped (no error). Delivery still succeeds.
+4. When `$TMUX_PANE` is empty and `--spawner` is omitted, watch wire-up is silently skipped (no error). Delivery still succeeds.
 5. Watch baseline is always `working`, regardless of the agent's current state at send time.
+6. `--no-watch` skips both prearm and start — no prearm baseline is captured and no pending watch is created.
 
 ## Error Handling
 
 - Missing arguments: error to stderr, exit 1.
 - Delivery failure: exit code propagated from `agent-deliver`.
-- Watch registration failure: logged (by agent-watch), does not affect exit code.
+- Watch wire-up failure: logged (by agent-eventsd), does not affect exit code.

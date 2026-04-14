@@ -8,19 +8,20 @@ Usage: agent-watch add <pane> [--spawner <pane>] [--label <str>] [--baseline <st
        agent-watch list
        agent-watch daemon-status
 
-Register and manage background watches on AI agent panes. The daemon
-(agent-watch-daemon) polls each watched pane and delivers a one-shot
-notification to the spawner pane when the pane transitions out of its
-baseline state into a terminal state (idle, blocked:question, etc).
+Public CLI for the event-driven watch service. Every subcommand routes
+to agent-eventsd; agent-watch-daemon is no longer part of the primary
+path. Manual add emits turn.prearm followed by watch.start immediately
+(no prompt bytes in between). agent-send is the only two-step-turn
+caller that inserts prompt delivery between prearm and start.
 
 Notifications are delivered via agent-deliver (never agent-send) to
 prevent recursive notification loops.
 
 Commands:
-  add <pane>       Start watching <pane>. Auto-starts the daemon.
-  remove <pane>    Stop watching <pane>.
+  add <pane>       Prearm + start a watch on <pane> (armed immediately).
+  remove <pane>    Close the live watch on <pane>.
   list             Print the current watchlist.
-  daemon-status    Print whether the daemon is running and its pid.
+  daemon-status    Report agent-eventsd health.
 
 Options for `add`:
   --spawner <pane>    Pane to notify when the watched pane finishes.
@@ -31,35 +32,12 @@ Options for `add`:
                       when the observed state differs from baseline and
                       is one of {idle, blocked:question, blocked:permission,
                       blocked:unknown}. Defaults to "working".
-
-State files:
-  ~/.steez/state/watches.jsonl             one JSON entry per active watch
-  ~/.steez/state/agent-watch-daemon.pid    daemon singleton lock
-  ~/.steez/state/agent-watch.log           audit trail
 USAGE
   exit 0
 }
 
-STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}"
-WATCHES="$STATE_DIR/watches.jsonl"
-PIDFILE="$STATE_DIR/agent-watch-daemon.pid"
-DAEMON_BIN="$HOME/.steez/bin/agent-watch-daemon"
+AGENT_EVENTSD="$HOME/.steez/bin/agent-eventsd"
 AGENT_STATE="$HOME/.steez/bin/agent-state"
-LAUNCHCTL_BIN="$(command -v launchctl 2>/dev/null || true)"
-LAUNCHD_LABEL="dev.steez.agent-watch-daemon"
-LAUNCHD_DOMAIN="gui/$(id -u)"
-LAUNCHD_SERVICE="$LAUNCHD_DOMAIN/$LAUNCHD_LABEL"
-LAUNCHD_DIR="$HOME/Library/LaunchAgents"
-LAUNCHD_PLIST="$LAUNCHD_DIR/$LAUNCHD_LABEL.plist"
-LAUNCHD_STDOUT="$STATE_DIR/agent-watch-daemon.launchd.out.log"
-LAUNCHD_STDERR="$STATE_DIR/agent-watch-daemon.launchd.err.log"
-DAEMON_PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-STARTUP_WAIT_ATTEMPTS=20
-STARTUP_WAIT_INTERVAL=0.1
-OS_NAME="$(uname -s)"
-
-mkdir -p "$STATE_DIR"
-touch "$WATCHES"
 
 resolve_pane_id() {
   local raw="$1"
@@ -72,163 +50,11 @@ resolve_pane_id() {
   fi
 }
 
-current_running_pid() {
-  if [[ ! -f "$PIDFILE" ]]; then
-    return 1
-  fi
-  local pid
-  pid=$(cat "$PIDFILE" 2>/dev/null || true)
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    printf '%s' "$pid"
-    return 0
-  fi
-  return 1
-}
-
-launchd_available() {
-  [[ "$OS_NAME" == "Darwin" ]] && [[ -n "$LAUNCHCTL_BIN" ]]
-}
-
-service_is_loaded() {
-  launchd_available || return 1
-  "$LAUNCHCTL_BIN" print "$LAUNCHD_SERVICE" >/dev/null 2>&1
-}
-
-write_launch_agent() {
-  mkdir -p "$LAUNCHD_DIR"
-  local tmp="$LAUNCHD_PLIST.tmp.$$"
-  cat > "$tmp" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>$LAUNCHD_LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$DAEMON_BIN</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>HOME</key>
-    <string>$HOME</string>
-    <key>PATH</key>
-    <string>$DAEMON_PATH</string>
-  </dict>
-  <key>WorkingDirectory</key>
-  <string>$STATE_DIR</string>
-  <key>ProcessType</key>
-  <string>Background</string>
-  <key>StandardOutPath</key>
-  <string>$LAUNCHD_STDOUT</string>
-  <key>StandardErrorPath</key>
-  <string>$LAUNCHD_STDERR</string>
-</dict>
-</plist>
-PLIST
-
-  if cmp -s "$tmp" "$LAUNCHD_PLIST" 2>/dev/null; then
-    rm -f "$tmp"
-    return 1
-  fi
-
-  mv -f "$tmp" "$LAUNCHD_PLIST"
-  return 0
-}
-
-wait_for_pid() {
-  local pid="$1"
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-
-  local _ attempt file_pid
-  for ((attempt = 1; attempt <= STARTUP_WAIT_ATTEMPTS; attempt++)); do
-    if kill -0 "$pid" 2>/dev/null; then
-      file_pid=$(cat "$PIDFILE" 2>/dev/null || true)
-      if [[ "$file_pid" == "$pid" ]]; then
-        return 0
-      fi
-    fi
-    sleep "$STARTUP_WAIT_INTERVAL"
-  done
-
-  return 1
-}
-
-start_via_launchd() {
-  local plist_changed=false
-  if write_launch_agent; then
-    plist_changed=true
-  fi
-
-  if [[ "$plist_changed" == "true" ]]; then
-    "$LAUNCHCTL_BIN" bootout "$LAUNCHD_SERVICE" >/dev/null 2>&1 || true
-  fi
-
-  if ! service_is_loaded; then
-    "$LAUNCHCTL_BIN" bootstrap "$LAUNCHD_DOMAIN" "$LAUNCHD_PLIST" >/dev/null 2>&1 || {
-      echo "error: could not bootstrap $LAUNCHD_LABEL" >&2
-      return 1
-    }
-  fi
-
-  "$LAUNCHCTL_BIN" enable "$LAUNCHD_SERVICE" >/dev/null 2>&1 || true
-
-  local pid
-  pid=$("$LAUNCHCTL_BIN" kickstart -p "$LAUNCHD_SERVICE" 2>/dev/null || true)
-  if [[ -z "$pid" ]]; then
-    echo "error: could not start $LAUNCHD_LABEL" >&2
-    return 1
-  fi
-
-  if wait_for_pid "$pid"; then
-    return 0
-  fi
-
-  echo "error: $LAUNCHD_LABEL did not become ready" >&2
-  return 1
-}
-
-start_via_nohup() {
-  nohup "$DAEMON_BIN" </dev/null >/dev/null 2>&1 &
-  local pid=$!
-
-  if wait_for_pid "$pid"; then
-    return 0
-  fi
-
-  echo "error: agent-watch-daemon did not become ready" >&2
-  return 1
-}
-
-ensure_daemon() {
-  if current_running_pid >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if launchd_available; then
-    start_via_launchd && return 0
-  fi
-
-  start_via_nohup
-}
-
-remove_watch_entry() {
-  local entry="$1"
-  local tmp="$WATCHES.tmp.$$"
-
-  if awk -v line="$entry" '$0 != line' "$WATCHES" > "$tmp"; then
-    mv -f "$tmp" "$WATCHES"
-  else
-    rm -f "$tmp"
-  fi
-}
-
 infer_label() {
-  local pane="$1"
-  local state_json agent
+  local pane="$1" state_json agent
   state_json=$("$AGENT_STATE" "$pane" 2>/dev/null || true)
   if [[ -n "$state_json" ]]; then
-    agent=$(printf '%s' "$state_json" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('agent',''))" 2>/dev/null || true)
+    agent=$(printf '%s' "$state_json" | jq -r '.agent // empty' 2>/dev/null || true)
     if [[ -n "$agent" ]]; then
       printf '%s' "$agent"
       return 0
@@ -266,28 +92,22 @@ cmd_add() {
     label=$(infer_label "$pane")
   fi
 
-  # Remove any existing watch for this pane (idempotent add)
-  local tmp="$WATCHES.tmp.$$"
-  if jq -c --arg p "$pane" 'select(.pane != $p)' "$WATCHES" > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$WATCHES"
-  else
-    rm -f "$tmp"
-  fi
-
-  local entry
-  entry=$(jq -cn \
-    --arg pane "$pane" \
-    --arg spawner "$spawner" \
-    --arg baseline "$baseline" \
-    --arg label "$label" \
-    --argjson added_at "$(date +%s)" \
-    '{pane: $pane, spawner_pane: $spawner, baseline_state: $baseline, label: $label, added_at: $added_at}')
-  printf '%s\n' "$entry" >> "$WATCHES"
-
-  if ! ensure_daemon; then
-    remove_watch_entry "$entry"
+  # Spec (Watch lifecycle — armed): manual add uses the same two-step
+  # turn as agent-send, but watch.start follows turn.prearm immediately
+  # (no prompt bytes in between). Both calls run synchronously so the
+  # caller's exit code reflects wire-up success — unlike agent-send,
+  # manual add has no separate delivery contract to protect.
+  local wid
+  wid=$("$AGENT_EVENTSD" prearm \
+    --pane "$pane" --spawner "$spawner" \
+    --label "$label" --baseline-state "$baseline") || {
+    echo "error: prearm failed" >&2
     exit 1
-  fi
+  }
+  "$AGENT_EVENTSD" start --pane "$pane" --watch-id "$wid" >/dev/null || {
+    echo "error: watch.start failed (watch will time out as pending)" >&2
+    exit 1
+  }
 
   echo "watching $pane <- $spawner ($label, baseline=$baseline)"
 }
@@ -297,40 +117,43 @@ cmd_remove() {
   local pane_raw="$1"
   local pane
   pane=$(resolve_pane_id "$pane_raw")
-
-  [[ -f "$WATCHES" ]] || return 0
-
-  local tmp="$WATCHES.tmp.$$"
-  if jq -c --arg p "$pane" 'select(.pane != $p)' "$WATCHES" > "$tmp" 2>/dev/null; then
-    mv -f "$tmp" "$WATCHES"
-    echo "removed watch on $pane"
-  else
-    rm -f "$tmp"
-    echo "error: failed to rewrite watchlist" >&2
-    exit 1
-  fi
+  "$AGENT_EVENTSD" remove "$pane" >/dev/null 2>&1 || true
+  echo "removed watch on $pane"
 }
 
 cmd_list() {
-  if [[ ! -s "$WATCHES" ]]; then
+  local out
+  out=$("$AGENT_EVENTSD" list 2>/dev/null || true)
+  if [[ -z "$out" ]]; then
     echo "(no active watches)"
     return
   fi
-  jq -r '"\(.pane)  <- \(.spawner_pane)  [\(.label)]  baseline=\(.baseline_state)  added=\(.added_at)"' "$WATCHES"
+  # Live watches (pending/armed) are the interesting set for listing —
+  # draining watches (resolved/delivering/...) are transient and not
+  # something the user can act on.
+  local live
+  live=$(printf '%s' "$out" | jq -r '
+    select(.state == "pending" or .state == "armed")
+    | "\(.pane_id)  <- \(.spawner_pane)  [\(.label)]  baseline=\(.baseline_state)  state=\(.state)"
+  ')
+  if [[ -z "$live" ]]; then
+    echo "(no active watches)"
+  else
+    printf '%s\n' "$live"
+  fi
 }
 
 cmd_daemon_status() {
-  local pid
-  pid=$(current_running_pid 2>/dev/null || true)
-  if [[ -n "$pid" ]]; then
-    echo "running pid=$pid"
+  # Bead 8 acceptance: "daemon-status reports agent-eventsd health." The
+  # primary path is agent-eventsd; agent-watch-daemon is not involved.
+  local out rc=0
+  out=$("$AGENT_EVENTSD" status 2>/dev/null) || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    echo "agent-eventsd: $out"
     return 0
   fi
-  if service_is_loaded; then
-    echo "loaded stopped"
-    return 0
-  fi
-  echo "not running"
+  echo "agent-eventsd: unavailable"
+  return 1
 }
 
 main() {

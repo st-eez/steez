@@ -885,3 +885,156 @@ watch_list() {
     cat "$file"
   done
 }
+
+# ----- CLI surface (bead 8) -----
+#
+# Public entry points for the two-step turn (turn.prearm, watch.start)
+# and for manual watch management (remove, list, status). The guard at
+# the bottom ensures sourcing still yields a pure library — the
+# functions above stay side-effect-free when callers only need the API.
+#
+# Subcommands:
+#   prearm   — create pending watch, print watch_id
+#   start    — promote pending → armed
+#   remove   — close live watch on a pane
+#   list     — print all watch records (JSONL)
+#   status   — health probe (state dir present and writable)
+#   timeout-pending <wid> — close a pending watch by id (test hook)
+
+_eventsd_capture_screen_hash() {
+  local pane="$1"
+  if command -v tmux >/dev/null 2>&1; then
+    tmux capture-pane -p -t "$pane" 2>/dev/null | shasum 2>/dev/null \
+      | awk '{print $1}'
+  fi
+}
+
+_eventsd_capture_transcript_cursor() {
+  local pane="$1" path sz cmd
+  cmd="${AGENT_STATE_CMD:-agent-state}"
+  path=$("$cmd" "$pane" 2>/dev/null \
+    | jq -r '.detail.transcript_path // empty' 2>/dev/null) || path=""
+  if [[ -n "$path" && -f "$path" ]]; then
+    sz=$(wc -c < "$path" 2>/dev/null | tr -d ' ')
+    printf '%s' "${sz:-0}"
+  else
+    printf '0'
+  fi
+}
+
+_cmd_prearm() {
+  local pane="" spawner="" label="" baseline=""
+  local hash="" cursor="" prearm_seq=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pane) pane="$2"; shift 2 ;;
+      --spawner) spawner="$2"; shift 2 ;;
+      --label) label="$2"; shift 2 ;;
+      --baseline-state) baseline="$2"; shift 2 ;;
+      --prearm-screen-hash) hash="$2"; shift 2 ;;
+      --prearm-transcript-cursor) cursor="$2"; shift 2 ;;
+      --prearm-seq) prearm_seq="$2"; shift 2 ;;
+      *) echo "agent-eventsd prearm: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+  [[ -n "$pane" ]]     || { echo "agent-eventsd prearm: missing --pane" >&2; return 2; }
+  [[ -n "$spawner" ]]  || { echo "agent-eventsd prearm: missing --spawner" >&2; return 2; }
+  [[ -n "$label" ]]    || { echo "agent-eventsd prearm: missing --label" >&2; return 2; }
+  [[ -n "$baseline" ]] || { echo "agent-eventsd prearm: missing --baseline-state" >&2; return 2; }
+  [[ -n "$prearm_seq" ]] || prearm_seq=$(seq_next "$pane")
+  if [[ -z "$hash" ]]; then
+    hash=$(_eventsd_capture_screen_hash "$pane")
+    [[ -n "$hash" ]] || hash="none"
+  fi
+  [[ -n "$cursor" ]] || cursor=$(_eventsd_capture_transcript_cursor "$pane")
+  watch_create_pending \
+    --pane "$pane" --spawner "$spawner" --label "$label" \
+    --baseline-state "$baseline" \
+    --prearm-screen-hash "$hash" \
+    --prearm-transcript-cursor "$cursor" \
+    --prearm-seq "$prearm_seq"
+}
+
+_cmd_start() {
+  local pane="" wid="" start_seq=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pane) pane="$2"; shift 2 ;;
+      --watch-id) wid="$2"; shift 2 ;;
+      --start-seq) start_seq="$2"; shift 2 ;;
+      *) echo "agent-eventsd start: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+  [[ -n "$pane" ]] || { echo "agent-eventsd start: missing --pane" >&2; return 2; }
+  [[ -n "$wid" ]]  || { echo "agent-eventsd start: missing --watch-id" >&2; return 2; }
+  [[ -n "$start_seq" ]] || start_seq=$(seq_next "$pane")
+  watch_arm --pane "$pane" --watch-id "$wid" --start-seq "$start_seq"
+}
+
+_cmd_remove() {
+  [[ $# -ge 1 ]] || { echo "agent-eventsd remove: missing pane" >&2; return 2; }
+  watch_remove "$1"
+}
+
+_cmd_list() {
+  watch_list
+}
+
+# Primary-path health probe. Bead 8 ships eventsd as library + on-disk
+# state — no long-lived process. Health means the state dir is present
+# and writable so the next prearm/start can land records. Residual
+# polling (degraded fallback, timer ticks) is invoked in-process by
+# callers and does not require a daemon to report healthy here.
+_cmd_status() {
+  mkdir -p "$_EVENTSD_STATE_DIR" 2>/dev/null || true
+  if [[ -d "$_EVENTSD_STATE_DIR" && -w "$_EVENTSD_STATE_DIR" ]]; then
+    echo "ready"
+    return 0
+  fi
+  echo "unavailable" >&2
+  return 1
+}
+
+_cmd_timeout_pending() {
+  local wid="${1:-}"
+  [[ -n "$wid" ]] || { echo "agent-eventsd timeout-pending: missing watch_id" >&2; return 2; }
+  watch_pending_timeout "$wid"
+}
+
+_cmd_usage() {
+  cat <<'USAGE'
+Usage: agent-eventsd <command> [args]
+
+Commands:
+  prearm    --pane P --spawner S --label L --baseline-state STATE
+            [--prearm-seq N] [--prearm-screen-hash H] [--prearm-transcript-cursor N]
+            Create pending watch (turn.prearm). Prints watch_id.
+  start     --pane P --watch-id WID [--start-seq N]
+            Promote pending → armed (watch.start).
+  remove    <pane>      Close the live watch on <pane>.
+  list                  Print every watch record as JSONL.
+  status                Primary-path health probe.
+  timeout-pending <wid> Close a pending watch by id.
+USAGE
+}
+
+_eventsd_main() {
+  local cmd="${1:-}"
+  [[ -n "$cmd" ]] && shift
+  case "$cmd" in
+    prearm)          _cmd_prearm "$@" ;;
+    start)           _cmd_start "$@" ;;
+    remove)          _cmd_remove "$@" ;;
+    list)            _cmd_list "$@" ;;
+    status)          _cmd_status "$@" ;;
+    timeout-pending) _cmd_timeout_pending "$@" ;;
+    -h|--help|"")    _cmd_usage ;;
+    *) echo "agent-eventsd: unknown command: $cmd" >&2; return 2 ;;
+  esac
+}
+
+# Run CLI only on direct invocation; sourced callers keep the library
+# surface untouched so bead-1..7 tests continue to behave.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  _eventsd_main "$@"
+fi

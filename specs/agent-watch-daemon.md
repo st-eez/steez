@@ -2,6 +2,8 @@
 
 **Path:** `shared/steez/bin/agent-watch-daemon`
 
+**Status:** Retired from the primary path (bead 8). Historical design retained here for context; `agent-eventsd` is the watch engine (see `specs/agent-events.md` and `specs/agent-watch.md`). The binary still exists and can be invoked directly for legacy debugging, but nothing in the public CLI starts it.
+
 Background singleton daemon that polls watched agent panes and delivers one-shot notifications to spawner panes when agents finish or block.
 
 ## Interface
@@ -10,7 +12,7 @@ Background singleton daemon that polls watched agent panes and delivers one-shot
 agent-watch-daemon
 ```
 
-No arguments. Launched by `agent-watch add` (via launchd or nohup). Not intended for direct invocation.
+No arguments. Historically launched by `agent-watch add` (via launchd or nohup). After bead 8, `agent-watch` never spawns the daemon — any residual polling lives inside `agent-eventsd` as degraded fallback via `agent-state`.
 
 ## Architectural Rule: No agent-send
 

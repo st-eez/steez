@@ -66,54 +66,73 @@ done
 PANE="$1"
 MSG="$2"
 
-# Deliver via the low-level primitive. agent-send is the "interactive"
-# wrapper — after delivery it also registers a background watch on the
-# target pane so the spawner gets notified when the agent finishes.
-# Watch registration is a best-effort add-on; a failure here never fails
-# the delivery itself.
-#
-# The `|| DELIVER_RC=$?` idiom captures agent-deliver's exit code without
-# tripping `set -e`. A bare invocation followed by `DELIVER_RC=$?` would
-# never reach the assignment on failure — the script would exit on the
-# non-zero return before touching the next line, making the `if [[ $DELIVER_RC
-# -eq 0 ]]` guard below unreachable dead code. This form is explicit and
-# survives future edits that might add `|| true` or remove `set -e`.
-DELIVER_RC=0
-"$HOME/.steez/bin/agent-deliver" "$PANE" "$MSG" || DELIVER_RC=$?
+AGENT_EVENTSD="$HOME/.steez/bin/agent-eventsd"
+AGENT_DELIVER="$HOME/.steez/bin/agent-deliver"
+AGENT_STATE="$HOME/.steez/bin/agent-state"
 
-# Post-delivery watch registration. Runs in a fully detached subshell
-# so it does not block the caller — agent-send is still pure
-# fire-and-forget from the caller's perspective.
+# Spec (Watch lifecycle — armed): the two-step turn is
+#   1) turn.prearm with baseline_state=working
+#   2) deliver the prompt to the pane
+#   3) watch.start
+# This ordering closes the turn-birth race: fresh evidence observed by
+# the daemon after prearm but before start is buffered and re-evaluated
+# on start. If step 3 fails, the daemon does NOT auto-retry it — the
+# watch stays pending and times out (spec). Delivery is the primary
+# contract: watch-wire-up failures never fail the send.
 #
-# Baseline is hardcoded to "working" (same reasoning as spawn.sh auto-
-# registration): the semantic intent of every agent-send call is "notify
-# me when the agent finishes THIS message", regardless of what state the
-# target was in when the message landed. Observing the post-delivery
-# state was the original plan (per the bead description) but it races —
-# a fast agent can respond and return to idle before any reasonable
-# sleep finishes, leaving us with baseline=idle and a daemon that never
-# fires. Hardcoding baseline=working is race-free and always correct:
-#   - agent-already-working:     daemon fires on the transition out
-#   - agent-fast-responded:      current=idle differs from baseline,
-#                                daemon fires on first poll
-#   - agent-still-booting/idle:  same as above — correct notification
-#
-# Label is inferred by agent-watch itself via agent-state when --label is
-# omitted, so no extra state read is needed here either.
-if [[ $DELIVER_RC -eq 0 ]] && [[ "$WATCH" == "true" ]] && [[ -n "$SPAWNER_PANE" ]]; then
-  WATCH_ARGS=(add "$PANE" --spawner "$SPAWNER_PANE" --baseline "working")
-  [[ -n "$WATCH_LABEL" ]] && WATCH_ARGS+=(--label "$WATCH_LABEL")
+# Baseline is hardcoded to "working". The semantic intent of every
+# agent-send call is "notify me when the agent finishes THIS message",
+# regardless of what state the target was in when the message landed.
+# Observing post-delivery state races: a fast agent can respond and
+# return to idle before any reasonable sleep finishes. working is
+# race-free and always correct — the daemon fires on the transition out.
 
-  if [[ "$EMIT_WATCH_LINE" == "true" ]]; then
-    if "$HOME/.steez/bin/agent-watch" "${WATCH_ARGS[@]}" >/dev/null 2>&1; then
-      echo "WATCHED=$PANE SPAWNER=$SPAWNER_PANE BASELINE=working"
+infer_label() {
+  local pane="$1" state_json agent
+  state_json=$("$AGENT_STATE" "$pane" 2>/dev/null || true)
+  if [[ -n "$state_json" ]]; then
+    agent=$(printf '%s' "$state_json" | jq -r '.agent // empty' 2>/dev/null || true)
+    if [[ -n "$agent" ]]; then
+      printf '%s' "$agent"
+      return 0
     fi
-  else
-    (
-      "$HOME/.steez/bin/agent-watch" "${WATCH_ARGS[@]}" >/dev/null 2>&1 || true
-    ) </dev/null >/dev/null 2>&1 &
-    disown 2>/dev/null || true
   fi
+  printf 'agent'
+}
+
+WATCH_ID=""
+if [[ "$WATCH" == "true" ]] && [[ -n "$SPAWNER_PANE" ]]; then
+  LABEL="$WATCH_LABEL"
+  [[ -n "$LABEL" ]] || LABEL=$(infer_label "$PANE")
+  # turn.prearm — creates a pending watch with the prearm baseline. Any
+  # evidence that arrives before watch.start will be buffered and
+  # re-evaluated on arm.
+  WATCH_ID=$("$AGENT_EVENTSD" prearm \
+    --pane "$PANE" \
+    --spawner "$SPAWNER_PANE" \
+    --label "$LABEL" \
+    --baseline-state "working" 2>/dev/null || true)
 fi
 
-exit $DELIVER_RC
+# Step 2: deliver the prompt. Exit code propagates — delivery is the
+# primary contract.
+DELIVER_RC=0
+"$AGENT_DELIVER" "$PANE" "$MSG" || DELIVER_RC=$?
+
+# Step 3: watch.start. No auto-retry on failure — spec pins this
+# explicitly. A failed start leaves the watch pending; pending_timeout
+# closes it downstream.
+START_RC=0
+if [[ -n "$WATCH_ID" ]] && [[ "$DELIVER_RC" -eq 0 ]]; then
+  "$AGENT_EVENTSD" start --pane "$PANE" --watch-id "$WATCH_ID" \
+    >/dev/null 2>&1 || START_RC=$?
+fi
+
+if [[ "$EMIT_WATCH_LINE" == "true" ]] \
+   && [[ -n "$WATCH_ID" ]] \
+   && [[ "$DELIVER_RC" -eq 0 ]] \
+   && [[ "$START_RC" -eq 0 ]]; then
+  echo "WATCHED=$PANE SPAWNER=$SPAWNER_PANE BASELINE=working"
+fi
+
+exit "$DELIVER_RC"

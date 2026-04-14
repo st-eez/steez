@@ -228,6 +228,14 @@ setup_agent_mocks() {
   # Mock agent-send: passes through to agent-deliver mock
   create_mock_script "$HOME/.steez/bin/agent-send" \
     'exit 0'
+
+  # Mock agent-eventsd: minimal primary-path stand-in for tests that do
+  # not inspect real watch state. `prearm` prints a deterministic fake
+  # watch_id so agent-send's --emit-watch-line path and agent-watch add
+  # path succeed; every other subcommand exits 0. Tests that need real
+  # eventsd semantics install the real binary on top of this mock.
+  create_mock_script "$HOME/.steez/bin/agent-eventsd" \
+    'case "${1:-}" in prearm) echo "mock-watch-id" ;; *) : ;; esac; exit 0'
 }
 
 # Source agent-state functions without running main

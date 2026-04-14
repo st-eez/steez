@@ -2,7 +2,7 @@
 
 **Path:** `shared/steez/bin/agent-watch`
 
-Manages background watch registrations on AI agent panes. When a watch is registered, the daemon (agent-watch-daemon) polls the target pane and delivers a one-shot notification to the spawner pane when the agent finishes or blocks.
+Public CLI for the event-driven watch service (`agent-eventsd`). Registers, lists, and removes background watches on AI agent panes. Every subcommand routes to `agent-eventsd`; `agent-watch-daemon` is no longer part of the primary path.
 
 ## Interface
 
@@ -17,10 +17,10 @@ agent-watch daemon-status
 
 | Command | Description |
 |---------|-------------|
-| `add <pane>` | Register a watch on `<pane>`. Auto-starts the daemon if not running. |
-| `remove <pane>` | Remove the watch on `<pane>`. Also accepts `rm`. |
-| `list` | Print the current watchlist. Also accepts `ls`. |
-| `daemon-status` | Print whether the daemon is running, its PID, or launchd load state. |
+| `add <pane>` | Emit `turn.prearm` then `watch.start` immediately, leaving the pane with one armed watch. Also accepts the manual-add form of the two-step turn. |
+| `remove <pane>` | Close the live watch on `<pane>`. Also accepts `rm`. No-op when no watch exists. |
+| `list` | Print the current live watchlist. Also accepts `ls`. |
+| `daemon-status` | Report agent-eventsd health. |
 
 ### Options for `add`
 
@@ -35,7 +35,7 @@ agent-watch daemon-status
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Error (bad args, daemon start failure, missing `$TMUX_PANE`) |
+| 1 | Error (bad args, prearm/start failure, missing `$TMUX_PANE`) |
 
 ## Output Format
 
@@ -53,99 +53,65 @@ removed watch on %5
 
 ### `list`
 
-One line per active watch:
+One line per live (pending or armed) watch:
 
 ```
-%5  <- %0  [ren]  baseline=working  added=1712984400
+%5  <- %0  [ren]  baseline=working  state=armed
 ```
 
-Or `(no active watches)` if empty.
+Or `(no active watches)` if empty. Draining watches (resolved/delivering/delivery_failed) are not printed — they are transient and not user-actionable.
 
 ### `daemon-status`
 
-One of:
-- `running pid=12345`
-- `loaded stopped` (launchd service loaded but no process)
-- `not running`
+Prints `agent-eventsd: <status>` where `<status>` is `ready` when the state directory is present and writable, or `unavailable` when the daemon cannot accept events.
 
-## Watchlist Format
+## Manual-Add Ordering
 
-Each watch is a JSON object appended as a line to `watches.jsonl`:
+`add` uses the same two-step turn as `agent-send`, but `watch.start` follows `turn.prearm` immediately — no prompt bytes land in between. Both calls run synchronously so the caller's exit code reflects wire-up success. If `watch.start` fails, the watch stays pending and is closed by the pending-timeout path downstream.
 
-```json
-{
-  "pane": "%5",
-  "spawner_pane": "%0",
-  "baseline_state": "working",
-  "label": "ren",
-  "added_at": 1712984400
-}
-```
-
-## Daemon Startup
-
-`ensure_daemon` starts the daemon if not already running, with two strategies:
-
-1. **launchd (macOS):** Writes/updates `~/Library/LaunchAgents/dev.steez.agent-watch-daemon.plist`, bootstraps the service, and kickstarts it. The plist configures `ProcessType: Background`, stdout/stderr logs under `~/.steez/state/`, and a minimal `PATH`.
-2. **nohup fallback:** `nohup agent-watch-daemon </dev/null >/dev/null 2>&1 &`.
-
-Both strategies poll `$PIDFILE` up to 20 times at 0.1s intervals to confirm the daemon is ready.
-
-## Idempotent Add
-
-`add` removes any existing watch for the same pane before appending the new entry. This prevents duplicate watches from accumulating. The removal uses `jq` to filter by `.pane`.
+A second `add` on the same pane supersedes any live watch: the prior watch closes with `close_reason=superseded` without delivery (spec: Live and draining watches).
 
 ## Label Inference
 
-When `--label` is omitted, `infer_label` calls `agent-state <pane>` and extracts the `agent` field. Falls back to the string `"agent"` if detection fails.
+When `--label` is omitted, `infer_label` calls `agent-state <pane>` and extracts the `agent` field. Falls back to the string `agent` if detection fails.
 
 ## Pane Resolution
 
-All pane arguments are resolved to canonical pane IDs (`%N`) via `tmux display-message -t <raw> -p '#{pane_id}'`. This normalizes `session:window.pane` format to stable IDs.
+Pane arguments are resolved to canonical pane IDs (`%N`) via `tmux display-message -t <raw> -p '#{pane_id}'`. This normalizes `session:window.pane` format to stable IDs. Resolution failure degrades gracefully — the raw string is forwarded as-is.
 
-## State Files
+## State
 
-| Path | Purpose |
-|------|---------|
-| `~/.steez/state/watches.jsonl` | One JSON entry per active watch |
-| `~/.steez/state/agent-watch-daemon.pid` | Daemon singleton PID lock |
-| `~/.steez/state/agent-watch.log` | Audit trail (written by daemon) |
-| `~/Library/LaunchAgents/dev.steez.agent-watch-daemon.plist` | macOS launchd service definition |
-| `~/.steez/state/agent-watch-daemon.launchd.out.log` | Daemon stdout (launchd mode) |
-| `~/.steez/state/agent-watch-daemon.launchd.err.log` | Daemon stderr (launchd mode) |
+All watch state lives under `$STEEZ_STATE_DIR/eventsd/` and is owned by `agent-eventsd`. `agent-watch` itself persists nothing.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `STEEZ_STATE_DIR` | `~/.steez/state` | State directory for watches, PID file, and logs |
+| `STEEZ_STATE_DIR` | `~/.steez/state` | State directory (passed through to agent-eventsd). |
 
 ## Dependencies
 
 - `tmux` (pane resolution)
-- `jq` (watchlist read/write)
+- `jq` (list formatting)
 - `agent-state` (label inference)
-- `agent-watch-daemon` (started on first `add`)
-- `launchctl` (macOS daemon management, optional)
+- `agent-eventsd` (prearm, start, remove, list, status)
 
 ## Integration Points
 
-- **agent-send** calls `agent-watch add` after every successful delivery (unless `--no-watch`).
-- **spawn.sh** sends prompts via `agent-send`, which auto-registers watches.
-- **agent-watch-daemon** reads `watches.jsonl` and removes entries after firing.
+- **agent-send** calls `agent-eventsd` directly for the two-step turn. It does not shell out to `agent-watch`.
+- **spawn.sh** sends prompts via `agent-send`; manual `agent-watch add` remains available for ad-hoc watches.
+- **agent-eventsd** is the only component allowed to notify — it calls `agent-deliver`, never `agent-send`.
 
 ## Behavioral Contracts
 
-1. `add` is idempotent — re-adding the same pane replaces the existing watch entry.
-2. `add` auto-starts the daemon. If the daemon fails to start, the watch entry is rolled back (removed).
-3. `remove` is safe to call on non-existent watches (no error).
-4. `$TMUX_PANE` is required for `add` when `--spawner` is omitted. Exits with error if neither is available.
-5. Pane IDs are resolved to canonical `%N` format before storage.
-6. The watchlist file is created if absent (`touch`).
+1. `add` is idempotent via supersession — re-adding the same pane closes the prior watch and installs a new one.
+2. `add` requires either `$TMUX_PANE` or `--spawner`; errors out otherwise.
+3. `remove` is safe to call on non-existent watches (no error, exit 0).
+4. Pane IDs are resolved to canonical `%N` format before events are emitted.
+5. `agent-watch-daemon` is never spawned by any subcommand.
 
 ## Error Handling
 
-- Daemon start failure: the watch entry is removed and the script exits 1.
+- `prearm` or `start` failure in `add`: error to stderr, exit 1. No on-disk rollback needed — failed `start` leaves the pending watch to time out.
 - Missing `$TMUX_PANE` without `--spawner`: error to stderr, exit 1.
-- `remove` with failed watchlist rewrite: error to stderr, exit 1.
-- Pane resolution failure: raw pane string is stored as-is (graceful degradation).
+- Unknown subcommand or flag: error to stderr, exit 1.
