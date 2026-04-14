@@ -16,6 +16,7 @@ Do not guess which verifier is in play. Check the actual layer.
 - **Claude custom agents** live in `~/.claude/agents/*.md`
   - Claude verifier: `/Users/stevedimakos/.claude/agents/verifier.md`
   - Source of truth: `/Users/stevedimakos/Projects/Personal/ren/agents/verifier.md`
+- **Claude global skills** live in `~/.claude/skills`
 - **Codex global skills** live in `~/.codex/skills`
   - `~/.agents/skills` is legacy. Do not treat it as the Codex skill home.
 - **Repo-local skills** live in `/Users/stevedimakos/Projects/Personal/steez/skills`
