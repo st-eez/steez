@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head><title>Script - NetSuite (Test)</title></head>
+<body>
+<!--
+  Mock NetSuite script record page with a populated Execution Log sublist.
+  Mirrors the real DOM structure observed on production:
+    - div#scriptnote_layer as the container
+    - input#scriptnoteloaded as the load indicator
+    - table#scriptnote__tab with header row + data rows (tr#scriptnoterow{N})
+    - 9 columns: [#, View, Type, Title, Date, Time, User, Details, Remove]
+-->
+
+<form id="main_form">
+  <input type="hidden" name="id" value="999" />
+</form>
+
+<div id="scriptnote_layer">
+  <input id="scriptnoteloaded" type="hidden" value="T" />
+  <a id="executionlogtxt" href="#">Execution Log</a>
+
+  <table id="scriptnote__tab">
+    <tbody>
+      <tr class="uir-list-headerrow" id="scriptnoteheader">
+        <td><div class="listheader">#</div></td>
+        <td><div class="listheader">View</div></td>
+        <td><div class="listheader">Type</div></td>
+        <td><div class="listheader">Title</div></td>
+        <td><div class="listheader">Date</div></td>
+        <td><div class="listheader">Time</div></td>
+        <td><div class="listheader">User</div></td>
+        <td><div class="listheader">Details</div></td>
+        <td><div class="listheader">Remove</div></td>
+      </tr>
+      <tr id="scriptnoterow0">
+        <td>1</td>
+        <td>View</td>
+        <td>DEBUG</td>
+        <td>pageInit</td>
+        <td>4/13/2026</td>
+        <td>10:30:00 am</td>
+        <td>Test User</td>
+        <td>pageInit fired for custform_123</td>
+        <td>Remove</td>
+      </tr>
+      <tr id="scriptnoterow1">
+        <td>2</td>
+        <td>View</td>
+        <td>ERROR</td>
+        <td>fieldChanged</td>
+        <td>4/13/2026</td>
+        <td>10:29:55 am</td>
+        <td>Test User</td>
+        <td>Cannot read property x of null</td>
+        <td>Remove</td>
+      </tr>
+      <tr id="scriptnoterow2">
+        <td>3</td>
+        <td>View</td>
+        <td>AUDIT</td>
+        <td>init</td>
+        <td>4/13/2026</td>
+        <td>10:29:50 am</td>
+        <td>Test User</td>
+        <td>Script loaded successfully</td>
+        <td>Remove</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  // Minimum stubs so guardNsApi passes.
+  window.nlapiGetField = function() { return null; };
+  window.nlapiGetFieldValue = function() { return null; };
+  window.nlapiGetFieldText = function() { return null; };
+  window.nlapiGetFieldIds = function() { return []; };
+
+  // Stub the machine so the build call in the command is a no-op.
+  window.scriptnote_machine = { buildtable: function() { /* already populated */ } };
+</script>
+
+</body>
+</html>

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head><title>Script - NetSuite (Test)</title></head>
+<body>
+<!--
+  Mock NetSuite script record page with the Execution Log sublist rendered
+  but no data rows — the "no log entries" case.
+-->
+
+<form id="main_form">
+  <input type="hidden" name="id" value="888" />
+</form>
+
+<div id="scriptnote_layer">
+  <input id="scriptnoteloaded" type="hidden" value="T" />
+  <a id="executionlogtxt" href="#">Execution Log</a>
+
+  <table id="scriptnote__tab">
+    <tbody>
+      <tr class="uir-list-headerrow" id="scriptnoteheader">
+        <td><div class="listheader">#</div></td>
+        <td><div class="listheader">View</div></td>
+        <td><div class="listheader">Type</div></td>
+        <td><div class="listheader">Title</div></td>
+        <td><div class="listheader">Date</div></td>
+        <td><div class="listheader">Time</div></td>
+        <td><div class="listheader">User</div></td>
+        <td><div class="listheader">Details</div></td>
+        <td><div class="listheader">Remove</div></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  window.nlapiGetField = function() { return null; };
+  window.nlapiGetFieldValue = function() { return null; };
+  window.nlapiGetFieldText = function() { return null; };
+  window.nlapiGetFieldIds = function() { return []; };
+  window.scriptnote_machine = { buildtable: function() {} };
+</script>
+
+</body>
+</html>

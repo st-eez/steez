@@ -1,8 +1,13 @@
 /**
  * Unit tests for ns script-log command.
  *
- * Spins up a test server that serves both the NS form fixture and a mock
- * SuiteQL REST endpoint returning script execution log entries.
+ * Command pipeline (scraping strategy):
+ *   1. Lookup internal id via SuiteQL on the `script` table.
+ *   2. Navigate to /app/common/scripting/script.nl?id={internalId}.
+ *   3. Scrape rows from #scriptnote__tab in the DOM.
+ *
+ * The test server mocks both the SuiteQL endpoint and the script record page
+ * fixtures (populated / empty).
  */
 
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
@@ -11,17 +16,9 @@ import { nsScriptLog } from '../commands/ns-script-log';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// ─── Mock data ────────────────────────────────────────────
-
 const FIXTURES_DIR = path.resolve(import.meta.dir, 'fixtures');
 
-const MOCK_LOG_ENTRIES = [
-  { date: '2026-04-13 10:30:00', level: 'DEBUG', detail: 'pageInit fired for custform_123', title: 'pageInit' },
-  { date: '2026-04-13 10:29:55', level: 'ERROR', detail: 'fieldChanged: Cannot read property x of null', title: 'fieldChanged' },
-  { date: '2026-04-13 10:29:50', level: 'AUDIT', detail: 'Script loaded successfully', title: 'init' },
-];
-
-// ─── Test server with SuiteQL mock ────────────────────────
+// ─── Test server: SuiteQL mock + fixture routing ──────────────
 
 function startTestServer(port: number = 0) {
   const server = Bun.serve({
@@ -30,44 +27,52 @@ function startTestServer(port: number = 0) {
     async fetch(req) {
       const url = new URL(req.url);
 
+      // SuiteQL mock: scriptid → internal id lookup
       if (req.method === 'POST' && url.pathname === '/services/rest/query/v1/suiteql') {
         const body = await req.json() as { q?: string };
         const sql = body.q ?? '';
 
-        // Script with no logs
-        if (sql.includes("'custscript_empty'")) {
-          return new Response(JSON.stringify({ items: [], totalResults: 0, hasMore: false }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
+        const match = sql.match(/scriptid = '([^']+)'/);
+        const scriptid = match?.[1];
 
-        // SuiteQL error
-        if (sql.includes("'custscript_bad_table'")) {
+        if (scriptid === 'custscript_bad_table') {
           return new Response(
-            JSON.stringify({
-              'o:errorCode': 'INVALID_SEARCH',
-              'o:errorDetails': [{ detail: 'Invalid search: record not found' }],
-            }),
+            JSON.stringify({ 'o:errorDetails': [{ detail: 'Invalid search' }] }),
             { status: 400, headers: { 'Content-Type': 'application/json' } },
           );
         }
 
-        // Level filter: return only matching entries
-        const levelMatch = sql.match(/sel\.type = '(\w+)'/);
-        if (levelMatch) {
-          const filtered = MOCK_LOG_ENTRIES.filter(e => e.level === levelMatch[1]);
-          return new Response(JSON.stringify({ items: filtered, totalResults: filtered.length, hasMore: false }), {
+        const idMap: Record<string, string> = {
+          custscript_populated: '999',
+          custscript_empty: '888',
+        };
+        const internalId = scriptid ? idMap[scriptid] : undefined;
+
+        if (!internalId) {
+          return new Response(JSON.stringify({ items: [] }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           });
         }
-
-        // Default: return all mock entries
-        return new Response(JSON.stringify({ items: MOCK_LOG_ENTRIES, totalResults: 3, hasMore: false }), {
+        return new Response(JSON.stringify({ items: [{ id: internalId }] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      // Script record page routing
+      if (url.pathname === '/app/common/scripting/script.nl') {
+        const id = url.searchParams.get('id');
+        const fixtureMap: Record<string, string> = {
+          '999': 'ns-script-log-populated.html',
+          '888': 'ns-script-log-empty.html',
+        };
+        const fixture = id ? fixtureMap[id] : undefined;
+        if (!fixture) {
+          return new Response('Script not found', { status: 404 });
+        }
+        const content = fs.readFileSync(path.join(FIXTURES_DIR, fixture), 'utf-8');
+        return new Response(content, { headers: { 'Content-Type': 'text/html' } });
       }
 
       // Static fixture files
@@ -103,6 +108,12 @@ afterAll(() => {
   setTimeout(() => process.exit(0), 500);
 });
 
+// Helper: restore the initial page between tests that leave the browser on
+// a script record fixture.
+async function resetPage() {
+  await bm.getPage().goto(baseUrl + '/ns-form.html');
+}
+
 // ─── Argument validation ──────────────────────────────────
 
 describe('ns script-log — validation', () => {
@@ -112,62 +123,96 @@ describe('ns script-log — validation', () => {
     expect(output.display).toContain('Missing script ID');
   });
 
+  test('rejects invalid script ID format (SQL injection attempt)', async () => {
+    const output = await nsScriptLog(["custscript'; DROP TABLE--"], bm);
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('Invalid script ID');
+  });
+
   test('rejects invalid log level', async () => {
-    const output = await nsScriptLog(['custscript_test', '--level', 'WARN'], bm);
+    const output = await nsScriptLog(['custscript_populated', '--level', 'WARN'], bm);
     expect(output.ok).toBe(false);
     expect(output.display).toContain('Invalid log level');
   });
 });
 
-// ─── Successful execution ─────────────────────────────────
+// ─── Scraping behavior ────────────────────────────────────
 
-describe('ns script-log — execution', () => {
+describe('ns script-log — scraping', () => {
   test('fetches log entries as NDJSON', async () => {
-    const output = await nsScriptLog(['custscript_est_gp'], bm);
+    await resetPage();
+    const output = await nsScriptLog(['custscript_populated'], bm);
 
     expect(output.ok).toBe(true);
     expect(output.display).toContain('SCRIPT-LOG OK');
-    expect(output.display).toContain('custscript_est_gp');
+    expect(output.display).toContain('custscript_populated');
     expect(output.display).toContain('Entries: 3');
 
     const lines = output.display.split('\n');
     expect(lines.length).toBe(4); // header + 3 entries
+
     const first = JSON.parse(lines[1]);
     expect(first.level).toBe('DEBUG');
-    expect(first.detail).toContain('pageInit');
+    expect(first.title).toBe('pageInit');
+    expect(first.detail).toContain('pageInit fired');
+    expect(first.date).toContain('4/13/2026');
+    expect(first.date).toContain('10:30:00');
+    expect(first.user).toBe('Test User');
   });
 
-  test('filters by log level', async () => {
-    const output = await nsScriptLog(['custscript_est_gp', '--level', 'ERROR'], bm);
+  test('filters by log level client-side', async () => {
+    await resetPage();
+    const output = await nsScriptLog(['custscript_populated', '--level', 'ERROR'], bm);
 
     expect(output.ok).toBe(true);
-    expect(output.display).toContain('SCRIPT-LOG OK');
-
     const lines = output.display.split('\n');
     expect(lines.length).toBe(2); // header + 1 ERROR entry
     const entry = JSON.parse(lines[1]);
     expect(entry.level).toBe('ERROR');
   });
 
+  test('accepts case-insensitive level flag', async () => {
+    await resetPage();
+    const output = await nsScriptLog(['custscript_populated', '--level', 'error'], bm);
+
+    expect(output.ok).toBe(true);
+    const lines = output.display.split('\n');
+    expect(lines.length).toBe(2);
+    expect(JSON.parse(lines[1]).level).toBe('ERROR');
+  });
+
+  test('respects --limit', async () => {
+    await resetPage();
+    const output = await nsScriptLog(['custscript_populated', '--limit', '2'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('Entries: 2');
+    const lines = output.display.split('\n');
+    expect(lines.length).toBe(3); // header + 2 entries
+  });
+
   test('handles empty results', async () => {
+    await resetPage();
     const output = await nsScriptLog(['custscript_empty'], bm);
 
     expect(output.ok).toBe(true);
     expect(output.display).toContain('No log entries found');
   });
 
-  test('handles SuiteQL error', async () => {
+  test('handles unknown script ID', async () => {
+    await resetPage();
+    const output = await nsScriptLog(['custscript_nonexistent'], bm);
+
+    expect(output.ok).toBe(false);
+    expect(output.display).toContain('Script not found');
+  });
+
+  test('surfaces SuiteQL lookup errors', async () => {
+    await resetPage();
     const output = await nsScriptLog(['custscript_bad_table'], bm);
 
     expect(output.ok).toBe(false);
-    expect(output.display).toContain('SuiteQL error');
-  });
-
-  test('accepts case-insensitive level flag', async () => {
-    const output = await nsScriptLog(['custscript_est_gp', '--level', 'error'], bm);
-
-    expect(output.ok).toBe(true);
-    expect(output.display).toContain('SCRIPT-LOG OK');
+    expect(output.display).toContain('Failed to resolve script id');
   });
 });
 
@@ -178,7 +223,7 @@ describe('ns script-log — guardNsApi', () => {
     const page = bm.getPage();
     await page.goto('about:blank');
 
-    const output = await nsScriptLog(['custscript_test'], bm);
+    const output = await nsScriptLog(['custscript_populated'], bm);
 
     expect(output.ok).toBe(false);
     expect(output.display).toContain('NotARecordPage');
