@@ -852,6 +852,24 @@ watch_pane_close() {
     pending)
       _eventsd_close "$wid" "$pane" "pane_closed"
       ;;
+    armed)
+      # Spec: "an armed watch gets one final reconciliation from
+      # transcript data still newer than the prearm cursor ... if that
+      # final reconciliation does not prove a terminal state, the watch
+      # resolves to blocked:unknown." Delivery then drives normally —
+      # spec: "draining delivery continues against the spawner pane",
+      # and watch_deliver_attempt already targets spawner_pane.
+      local baseline rec_state resolved
+      baseline=$(printf '%s' "$live" | jq -r .baseline_state)
+      rec_state=$(_eventsd_reconcile "$pane") || rec_state=""
+      if [[ -n "$rec_state" && "$rec_state" != "working" && "$rec_state" != "$baseline" ]]; then
+        resolved="$rec_state"
+      else
+        resolved="blocked:unknown"
+      fi
+      watch_resolve "$wid" "$resolved" || return 1
+      watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+      ;;
   esac
 }
 
