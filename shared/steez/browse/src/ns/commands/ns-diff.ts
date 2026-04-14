@@ -121,8 +121,9 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
       const beforeFields = await introspectAllFields(target);
       // Ensure the action's target field is in the snapshot even when
       // broad discovery misses it (see fieldMeta comment above).
-      if (actionSpec && !beforeFields.some(f => f.id === actionSpec!.fieldId)) {
-        beforeFields.push(actionSpec.fieldMeta);
+      if (actionSpec) {
+        const { fieldId, fieldMeta } = actionSpec;
+        if (!beforeFields.some(f => f.id === fieldId)) beforeFields.push(fieldMeta);
       }
       const beforeMap = toSnapshotMap(beforeFields);
 
@@ -175,9 +176,12 @@ export async function nsDiff(args: string[], bm: BrowserManager): Promise<NsComm
       const afterFields = await introspectAllFields(target);
       // Mirror the before-snapshot augmentation so the diff can report
       // a change on fields that broad discovery misses.
-      if (actionSpec && !afterFields.some(f => f.id === actionSpec!.fieldId)) {
-        const afterMeta = await introspectField(target, actionSpec.fieldId);
-        if (afterMeta) afterFields.push(afterMeta);
+      if (actionSpec) {
+        const { fieldId } = actionSpec;
+        if (!afterFields.some(f => f.id === fieldId)) {
+          const afterMeta = await introspectField(target, fieldId);
+          if (afterMeta) afterFields.push(afterMeta);
+        }
       }
       const afterMap = toSnapshotMap(afterFields);
 
