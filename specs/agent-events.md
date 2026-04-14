@@ -284,6 +284,8 @@ This spec is normative. Tests should prove the rules above. They should not repl
 2. **Internal-function tests are kernel coverage, not runtime coverage.** Unit tests that exercise individual functions inside the daemon are useful for kernel correctness but do not prove the runtime works. A suite that passes entirely by calling internal helpers, with no end-to-end coverage against a live service, does not satisfy this spec.
 3. **Timers run in the service.** Tests that need to exercise `PREARM_TIMEOUT_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
 4. **Fake only the agent process.** End-to-end coverage runs against the zero-token fakes defined in `specs/fake-agent-harness.md`. The test seam is the `claude` / `codex` binary on `$PATH`; `spawn.sh`, `agent-send`, `agent-deliver`, `agent-eventsd`, `agent-watch`, `agent-history`, and `agent-state` stay real.
+5. **Assert through the public surface.** Primary-path tests must not prove behavior by reading files under `$STEEZ_STATE_DIR/eventsd/` directly. Use `agent-watch`, spawner-pane output, and other public runtime surfaces.
+6. **The primary path never spawns `agent-watch-daemon`.** End-to-end runtime coverage must prove that no primary-path scenario starts `agent-watch-daemon`.
 
 Keep the acceptance set short and derived from behavior:
 

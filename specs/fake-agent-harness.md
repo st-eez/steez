@@ -99,23 +99,24 @@ The real Codex `SessionStart` hook fires on first message, not launch (upstream 
 
 On launch, the fake **must**:
 
-1. Render a line beginning with `›` (U+203A) on the pane.
+1. Render `›` (U+203A) as the first visible character of the last non-empty line on the pane.
 2. Defer session-metadata setup until the first prompt arrives.
 
 On the first prompt, the fake **must**:
 
 1. Generate an opaque `session_id`.
 2. Create a writable JSONL transcript. Recommended path: `$HOME/.codex/sessions/fake/rollout-<session_id>.jsonl`.
-3. Set pane vars `@session_id` and `@transcript_path`.
-4. Keep the transcript file open for write for the life of the fake, so `lsof -p <pid>` finds it (preserves the `agent-state` fallback-discovery path).
+3. Set pane vars `@session_id` and `@transcript_path` before appending the first transcript entry, so `agent-state` resolves the transcript via pane vars without needing `lsof`.
+4. Keep the transcript file open for write only when a test explicitly exercises the `agent-state` fallback-discovery path (`lsof -p <pid>`). The default harness path relies on the pane vars, not `lsof`.
 
 ## Prompt reception
 
 Fakes must read prompt bytes from their controlling tty — the real `agent-deliver` recipe pastes into the tmux buffer and then sends Enter. Each fake **must**:
 
 1. Accept verbatim paste-buffer bytes. Backticks, `$vars`, quotes, and embedded newlines survive unmangled.
-2. Treat each Enter keypress as exactly one prompt boundary.
-3. On each prompt, append the prompt transcript entry (below) and transition visible state to `working` before yielding control to the control surface.
+2. Treat Enter as a prompt boundary only when the fake currently holds buffered prompt bytes. Enter on an empty composer is a no-op.
+3. On each prompt boundary, append the prompt transcript entry (below) and transition visible state to `working` synchronously before yielding control to the control surface.
+4. Codex fakes must remove the idle `›` prompt line synchronously on the same Enter keypress that starts `working`. This prevents `agent-deliver`'s composer-clear retry from creating a fake second prompt.
 
 ## Transcript schema
 
@@ -130,7 +131,7 @@ The fakes must emit the minimum JSONL shape `agent-state` and `agent-history` pa
 | Tool resolved | `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"<tid>","content":"ok"}]},"isMeta":false,"isSidechain":false}` |
 | Idle | `{"type":"assistant","message":{"id":"msg_<n>","content":[{"type":"text","text":"<reply>"}],"stop_reason":"end_turn"}}` |
 | `blocked:question` | Unresolved `tool_use` with `name:"AskUserQuestion"`, `input.questions=[{"question":"<text>"}]`. No matching `tool_result`. |
-| `blocked:permission` | Write sidecar `$HOME/.steez/agent-state/claude/<session_id>.json` containing `{"blocked_state":"blocked:permission","tool_name":"<Name>","tool_input":{...},"requested_at":<epoch_ms>}`. Also append an unresolved `tool_use` entry for `agent-history --blocked` coverage. |
+| `blocked:permission` | Append and flush the unresolved `tool_use` entry first for `agent-history --blocked` coverage. Then write sidecar `$HOME/.steez/agent-state/claude/<session_id>.json` containing `{"blocked_state":"blocked:permission","tool_name":"<Name>","tool_input":{...},"requested_at":<epoch_ms>}` where `requested_at` is captured after the transcript flush completes. |
 
 ### Codex / Ren-Codex
 
@@ -145,9 +146,8 @@ The fakes must emit the minimum JSONL shape `agent-state` and `agent-history` pa
 
 ## Screen rendering
 
-`agent-state` Layer 3 (screen scraping) overrides transcript-reported `working` if visible pane content matches specific patterns. The fakes must keep the default visible surface clean:
+`agent-state` Layer 3 (screen scraping) overrides transcript-reported `working` if visible pane content matches specific patterns. The fakes must keep the default visible surface clean and must not render any screen content that `specs/agent-state.md` treats as terminal while the fake's canonical state is not terminal.
 
-- Idle / working default content **must not** contain: `"Tab to amend"`, `"Do you want to proceed?"`, `"Do you want to overwrite"`, `"Enter to select"` together with `"Chat about this"`, `"Esc to cancel"`, or `"esc to cancel"`.
 - Codex fakes render `›` as the last non-empty line when idle. Remove / replace it while working.
 - Pane title, if set, must not begin with a Braille char (U+2800–U+28FF) while the fake is idle — that would be a false Layer 4 spinner hit.
 
@@ -155,13 +155,18 @@ Rendering `blocked:unknown` via the screen-scrape path only (transcript still sa
 
 ## Control surface
 
-Each fake must expose a named fifo for test-driven state transitions, path taken from env:
+Each fake must expose a named fifo for test-driven state transitions.
 
 ```
-FAKE_AGENT_CTL=<path to named fifo>
+Default path: $STEEZ_STATE_DIR/fakes/ctl/$TMUX_PANE
+Override:     FAKE_AGENT_CTL=<path to named fifo>
 ```
 
-If `FAKE_AGENT_CTL` is unset, the fake runs an auto-reply default: on each prompt, append the prompt entry, render `working` briefly, append the idle-terminating entry, return to idle.
+If `FAKE_AGENT_CTL` is set, it overrides the default path. If it is unset, the fake derives its fifo path from `$TMUX_PANE`. Tests do not need a per-pane env var injection path.
+
+The test harness creates the fifo parent directory and any pane-specific fifo before launching the fake when the test intends to drive that pane manually.
+
+If no fifo exists at the chosen path at fake startup, the fake runs an auto-reply default: on each prompt, append the prompt entry, render `working` briefly, append the idle-terminating entry, return to idle. Auto-reply is a convenience path, not the normative runtime-test path.
 
 Commands, one per line (LF terminated):
 
@@ -176,9 +181,9 @@ Commands, one per line (LF terminated):
 | `sleep <ms>` | Delay before reading the next command. |
 | `exit` | Flush transcript, close the transcript fd, exit 0. |
 
-Commands are processed one at a time. The fake flushes the transcript before each next fifo read so tests can assert on-disk state between commands without races.
+Commands are processed one at a time. The fake blocks waiting for fifo input, stays alive across writer reconnects, and treats EOF as "no command yet," not as a scenario change or exit. The fake flushes transcript writes to a state visible to other local processes before each next fifo read so tests can assert on-disk state between commands without races.
 
-`FAKE_AGENT_SCENARIO=<name>` selects a canned script (`idle`, `blocked_question`, `blocked_permission`, `blocked_unknown`, `slow`) when `FAKE_AGENT_CTL` is unset. Ignored when the fifo is set.
+`FAKE_AGENT_SCENARIO=<name>` is an implementation-defined convenience for local debugging. The normative seam for runtime tests is the fifo.
 
 ## Environment
 
@@ -187,8 +192,9 @@ Commands are processed one at a time. The fake flushes the transcript before eac
 | `PATH` | yes | Must lead with the test `bin/` so fakes shadow real binaries. |
 | `HOME` | yes | Isolates `~/.claude`, `~/.codex`, `~/.steez` under a tmp dir. |
 | `STEEZ_STATE_DIR` | yes | Isolates `agent-eventsd` watch state under a tmp dir. |
+| `TMUX_PANE` | inherited from tmux | Pane id used for default per-pane fifo discovery. Tests do not set this manually. Outside tmux, the fake must be driven via `FAKE_AGENT_CTL`. |
 | `FAKE_AGENT_CTL` | optional | Path to this pane's control fifo. |
-| `FAKE_AGENT_SCENARIO` | optional | Canned scenario name. Ignored when `FAKE_AGENT_CTL` is set. |
+| `FAKE_AGENT_SCENARIO` | optional | Convenience-only canned scenario name. Not used by normative runtime tests. |
 | `REN_SESSION` | required for ren variants | Set by the ren / ren-codex wrappers. |
 
 ## Required scenarios
@@ -203,7 +209,6 @@ These scenarios must be reproducible end-to-end through the real runtime. They a
 6. **supersede** — second prompt arrives before the first resolves; the prior live watch closes with `superseded`; the new prearm arms cleanly. Cross-ref: agent-events — Live and draining watches.
 7. **slow / degraded** — no fast evidence for `SILENCE_WINDOW_MS`; `agent-eventsd` falls back to `agent-state` polling; scenario either resolves via degraded reconcile or times out to `blocked:unknown` per `INDETERMINATE_TIMEOUT_MS`.
 8. **pane close** — fake exits cleanly while a watch is live; the watch closes per agent-events — Pane close and restart.
-9. **no primary-path spawn of agent-watch-daemon** — across every scenario, no process named `agent-watch-daemon` is started. `agent-eventsd` is the only watcher.
 
 ## Acceptance
 
@@ -212,5 +217,15 @@ A fake-agent implementation is acceptable when, across the required scenarios:
 1. `agent-state <pane>` returns the correct agent name and expected state.
 2. `agent-history <pane> --last | --blocked | --history N` returns the expected fields.
 3. `spawn.sh` completes boot wait against the fake inside `BOOT_TIMEOUT` with no adjustment.
-4. `agent-send <pane> <msg>` followed by a control-fifo transition causes exactly one delivery against the spawner pane, tagged with the same `watch_id` recorded in `$STEEZ_STATE_DIR/eventsd/`.
-5. None of the forbidden actions in "Seam" are needed to hit those assertions.
+4. In the **idle** scenario, `agent-send <pane> <msg>` followed by a fifo transition causes exactly one delivery against the spawner pane, and the watch self-clears. Tests assert this through the public surface (`agent-watch list`, spawner-pane output, or both), not by reading files under `$STEEZ_STATE_DIR/eventsd/`.
+5. In the **no-watch** scenario, `agent-send --no-watch` delivers bytes to the fake, creates no watch visible via `agent-watch list`, and produces no delivery against the spawner pane.
+6. In the **blocked:unknown** scenario, `agent-state <pane>` reports `blocked:unknown` while the transcript still reflects `working`, and the watch resolves to `blocked:unknown`.
+7. In the **supersede** scenario, the prior live watch closes with `superseded`, and the spawner receives exactly one delivery tied to the second live watch.
+8. In the **slow / degraded** scenario, the runtime reaches degraded reconcile through `agent-state` and ends in either a terminal state or `blocked:unknown` by timeout.
+9. In the **pane close** scenario, exiting the fake while a watch is live causes the watch to close per the pane-close rules, and `agent-watch list` no longer shows it as live.
+10. None of the forbidden actions in "Seam" are needed to hit those assertions.
+
+## Non-goals
+
+- Non-darwin hosts. The current `agent-state` contract relies on macOS-specific `ps -E` behavior.
+- Running outside a tmux server owned by the test process.
