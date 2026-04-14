@@ -9,6 +9,7 @@ evals/
 # Local context / config
 .context/
 .steez/
+.claude/
 
 # Beads / Dolt files (added by bd init)
 .dolt/
