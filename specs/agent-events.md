@@ -7,6 +7,7 @@
 **Public Surface:** `shared/steez/bin/agent-watch` (unchanged CLI)
 
 Event-driven watch service for tmux-managed AI agent panes. Fast observers drive the healthy path. `agent-state` remains the bounded fallback when fast observers are missing, silent, or recovering.
+It replaces `agent-watch-daemon` as the primary watch engine. Any polling that remains lives inside `agent-eventsd` as degraded fallback via `agent-state`.
 
 ## Normative scope
 
