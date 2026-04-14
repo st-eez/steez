@@ -230,4 +230,26 @@ describe('ns set — OneWorld subsidiary redirect', () => {
     expect(output.display).not.toContain('Reloaded');
     expect(output.display).not.toContain('form reloaded');
   });
+
+  test('redirect to session-expired page returns typed SessionExpired error', async () => {
+    // Arm the fixture: entity set redirects to a page that has lost the NS client API
+    // (simulates a dead session cookie causing the server-side redirect to land on
+    // a login/timeout page instead of a reloaded form).
+    const page = bm.getPage();
+    await page.evaluate(() => { (window as any).__redirectToSessionExpired = true; });
+
+    const output = await nsSet(['entity', '99'], bm);
+
+    // Must NOT report success with null diffs.
+    expect(output.ok).toBe(false);
+    expect(output.display).not.toContain('SET OK');
+    expect(output.display).not.toContain('Reloaded: yes');
+
+    // Must surface a typed SessionExpired error so the agent knows to re-auth.
+    expect(output.display).toContain('ns set failed');
+    expect(output.display).toContain('SessionExpired');
+
+    // Redirect did land on the session-expired fixture.
+    expect(page.url()).toContain('/ns-form-oneworld-session-expired.html');
+  }, 20_000);
 });

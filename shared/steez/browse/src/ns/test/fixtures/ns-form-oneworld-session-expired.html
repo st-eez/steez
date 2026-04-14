@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head><title>NetSuite — Session Expired</title></head>
+<body>
+<!--
+  Mock NetSuite session-expired page — post-redirect state when the OneWorld
+  subsidiary reload lands on a dead session. NS typically shows a login page
+  or a timeout notice; either way the NS client API is gone.
+
+  Deliberately has NO nlapiGetField / nlapiSetFieldValue — recoverFromRedirect
+  must detect the missing API and surface a typed SessionExpired error rather
+  than reporting "SET OK | Reloaded: yes" with null diffs.
+-->
+
+<div class="notice">
+  <h1>Your session has expired</h1>
+  <p>Please log in again to continue.</p>
+</div>
+
+<!-- No nlapi* functions defined. NS client API is NOT available on this page. -->
+</body>
+</html>

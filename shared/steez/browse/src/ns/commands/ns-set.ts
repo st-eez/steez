@@ -20,9 +20,9 @@
 import type { BrowserManager } from '../../core/browser-manager';
 import type { NsCommandOutput } from '../format';
 import { formatNsError, truncateValue } from '../format';
-import type { NsResult } from '../errors';
+import type { NsResult, NsError } from '../errors';
 import type { CapturedDialog } from '../utils/with-dialog-handler';
-import { guardNsApi, validationError, isNavigationDestroyedError } from '../errors';
+import { guardNsApi, validationError, isNavigationDestroyedError, detectSessionExpiry, sessionExpired } from '../errors';
 import { introspectField, introspectAllFields } from '../utils/introspect-field';
 import { createPageGetter, waitForFieldConvergence } from '../convergence';
 import { withDialogHandler } from '../utils/with-dialog-handler';
@@ -221,7 +221,13 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
         // preempt any alert UX.
         reloaded = true;
         dialogs = [];
-        await recoverFromRedirect(bm.getPage());
+        const recoveryErr = await recoverFromRedirect(bm);
+        if (recoveryErr) {
+          // Redirect landed on a login/session-expired page or any page without
+          // the NS client API — must surface a typed error instead of
+          // reporting 'SET OK | Reloaded: yes' with null diffs.
+          return { ok: false as const, error: recoveryErr };
+        }
         target = bm.getActiveFrameOrPage();
         setResult = { settled: true };
       }
@@ -355,17 +361,47 @@ function subsidiaryChanged(
 
 /**
  * Wait for the page to finish loading after an NS server-side redirect,
- * then wait for the NS client API to be available again. `load` fires after
+ * then verify the NS client API actually came back. `load` fires after
  * `domcontentloaded` and after subresources, so it covers both.
  *
- * Total ceiling: ~10s. Each step soft-fails because the NS-API waitForFunction
- * is the real readiness signal — the earlier waits just amortize load time.
+ * Returns null on a healthy post-redirect form, or a typed NsError when the
+ * redirect landed on a login/session-expired page (no nlapi*). Without this
+ * check, dead-session redirects silently reported 'SET OK | Reloaded: yes'
+ * with null diffs after a ~30s wait.
+ *
+ * Total ceiling for the waits: ~10s. Soft-failing the waits is fine because
+ * the explicit NS-API readiness check below is the real verdict.
  */
-async function recoverFromRedirect(page: import('playwright').Page): Promise<void> {
+async function recoverFromRedirect(bm: BrowserManager): Promise<NsError | null> {
+  const page = bm.getPage();
   await page.waitForLoadState('load', { timeout: 6_000 }).catch(() => {});
   await waitForSettle(page, { timeoutMs: 3_000, stableMs: 500 });
-  await page.waitForFunction(
-    () => typeof (window as any).nlapiGetField === 'function',
-    { timeout: 6_000 },
-  ).catch(() => {});
+
+  // Poll for NS API readiness. page.waitForFunction has been observed to hang
+  // past its own timeout on freshly-navigated pages, so we poll manually.
+  const nsApiDeadline = Date.now() + 6_000;
+  while (Date.now() < nsApiDeadline) {
+    const ready = await page
+      .evaluate(() => typeof (window as any).nlapiGetField === 'function')
+      .catch(() => false);
+    if (ready) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // URL + body-text pattern match for the known session-expired shapes
+  // (login redirect, "session has expired" notice, etc).
+  const sessionErr = await detectSessionExpiry(page);
+  if (sessionErr) return sessionErr;
+
+  // Definitive NS-API readiness check on the active target (NS can load its
+  // API inside a nested iframe). If it's missing after the wait ceiling,
+  // the redirect did not land on a usable form — treat as session-expired
+  // since that's the overwhelmingly common cause of a post-redirect API loss.
+  const target = bm.getActiveFrameOrPage();
+  const guardErr = await guardNsApi(target);
+  if (guardErr) {
+    return sessionExpired('Post-redirect page is missing the NetSuite client API (likely session expired)');
+  }
+
+  return null;
 }

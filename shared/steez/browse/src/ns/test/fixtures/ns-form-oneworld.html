@@ -64,7 +64,10 @@ window.nlapiGetFieldIds = function() {
 
 // Default: no redirect. Tests set window.__redirectOnEntitySet = true
 // to simulate a OneWorld subsidiary mismatch reload on entity set.
+// Setting window.__redirectToSessionExpired = true simulates the same
+// server-side redirect landing on a dead-session page (no NS API).
 window.__redirectOnEntitySet = false;
+window.__redirectToSessionExpired = false;
 
 window.nlapiSetFieldValue = function(fieldId, value, fireSlavingWhenever, fireFieldChanged) {
   if (!FIELDS[fieldId]) return;
@@ -73,8 +76,12 @@ window.nlapiSetFieldValue = function(fieldId, value, fireSlavingWhenever, fireFi
 
   // Simulate OneWorld redirect: setting entity with subsidiary mismatch
   // triggers a synchronous page load that destroys the execution context.
-  if (fieldId === 'entity' && fireSlavingWhenever && window.__redirectOnEntitySet) {
-    window.location.href = '/ns-form-oneworld-reloaded.html';
+  if (fieldId === 'entity' && fireSlavingWhenever) {
+    if (window.__redirectToSessionExpired) {
+      window.location.href = '/ns-form-oneworld-session-expired.html';
+    } else if (window.__redirectOnEntitySet) {
+      window.location.href = '/ns-form-oneworld-reloaded.html';
+    }
   }
 };
 </script>
