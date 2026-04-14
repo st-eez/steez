@@ -664,6 +664,22 @@ watch_feed_evidence() {
   watch_resolve "$wid" "$state"
 }
 
+# _eventsd_reconcile <pane>
+# One reconciliation pass via agent-state (spec: Degraded fallback —
+# "Deadman reconciliation uses the same canonical states and the same
+# terminal rule as fast evidence"). Prints the reported canonical state,
+# or nothing on failure. Command is configurable so tests can inject a
+# deterministic mock without touching PATH.
+_eventsd_reconcile() {
+  local pane="$1"
+  local cmd="${AGENT_STATE_CMD:-agent-state}"
+  local out state
+  out=$("$cmd" "$pane" 2>/dev/null) || return 1
+  state=$(printf '%s' "$out" | jq -r '.state // empty' 2>/dev/null)
+  [[ -n "$state" ]] || return 1
+  printf '%s' "$state"
+}
+
 # daemon_recover_restart — drive the restart-recovery transitions from
 # the persisted store (spec: Pane close and restart). The daemon is
 # file-backed, so records survive a crash as-is; recovery has to apply
@@ -692,6 +708,21 @@ daemon_recover_restart() {
         local pane
         pane=$(jq -r .pane_id "$file")
         _eventsd_close "$wid" "$pane" "pending_timeout"
+        ;;
+      armed)
+        # Spec: "armed gets one reconciliation pass before fresh
+        # fast-path evidence is allowed to resolve it." Reconcile via
+        # agent-state once. If it proves a terminal state != baseline,
+        # resolve and deliver. Otherwise leave the watch armed — the
+        # pass has been made, so later fast-path evidence is unblocked.
+        local pane rec_state baseline
+        pane=$(jq -r .pane_id "$file")
+        baseline=$(jq -r .baseline_state "$file")
+        rec_state=$(_eventsd_reconcile "$pane") || rec_state=""
+        if [[ -n "$rec_state" && "$rec_state" != "working" && "$rec_state" != "$baseline" ]]; then
+          watch_resolve "$wid" "$rec_state" || true
+          watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+        fi
         ;;
       delivering)
         # Spec: "delivering becomes delivery_failed and retries with
