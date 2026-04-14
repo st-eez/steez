@@ -2,7 +2,9 @@
 
 **Path:** `shared/steez/bin/agent-watch`
 
-Public CLI for the event-driven watch service (`agent-eventsd`). Registers, lists, and removes background watches on AI agent panes. Every subcommand routes to `agent-eventsd`; `agent-watch-daemon` is no longer part of the primary path.
+Public CLI for the event-driven watch service (`agent-eventsd`). Registers, lists, and removes background watches on AI agent panes. Every subcommand routes to the running `agent-eventsd` service (spec: agent-events — Runtime shape); `agent-watch-daemon` is no longer part of the primary path.
+
+The first `agent-watch` invocation that finds no running `agent-eventsd` service triggers auto-start through the client command it issues. `agent-watch` itself never runs watch logic in-process and never mutates state under `$STEEZ_STATE_DIR/eventsd/` directly.
 
 ## Interface
 
@@ -63,7 +65,12 @@ Or `(no active watches)` if empty. Draining watches (resolved/delivering/deliver
 
 ### `daemon-status`
 
-Prints `agent-eventsd: <status>` where `<status>` is `ready` when the state directory is present and writable, or `unavailable` when the daemon cannot accept events.
+Prints `agent-eventsd: <status>` where `<status>` reflects liveness and health of the `agent-eventsd` service (spec: agent-events — Daemon status):
+
+- `ready` — the service process is running, accepting client requests, and its state directory is writable.
+- `unavailable` — any of those conditions fails, including when no service is running.
+
+"State directory exists and is writable" alone is not `ready`. The probe must prove the service itself is alive.
 
 ## Manual-Add Ordering
 

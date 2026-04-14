@@ -30,6 +30,23 @@ This spec does **not** define rollout gates, shadow-mode metrics, socket framing
 3. Full polling on healthy panes.
 4. Exhaustive transport and security detail in v1.
 
+## Runtime shape
+
+`agent-eventsd` is a long-lived per-user service process. It replaces `agent-watch-daemon` as the primary watch engine. It is **not** a bash library, **not** a one-shot CLI that exits after each request, and **not** a set of functions that callers source and drive in-process.
+
+Exactly one `agent-eventsd` service instance runs per user at a time. That service owns all in-memory watch state, all timer-driven transitions (pending timeout, silence window, degraded reconciliation, indeterminate timeout, delivery retry), and all writes under `$STEEZ_STATE_DIR/eventsd/`. Clients never mutate that state directly.
+
+The `agent-eventsd` executable has two roles:
+
+1. **Service mode.** Runs the long-lived daemon in the foreground (`agent-eventsd serve`, or the equivalent default when launched by the auto-start path). One per user.
+2. **Client mode.** Subcommands `prearm`, `start`, `remove`, `list`, and `status` are thin clients. Each client invocation connects to the running service, submits a request, receives a response, and exits. Client invocations never execute lifecycle logic in-process and never run timers.
+
+The first client invocation that finds no running service **must** start one and then issue its request against that service (auto-start). Subsequent invocations reuse it. Clients never fall back to running watch logic locally when the service is missing — they surface an error or trigger auto-start, they do not simulate the daemon.
+
+`agent-send`, `agent-watch`, and every other caller reach `agent-eventsd` only through these client commands. No caller sources the daemon file as a bash library on the primary path. No caller calls internal helpers (`watch_tick`, `watch_pending_timeout`, `watch_arm`, `watch_create_pending`, `_eventsd_*`) to drive behavior.
+
+A shape where `prearm` / `start` / `remove` / `list` / `status` each run standalone against on-disk state, with no long-lived process, does not satisfy this spec. Timer-driven transitions have no owner in that shape.
+
 ## Public interface
 
 The public CLI stays:
@@ -41,11 +58,11 @@ agent-watch list
 agent-watch daemon-status
 ```
 
-`agent-send` still creates watches automatically after it delivers a prompt, but the watch now follows the two-step turn model in this spec.
+Every subcommand routes to the running `agent-eventsd` service (see Runtime shape). `agent-send` still creates watches automatically after it delivers a prompt, but the watch now follows the two-step turn model in this spec.
 
 ## Event surface
 
-The daemon is a local per-user service. The wire format is not normative here. The v1 behavioral contract depends on these event semantics:
+Events are exchanged between clients and the running service (see Runtime shape). The wire format is not normative here. The v1 behavioral contract depends on these event semantics:
 
 - `turn.prearm` creates a pending watch and captures the baseline.
 - `watch.start` promotes a pending watch to armed.
@@ -243,9 +260,29 @@ These defaults are part of v1:
 - `INDETERMINATE_TIMEOUT_MS = 120000`
 - `MAX_DELIVERY_ATTEMPTS = 5`
 
+## Daemon status
+
+`agent-eventsd status` (and its public equivalent `agent-watch daemon-status`) reports liveness and health of the running service.
+
+A `ready` result requires all of:
+
+1. The service process is running.
+2. It is accepting client requests on its transport.
+3. Its state directory is writable.
+
+"State directory exists and is writable" alone is not a `ready` result. A status probe that returns `ready` without proving the service is actually running and responsive is a spec violation.
+
+`unavailable` is the result when any of the three conditions fails, including when no service is running.
+
 ## TDD relationship
 
 This spec is normative. Tests should prove the rules above. They should not replace them.
+
+### Testing rules
+
+1. **Primary-path tests go through the service.** Tests that exercise watch lifecycle on the primary path must drive behavior through the client commands (`prearm`, `start`, `remove`, `list`, `status`) against a running `agent-eventsd` service. They must not call `watch_tick`, `watch_pending_timeout`, `watch_arm`, `watch_create_pending`, or any `_eventsd_*` helper directly. Those are internal to the daemon; driving them from tests bypasses the runtime under test.
+2. **Internal-function tests are kernel coverage, not runtime coverage.** Unit tests that exercise individual functions inside the daemon are useful for kernel correctness but do not prove the runtime works. A suite that passes entirely by calling internal helpers, with no end-to-end coverage against a live service, does not satisfy this spec.
+3. **Timers run in the service.** Tests that need to exercise `PREARM_TIMEOUT_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
 
 Keep the acceptance set short and derived from behavior:
 
@@ -255,3 +292,4 @@ Keep the acceptance set short and derived from behavior:
 4. One `watch_id` produces one logical notification across duplicate evidence, retries, and restart recovery.
 5. Degraded watches reconcile through `agent-state` and end in either a terminal state or `blocked:unknown` by timeout.
 6. Restart recovery preserves the same `watch_id` and bounded delivery attempts.
+7. `agent-eventsd status` returns `ready` only when the service process is running and responsive; killing the service flips the result to `unavailable`.

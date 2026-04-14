@@ -2,7 +2,7 @@
 
 **Path:** `shared/steez/bin/agent-send`
 
-High-level message delivery to AI agent panes. Wraps `agent-deliver` and drives the two-step turn (`turn.prearm` → deliver → `watch.start`) through `agent-eventsd` so the spawner gets notified when the agent finishes.
+High-level message delivery to AI agent panes. Wraps `agent-deliver` and drives the two-step turn (`turn.prearm` → deliver → `watch.start`) through the long-lived `agent-eventsd` service (spec: agent-events — Runtime shape) so the spawner gets notified when the agent finishes. `agent-send` issues client commands to that service; it does not run watch logic in-process.
 
 ## Interface
 
