@@ -229,8 +229,30 @@ tmux send-keys -t "$NEW_TARGET" "$LAUNCH_CMD"
 sleep 0.3
 tmux send-keys -t "$NEW_TARGET" Enter
 
-# --- Wait for agent boot, then deliver the initial prompt ---
-sleep 5
+# --- Wait for agent boot ---
+# Hybrid readiness detection:
+#   Claude/Ren: poll @session_id (SessionStart hook fires on launch)
+#   Codex/Ren-Codex: poll screen for › prompt (SessionStart is bugged —
+#     fires on first message, not launch. openai/codex#15269)
+BOOT_TIMEOUT=30  # 30 × 0.5s = 15s
+for (( i=0; i<BOOT_TIMEOUT; i++ )); do
+  case "$MODEL" in
+    claude|ren)
+      SID=$(tmux show-options -pv -t "$NEW_TARGET" @session_id 2>/dev/null) || true
+      [ -n "$SID" ] && break
+      ;;
+    codex|ren-codex)
+      if tmux capture-pane -t "$NEW_TARGET" -p | grep -q '›'; then
+        break
+      fi
+      ;;
+  esac
+  sleep 0.5
+done
+
+if (( i == BOOT_TIMEOUT )); then
+  echo "WARN: agent not ready after 15s"
+fi
 
 if [ -n "$PROMPT_TEXT" ]; then
   PROMPT_SUMMARY=$(printf '%s' "$PROMPT_TEXT" | tr -d '\n\r' | cut -c1-40)
