@@ -1468,4 +1468,5 @@ test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spaw
   assert_eq "%0" "$last_target" || return 1
 }
 run_test "pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner" test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner
+
 report

@@ -686,6 +686,13 @@ daemon_recover_restart() {
     wid=$(jq -r .watch_id "$file")
     state=$(jq -r .state "$file")
     case "$state" in
+      pending)
+        # Spec: "pending closes as pending_timeout." The watch never
+        # received watch.start, so there is nothing to reconcile.
+        local pane
+        pane=$(jq -r .pane_id "$file")
+        _eventsd_close "$wid" "$pane" "pending_timeout"
+        ;;
       delivering)
         # Spec: "delivering becomes delivery_failed and retries with
         # the same watch_id." Overwrite state in place so
