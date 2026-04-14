@@ -89,4 +89,76 @@ test_special_chars_message() {
 }
 run_test "special characters in message accepted" test_special_chars_message
 
+suite "agent-deliver canonical pane resolution"
+
+mock_pane_alias "mac:0.1" "%5"
+
+test_uses_canonical_pane_downstream() {
+  # The alias lives in MOCK_AGENT_PANES too, otherwise the initial
+  # agent-state guard would reject the raw argument before resolution runs.
+  export MOCK_AGENT_PANES="%5 mac:0.1"
+  export MOCK_TMUX_LOG="$TEST_TMP/tmux-canonical.log"
+  : > "$MOCK_TMUX_LOG"
+
+  "$BIN_DIR/agent-deliver" mac:0.1 "hello" >/dev/null 2>&1 \
+    || { echo "deliver failed"; exit 1; }
+
+  local paste_line
+  paste_line=$(grep '^paste-buffer ' "$MOCK_TMUX_LOG") \
+    || { echo "paste-buffer never called"; cat "$MOCK_TMUX_LOG"; exit 1; }
+  assert_contains "$paste_line" "-t %5"
+  assert_not_contains "$paste_line" "mac:0.1"
+
+  local enter_line
+  enter_line=$(grep '^send-keys ' "$MOCK_TMUX_LOG" | head -1) \
+    || { echo "send-keys never called"; cat "$MOCK_TMUX_LOG"; exit 1; }
+  assert_contains "$enter_line" "-t %5 Enter"
+  assert_not_contains "$enter_line" "mac:0.1"
+
+  unset MOCK_TMUX_LOG
+  export MOCK_AGENT_PANES="%5"
+}
+run_test "resolves raw pane to canonical %N before paste-buffer and send-keys" \
+  test_uses_canonical_pane_downstream
+
+suite "agent-deliver retry-Enter"
+
+test_retries_enter_when_agent_still_idle() {
+  export MOCK_AGENT_PANES="%5"
+  export MOCK_TMUX_LOG="$TEST_TMP/tmux-retry-idle.log"
+  : > "$MOCK_TMUX_LOG"
+
+  "$BIN_DIR/agent-deliver" %5 "hello" >/dev/null 2>&1 \
+    || { echo "deliver failed"; exit 1; }
+
+  # Expect two Enters: the mandatory delayed Enter + the idle-detected retry.
+  local enter_count
+  enter_count=$(grep -c '^send-keys -t %5 Enter$' "$MOCK_TMUX_LOG" || true)
+  assert_eq "2" "$enter_count"
+
+  unset MOCK_TMUX_LOG
+}
+run_test "sends second Enter when post-delivery state is idle" \
+  test_retries_enter_when_agent_still_idle
+
+test_no_retry_when_agent_already_working() {
+  setup_agent_mocks claude working
+
+  export MOCK_AGENT_PANES="%5"
+  export MOCK_TMUX_LOG="$TEST_TMP/tmux-retry-working.log"
+  : > "$MOCK_TMUX_LOG"
+
+  "$BIN_DIR/agent-deliver" %5 "hello" >/dev/null 2>&1 \
+    || { echo "deliver failed"; exit 1; }
+
+  local enter_count
+  enter_count=$(grep -c '^send-keys -t %5 Enter$' "$MOCK_TMUX_LOG" || true)
+  assert_eq "1" "$enter_count"
+
+  setup_agent_mocks
+  unset MOCK_TMUX_LOG
+}
+run_test "skips retry Enter when post-delivery state is working" \
+  test_no_retry_when_agent_already_working
+
 report

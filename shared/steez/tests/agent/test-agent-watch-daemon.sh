@@ -122,4 +122,80 @@ test_daemon_logs_start_stop() {
 }
 run_test "logs start and stop" test_daemon_logs_start_stop
 
+suite "daemon empty-cycle threshold"
+
+test_daemon_honours_configured_empty_cycle_count() {
+  # Override sleep to count cycles. The main loop sleeps once per empty
+  # cycle *before* the exit check triggers. With EMPTY_CYCLES_EXIT=5 the
+  # loop sleeps on cycles 1..4 and exits on cycle 5 — so we expect
+  # exactly 4 sleep invocations. A mutant that hard-codes a lower
+  # threshold (e.g., `>= 1`) would sleep 0 times.
+  rm -f "$STEEZ_STATE_DIR/agent-watch-daemon.pid"
+  > "$STEEZ_STATE_DIR/watches.jsonl"
+
+  printf '#!/usr/bin/env bash\nprintf "tick\\n" >> "'"$TEST_TMP"'/sleep-tick"\nexit 0\n' \
+    > "$MOCK_BIN/sleep"
+  chmod +x "$MOCK_BIN/sleep"
+  : > "$TEST_TMP/sleep-tick"
+
+  AGENT_WATCH_POLL=1 AGENT_WATCH_EMPTY_CYCLES=5 \
+    "$BIN_DIR/agent-watch-daemon" 2>/dev/null || true
+
+  local count
+  count=$(wc -l < "$TEST_TMP/sleep-tick" | tr -d ' ')
+  assert_eq "4" "$count"
+
+  # Restore the no-op sleep for anything that runs after.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/sleep"
+  chmod +x "$MOCK_BIN/sleep"
+}
+run_test "sleeps EMPTY_CYCLES_EXIT-1 times before exiting on empty watchlist" \
+  test_daemon_honours_configured_empty_cycle_count
+
+suite "daemon notification transport"
+
+# The daemon MUST notify via agent-deliver, never agent-send. agent-send
+# auto-registers a watch on every delivery, so calling it from the daemon
+# would create an infinite notification loop.
+
+test_daemon_notifies_via_agent_deliver_not_agent_send() {
+  rm -f "$STEEZ_STATE_DIR/agent-watch-daemon.pid"
+
+  create_mock_tmux
+  mock_pane "%5" "2001" "claude" "/tmp"
+  mock_pane "%0" "2000" "" "/tmp"
+
+  export MOCK_AGENT_PANES="%5 %0"
+  setup_agent_mocks claude idle
+
+  local deliver_log="$TEST_TMP/deliver-calls.log"
+  local send_log="$TEST_TMP/send-calls.log"
+  rm -f "$deliver_log" "$send_log"
+  record_mock_script "$HOME/.steez/bin/agent-deliver" "$deliver_log"
+  record_mock_script "$HOME/.steez/bin/agent-send" "$send_log"
+
+  # Seed a watch whose baseline=working against observed=idle will fire on
+  # the first cycle. jq builds the JSONL so `%N` pane ids don't collide
+  # with printf's format interpreter.
+  jq -cn '{pane:"%5", spawner_pane:"%0", baseline_state:"working", label:"claude", added_at:1}' \
+    > "$STEEZ_STATE_DIR/watches.jsonl"
+
+  AGENT_WATCH_POLL=1 AGENT_WATCH_EMPTY_CYCLES=1 \
+    "$BIN_DIR/agent-watch-daemon" 2>/dev/null || true
+
+  [[ -f "$deliver_log" ]] \
+    || { echo "agent-deliver was never invoked"; exit 1; }
+  local deliver
+  deliver=$(cat "$deliver_log")
+  assert_contains "$deliver" "%0"
+
+  [[ ! -f "$send_log" ]] || {
+    echo "agent-send was called — recursive-loop bug"
+    echo "argv: $(cat "$send_log")"
+    exit 1
+  }
+}
+run_test "fires via agent-deliver and never calls agent-send" \
+  test_daemon_notifies_via_agent_deliver_not_agent_send
+
 report

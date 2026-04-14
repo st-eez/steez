@@ -254,4 +254,59 @@ test_add_with_unknown_arg_errors() {
 }
 run_test "add with unknown arg errors" test_add_with_unknown_arg_errors
 
+suite "agent-watch default baseline"
+
+# Pre-cutover this read baseline_state off a jsonl watchlist. Under the
+# agent-eventsd cutover the watch record lives in eventsd/watches/<wid>.json
+# — retargeted to read from there. Mutant killed: agent-watch defaults
+# --baseline to something other than "working" (or drops it entirely,
+# letting the daemon pick a different default).
+test_default_baseline_is_working() {
+  _install_real_eventsd
+
+  "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 \
+    || { echo "add failed"; exit 1; }
+  local wid baseline
+  wid=$(cat "$(_live_file_for_pane "%5")")
+  baseline=$(jq -r '.baseline_state' "$STEEZ_STATE_DIR/eventsd/watches/$wid.json")
+  assert_eq "working" "$baseline"
+}
+run_test "add writes baseline_state=working when --baseline is omitted" \
+  test_default_baseline_is_working
+
+suite "agent-watch label inference"
+
+# Pre-cutover, infer_label lived in agent-watch-daemon. Bead 8 kept the
+# infer_label hook but moved the call site into agent-watch itself, so
+# the contract is the same from a caller's perspective: omit --label and
+# the agent-state agent type shows up on the record. Retargeted to read
+# `.label` off the eventsd watch record.
+test_inferred_label_matches_agent_type() {
+  # Reconfigure agent-state FIRST, then reinstall the real eventsd on top
+  # — setup_agent_mocks clobbers $HOME/.steez/bin/agent-eventsd back to
+  # the stand-in mock, which would skip the on-disk record we read below.
+  setup_agent_mocks ren idle
+  _install_real_eventsd
+
+  "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 \
+    || { echo "add failed"; exit 1; }
+  local wid label
+  wid=$(cat "$(_live_file_for_pane "%5")")
+  label=$(jq -r '.label' "$STEEZ_STATE_DIR/eventsd/watches/$wid.json")
+  assert_eq "ren" "$label"
+
+  setup_agent_mocks
+}
+run_test "omitted --label falls back to agent-state agent type" \
+  test_inferred_label_matches_agent_type
+
+# Pre-cutover test "rolls back watchlist entry when daemon fails to start"
+# is dropped, not retargeted. The rollback it verified guarded a failure
+# mode — ensure_daemon fails to spawn agent-watch-daemon — that no longer
+# exists in the primary path. agent-watch now routes every subcommand
+# through agent-eventsd (a long-running daemon launched out-of-band), so
+# agent-watch itself neither starts a daemon nor maintains a local
+# watchlist to roll back. The "daemon absent from primary path" test
+# upthread already pins that agent-watch-daemon is never spawned.
+
 report

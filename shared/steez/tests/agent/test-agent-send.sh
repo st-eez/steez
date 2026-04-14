@@ -297,4 +297,50 @@ WRAPPER
 }
 run_test "agent_send_emits_prearm_before_prompt_bytes_and_watch_start_after_and_start_failure_leaves_pending_until_timeout" test_agent_send_emits_prearm_before_prompt_bytes_and_watch_start_after_and_start_failure_leaves_pending_until_timeout
 
+# ----- watch forwarding survivors (retargeted for agent-eventsd cutover) -----
+#
+# The pre-cutover suite had three argv-level tests against agent-watch:
+#
+#   1. agent-send always forwards --baseline working
+#   2. agent-send forwards a custom --label when the caller passes one
+#   3. agent-send omits --label when the caller does not pass one
+#
+# Under agent-eventsd:
+#
+#   1. Covered above — the two-step turn test asserts `baseline_state=working`
+#      on the live watch record, which is a stronger check than argv grep
+#      (it proves the value survived the prearm call into persisted state).
+#
+#   2. NOT covered anywhere else — a mutant that drops --label, hard-codes
+#      a fallback, or swaps in the inferred label when a custom one is
+#      passed would survive. The test below kills those by driving the
+#      real agent-eventsd and reading `.label` off the watch record on disk.
+#
+#   3. Obsolete: label inference moved from agent-watch into agent-send
+#      (infer_label in shared/steez/bin/agent-send). agent-send now always
+#      passes --label to prearm. The original mutant it killed — a
+#      hardcoded fallback in agent-send that masked downstream inference —
+#      cannot exist in the new design. Dropped, not retargeted.
+
+suite "agent-send custom label"
+
+test_custom_label_reaches_watch_record() {
+  _two_step_install_eventsd
+
+  local pane="%79"
+  mock_pane "$pane" "2079" "claude" "/tmp"
+  export MOCK_AGENT_PANES="$MOCK_AGENT_PANES $pane"
+
+  "$BIN_DIR/agent-send" --label "my-task" "$pane" "hello" >/dev/null 2>&1 \
+    || { echo "    agent-send failed"; return 1; }
+
+  local wid label
+  wid=$(_two_step_live_wid "$pane")
+  [[ -n "$wid" ]] || { echo "    no live watch after send"; return 1; }
+  label=$(_two_step_watch_field "$wid" label)
+  assert_eq "my-task" "$label"
+}
+run_test "custom --label propagates through prearm to watch record" \
+  test_custom_label_reaches_watch_record
+
 report
