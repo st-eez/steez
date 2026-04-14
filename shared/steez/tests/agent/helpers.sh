@@ -55,13 +55,20 @@ suite() {
 }
 
 # --- Assertions ---
+#
+# Assertions exit the current subshell on failure. Tests run inside a `$()`
+# subshell (see run_test), so `exit 1` kills only the test body, not the
+# whole file. This is the only reliable way to make a failed assertion
+# unmaskable — bash's errexit is silently disabled when a function is called
+# via `if`, `||`, or command substitution that ends up in such a context, so
+# `return 1` can be swallowed by any trailing command that succeeds.
 
 assert_eq() {
   local expected="$1" actual="$2"
   [[ "$expected" == "$actual" ]] && return 0
   echo "    expected: $(printf '%q' "$expected")"
   echo "    actual:   $(printf '%q' "$actual")"
-  return 1
+  exit 1
 }
 
 assert_contains() {
@@ -69,7 +76,7 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] && return 0
   echo "    expected to contain: $needle"
   echo "    in: ${haystack:0:200}"
-  return 1
+  exit 1
 }
 
 assert_not_contains() {
@@ -77,7 +84,7 @@ assert_not_contains() {
   [[ "$haystack" != *"$needle"* ]] && return 0
   echo "    should NOT contain: $needle"
   echo "    in: ${haystack:0:200}"
-  return 1
+  exit 1
 }
 
 assert_json_field() {
@@ -92,15 +99,16 @@ assert_exit_code() {
   [[ "$expected" == "$actual" ]] && return 0
   echo "    expected exit: $expected"
   echo "    actual exit:   $actual"
-  return 1
+  exit 1
 }
 
 # --- Test runner ---
 
 run_test() {
   local name="$1" func="$2"
-  local output
-  if output=$("$func" 2>&1); then
+  local output rc=0
+  output=$("$func" 2>&1) || rc=$?
+  if [[ $rc -eq 0 ]]; then
     _PASS=$((_PASS + 1))
     printf '  %s✓%s %s\n' "$_GREEN" "$_RESET" "$name"
   else
