@@ -101,6 +101,15 @@ describe('ns set', () => {
     expect(output.display).toContain('Cascading: fired');
   });
 
+  test('--fire-field-changed is an alias for --source', async () => {
+    const output = await nsSet(['companyname', 'Forced via alias', '--fire-field-changed'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('Cascading: fired');
+    // Explicit flag → no hint even if suppression occurs elsewhere
+    expect(output.display).not.toContain('HINT:');
+  });
+
   test('--no-source flag suppresses cascading on entity-ref field', async () => {
     const output = await nsSet(['salesrep', '99', '--no-source'], bm);
 
@@ -108,6 +117,23 @@ describe('ns set', () => {
     expect(output.display).toContain('Cascading: suppressed');
     // With cascading suppressed, no Changed lines
     expect(output.display).not.toContain('Changed:');
+  });
+
+  test('explicit --no-source does not emit fieldChanged hint', async () => {
+    // --no-source is an explicit suppression choice — caller already knows.
+    const output = await nsSet(['companyname', 'NoSource', '--no-source'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('Cascading: suppressed');
+    expect(output.display).not.toContain('HINT:');
+  });
+
+  test('default set on non-entity field does not emit hint (cascading fires)', async () => {
+    const output = await nsSet(['companyname', 'Default'], bm);
+
+    expect(output.ok).toBe(true);
+    expect(output.display).toContain('Cascading: fired');
+    expect(output.display).not.toContain('HINT:');
   });
 
   test('set nonexistent field returns error', async () => {

@@ -2,10 +2,11 @@
  * ns set — Set a field value with auto-detect cascading behavior.
  *
  * Usage:
- *   ns set entity 42              → auto-detect: entity-ref → fire cascading
- *   ns set memo "Purchase for Q1" → auto-detect: text → suppress cascading
- *   ns set entity 42 --source     → force fire cascading regardless of field type
- *   ns set entity 42 --no-source  → force suppress cascading
+ *   ns set entity 42                    → auto-detect: entity-ref → fire cascading
+ *   ns set memo "Purchase for Q1"       → auto-detect: text → suppress cascading
+ *   ns set trandate 2026-04-14 --source → force fire cascading regardless of field type
+ *   ns set trandate 2026-04-14 --fire-field-changed → alias for --source
+ *   ns set entity 42 --no-source        → force suppress cascading
  *
  * Cascading strategy:
  *   nlapiSetFieldValue(id, val, firefieldchanged=true, synchronous=true)
@@ -43,6 +44,7 @@ interface NsSetData {
   elapsedMs: number;
   diff: { changed: FieldChange[] };
   dialogs: CapturedDialog[];
+  hint: string | null;
 }
 
 // ─── Arg Parsing ────────────────────────────────────────────
@@ -58,7 +60,7 @@ function parseSetArgs(args: string[]): {
 
   const positional: string[] = [];
   for (const arg of args) {
-    if (arg === '--source') {
+    if (arg === '--source' || arg === '--fire-field-changed') {
       forceSource = true;
     } else if (arg === '--no-source') {
       forceSource = false;
@@ -86,7 +88,7 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
       if (!fieldId || value === null) {
         return {
           ok: false as const,
-          error: validationError('Missing arguments. Usage: ns set <fieldId> <value> [--source|--no-source]'),
+          error: validationError('Missing arguments. Usage: ns set <fieldId> <value> [--source|--fire-field-changed|--no-source]'),
         };
       }
 
@@ -234,6 +236,14 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
 
       const elapsed = Date.now() - start;
 
+      // Hint: client scripts watching non-entity body fields (trandate, currency, ...)
+      // won't fire when cascading is suppressed. Surface the recovery flag inline
+      // so callers testing a handler don't have to dig for the workaround.
+      let hint: string | null = null;
+      if (cascadingLabel === 'suppressed' && !fieldMeta.isEntityRef && forceSource === null) {
+        hint = `HINT: fieldChanged not fired for '${fieldId}'. If testing a client script handler, retry with --fire-field-changed (or --source).`;
+      }
+
       return {
         ok: true as const,
         data: {
@@ -244,6 +254,7 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
           elapsedMs: elapsed,
           diff: { changed },
           dialogs,
+          hint,
         },
         dialogs,
       };
@@ -262,6 +273,9 @@ export async function nsSet(args: string[], bm: BrowserManager): Promise<NsComma
     for (const dl of d.dialogs) {
       lines.push(`Dialog (${dl.type}): ${truncateValue(dl.message)}`);
     }
+  }
+  if (d.hint) {
+    lines.push(d.hint);
   }
 
   return { display: lines.join('\n'), ok: true };
