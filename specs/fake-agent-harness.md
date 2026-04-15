@@ -183,6 +183,8 @@ Commands, one per line (LF terminated):
 
 Commands are processed one at a time. The fake blocks waiting for fifo input, stays alive across writer reconnects, and treats EOF as "no command yet," not as a scenario change or exit. The fake flushes transcript writes to a state visible to other local processes before each next fifo read so tests can assert on-disk state between commands without races.
 
+On terminal / blocked state transitions (`state idle`, `state blocked:question`, `state blocked:permission`, `state blocked:unknown`), the fake shells out `agent-eventsd evidence --pane $TMUX_PANE --state <state> --transcript-cursor <bytes>` fire-and-forget after flushing the transcript. This mirrors what production Claude / Codex hooks do on turn-end and lets the watch resolve through the fast path without waiting for the degraded-fallback silence window.
+
 `FAKE_AGENT_SCENARIO=<name>` is an implementation-defined convenience for local debugging. The normative seam for runtime tests is the fifo.
 
 ## Environment

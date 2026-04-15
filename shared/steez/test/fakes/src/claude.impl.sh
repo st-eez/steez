@@ -180,6 +180,26 @@ control_fifo_path() {
   printf '%s\n' "$STEEZ_STATE_DIR/fakes/ctl/$TMUX_PANE"
 }
 
+# fire_evidence — shell out `agent-eventsd evidence` so the resolver can
+# fire before the degraded-fallback silence window engages. Mirrors what
+# production Claude Stop / PermissionRequest hooks do on turn-end. Spec:
+# specs/fake-agent-harness.md (Control surface). Fire-and-forget: the
+# evidence CLI tolerates stale / missing watches and must not stall the
+# fake's control loop.
+fire_evidence() {
+  local state="$1"
+  [[ -n "${TMUX_PANE:-}" ]] || return 0
+  [[ -x "$HOME/.steez/bin/agent-eventsd" ]] || return 0
+  local cursor=0
+  if [[ -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
+    cursor=$(wc -c < "$TRANSCRIPT_PATH" 2>/dev/null | tr -d ' ')
+    cursor="${cursor:-0}"
+  fi
+  "$HOME/.steez/bin/agent-eventsd" evidence \
+    --pane "$TMUX_PANE" --state "$state" \
+    --transcript-cursor "$cursor" >/dev/null 2>&1 &
+}
+
 drive_turn_from_fifo() {
   local msg_id="$1" ctl="$2"
   local tool_counter=0 cmd question reply_text
@@ -203,17 +223,20 @@ drive_turn_from_fifo() {
         question="${cmd#state blocked:question }"
         tool_counter=$((tool_counter + 1))
         transcript_append "blocked-question" "$msg_id" "tool_$tool_counter" "$question"
+        fire_evidence "blocked:question"
         return 0
         ;;
       "state idle")
         transcript_append "idle" "$msg_id" "ok"
         render_idle_prompt
+        fire_evidence "idle"
         return 0
         ;;
       "state idle "*)
         reply_text="${cmd#state idle }"
         transcript_append "idle" "$msg_id" "$reply_text"
         render_idle_prompt
+        fire_evidence "idle"
         return 0
         ;;
       *)
