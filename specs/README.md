@@ -76,3 +76,4 @@ spawn-agent SKILL.md
 4. **State detection is layered.** Sidecar artifact > transcript parsing > screen scraping > title heuristic > prompt detection > default. Higher layers override lower ones.
 5. **Watches are one-shot.** Each watch fires at most once, then the entry is removed.
 6. **Baseline is hardcoded to `working`.** Observing post-delivery state races with fast agents.
+7. **Agent-events verification rules.** New event producers, real-time behaviors, test harnesses, and fallback paths must satisfy the four MUST rules in [agent-events — Verification requirements](./agent-events.md#verification-requirements) (producer presence, latency bounds, harness isolation, fallback companion tests).
