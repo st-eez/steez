@@ -486,8 +486,8 @@ Server:         status | cookie <n>=<v> | header <n>:<v>
                 useragent <str> | stop | restart
 Dialogs:        dialog-accept [text] | dialog-dismiss
 NetSuite:       ns navigate <type> [--id <id>] | ns inspect | ns status
-                ns set <field> <value> [--source] | ns add-row <sublist> <json>
-                ns save | ns query <sql> | ns cancel
+                ns set <field> <value> [--source|--no-source] | ns diff [set ...]
+                ns add-row <sublist> <json> | ns save | ns query <sql> | ns cancel
 Playwright:     tracing-start | tracing-stop [path]
                 route <pattern> [abort|fulfill:<status>|continue]
                 unroute <pattern> | route-list
