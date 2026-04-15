@@ -1,0 +1,10 @@
+#!/bin/bash
+# Fake `ren` — sets REN_SESSION=1 and execs the fake claude binary so the
+# resulting process shows up as `claude` in `ps -eo command` AND carries
+# REN_SESSION=1 in its env (visible to `ps -E -p <pid>`). agent-state's
+# detect_agent uses both signals: basename "claude" plus is_ren ⇒ "ren".
+# Spec: specs/fake-agent-harness.md (Process identity).
+set -u
+
+export REN_SESSION=1
+exec "$(dirname "$0")/claude" "$@"
