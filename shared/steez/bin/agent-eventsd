@@ -999,14 +999,14 @@ _cmd_list() {
   watch_list
 }
 
-# Primary-path health probe. Bead 8 ships eventsd as library + on-disk
-# state — no long-lived process. Health means the state dir is present
-# and writable so the next prearm/start can land records. Residual
-# polling (degraded fallback, timer ticks) is invoked in-process by
-# callers and does not require a daemon to report healthy here.
+# Primary-path health probe. Health means the long-lived service is
+# alive — not just a writable state dir. Without the service, armed
+# watches never tick and notifications never fire, so reporting "ready"
+# off state-dir writability alone would mask a silently dead runtime.
+# Auto-start lives in _cmd_prearm / _cmd_start; status deliberately does
+# not spawn so operators see real liveness.
 _cmd_status() {
-  mkdir -p "$_EVENTSD_STATE_DIR" 2>/dev/null || true
-  if [[ -d "$_EVENTSD_STATE_DIR" && -w "$_EVENTSD_STATE_DIR" ]]; then
+  if _eventsd_service_alive; then
     echo "ready"
     return 0
   fi

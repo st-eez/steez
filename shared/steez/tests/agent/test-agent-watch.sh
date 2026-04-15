@@ -10,7 +10,28 @@ set -euo pipefail
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
-trap cleanup_test_env EXIT
+# Reap any agent-eventsd service auto-started by `agent-watch add` before
+# cleanup_test_env scrubs the state dir — otherwise the service survives
+# as a hot-spinner (mocked `sleep` starves bash's trap handling) and
+# keeps polling a deleted tree.
+_cleanup_agent_watch() {
+  # Kill the tracked singleton plus any orphaned serves. Orphans arise
+  # because tests that `rm -rf "$STEEZ_STATE_DIR/eventsd"` to reset state
+  # delete the pidfile without killing the running service, and the next
+  # auto-start then spawns a fresh service on top. Matching on $HOME
+  # scopes the pkill to this test file's isolated tree — `setup_test_env`
+  # routes HOME to a unique mktemp dir, so no other user or test run is
+  # affected.
+  local pidf="$STEEZ_STATE_DIR/eventsd/eventsd.pid"
+  if [[ -f "$pidf" ]]; then
+    local pid
+    pid=$(cat "$pidf" 2>/dev/null || true)
+    [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
+  fi
+  pkill -KILL -f "$HOME/.steez/bin/agent-eventsd serve" 2>/dev/null || true
+  cleanup_test_env
+}
+trap _cleanup_agent_watch EXIT
 create_mock_tmux
 setup_agent_mocks
 
@@ -47,6 +68,58 @@ _live_file_for_pane() {
   local pane="$1" key
   key=$(printf '%s' "$pane" | tr -c 'a-zA-Z0-9' '_')
   printf '%s/eventsd/index/live/%s' "$STEEZ_STATE_DIR" "$key"
+}
+
+# Liveness of the long-lived agent-eventsd service. daemon-status now
+# reflects this PID file — not just state-dir writability — so tests that
+# want a clean "no service running" baseline must kill any leftover
+# service spawned by a prior test's auto-start.
+_eventsd_service_pidfile() {
+  printf '%s/eventsd/eventsd.pid' "$STEEZ_STATE_DIR"
+}
+
+_stop_real_eventsd_service() {
+  local pidf pid
+  pidf=$(_eventsd_service_pidfile)
+  [[ -f "$pidf" ]] || return 0
+  pid=$(cat "$pidf" 2>/dev/null || true)
+  if [[ -n "$pid" ]]; then
+    # SIGTERM is unreliable here: setup_test_env mocks `sleep` to exit 0,
+    # so the serve loop hot-spins and bash's trap never fires between
+    # iterations. Removing the pidfile while the process survives causes
+    # the next auto-start to spawn a duplicate on top — leaking one
+    # hot-spinner per test. SIGKILL reaps the child deterministically;
+    # we explicitly remove the pidfile afterward because SIGKILL skips
+    # the EXIT trap that would have cleaned it up.
+    kill -KILL "$pid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 40); do
+      kill -0 "$pid" 2>/dev/null || break
+      /bin/sleep 0.05
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "    eventsd service pid=$pid survived SIGKILL" >&2
+      return 1
+    fi
+  fi
+  rm -f "$pidf"
+}
+
+_start_real_eventsd_service() {
+  _stop_real_eventsd_service
+  # setup_test_env's mocked `sleep` turns the tick loop into a hot spin,
+  # but the service writes its pidfile synchronously before the first
+  # tick, so readers see it the moment the child exec completes.
+  "$BIN_DIR/agent-eventsd" serve </dev/null >/dev/null 2>&1 &
+  local pidf
+  pidf=$(_eventsd_service_pidfile)
+  local i
+  for i in $(seq 1 60); do
+    [[ -f "$pidf" ]] && return 0
+    /bin/sleep 0.05
+  done
+  echo "    eventsd service pidfile never appeared at $pidf" >&2
+  return 1
 }
 
 _watch_state() {
@@ -177,15 +250,20 @@ suite "agent-watch daemon-status routes to agent-eventsd"
 
 test_daemon_status_reports_agent_eventsd_health() {
   # Bead 8 acceptance: "daemon-status reports agent-eventsd health."
+  # Bead 401 extension: health means the long-lived service is alive —
+  # not just a writable state dir. Start a real serve process first.
   _install_real_eventsd
   _install_daemon_tripwire
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   local out rc=0
   out=$("$BIN_DIR/agent-watch" daemon-status 2>&1) || rc=$?
+  _stop_real_eventsd_service
   assert_exit_code "0" "$rc"
   # Output must call out agent-eventsd explicitly — the label proves the
   # cutover. "running pid=..." (the old daemon output) is forbidden.
   assert_contains "$out" "agent-eventsd" || return 1
+  assert_contains "$out" "ready" || return 1
   [[ "$out" != *"running pid="* ]] \
     || { echo "    still reporting old agent-watch-daemon pid: $out"; return 1; }
   # agent-watch-daemon must NOT be spawned by daemon-status.
@@ -193,6 +271,28 @@ test_daemon_status_reports_agent_eventsd_health() {
     || { echo "    daemon-status spawned agent-watch-daemon"; return 1; }
 }
 run_test "daemon_status_reports_agent_eventsd_health" test_daemon_status_reports_agent_eventsd_health
+
+test_daemon_status_is_unavailable_when_no_long_lived_service_running() {
+  # A writable state dir is not enough — without the long-lived service,
+  # armed watches never tick and notifications never fire. daemon-status
+  # must surface that as "unavailable" so operators aren't told the
+  # primary path is healthy when it is silently dead.
+  _install_real_eventsd
+  _install_daemon_tripwire
+  _stop_real_eventsd_service
+  [[ ! -f "$(_eventsd_service_pidfile)" ]] \
+    || { echo "    pidfile still present after stop"; return 1; }
+
+  local out rc=0
+  out=$("$BIN_DIR/agent-watch" daemon-status 2>&1) || rc=$?
+  assert_exit_code "1" "$rc"
+  assert_contains "$out" "agent-eventsd" || return 1
+  assert_contains "$out" "unavailable" || return 1
+  # No fallback to the retired daemon either.
+  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
+    || { echo "    daemon-status spawned agent-watch-daemon"; return 1; }
+}
+run_test "daemon_status_is_unavailable_when_no_long_lived_service_running" test_daemon_status_is_unavailable_when_no_long_lived_service_running
 
 suite "agent-watch-daemon absent from primary path"
 
