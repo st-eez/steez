@@ -2046,7 +2046,7 @@ describe('State persistence', () => {
 
     // Clean up
     try {
-      const { resolveConfig } = await import('../src/config');
+      const { resolveConfig } = await import('../config');
       const config = resolveConfig();
       fs.unlinkSync(`${config.stateDir}/browse-states/test-roundtrip.json`);
     } catch {}
@@ -2066,7 +2066,7 @@ describe('State persistence', () => {
     expect(result).toContain('State saved');
     // Clean up
     try {
-      const { resolveConfig } = await import('../src/config');
+      const { resolveConfig } = await import('../config');
       const config = resolveConfig();
       fs.unlinkSync(`${config.stateDir}/browse-states/my-state_1.json`);
     } catch {}

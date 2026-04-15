@@ -187,7 +187,7 @@ describe('handoff integration', () => {
       expect(hbm.getIsHeaded()).toBe(true);
 
       // Verify cookies survived
-      const { handleReadCommand } = await import('../src/read-commands');
+      const { handleReadCommand } = await import('../read-commands');
       const cookiesResult = await handleReadCommand('cookies', [], hbm);
       expect(cookiesResult).toContain('handoff_test');
 

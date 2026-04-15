@@ -195,7 +195,7 @@ beforeAll(async () => {
   };
 
   // Import the module (uses our mocked Bun.spawn)
-  const mod = await import('../src/cookie-import-browser');
+  const mod = await import('../cookie-import-browser');
   findInstalledBrowsers = mod.findInstalledBrowsers;
   listDomains = mod.listDomains;
   importCookies = mod.importCookies;

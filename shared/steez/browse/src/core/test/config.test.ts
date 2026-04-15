@@ -201,12 +201,12 @@ describe('resolveNodeServerScript', () => {
   const { resolveNodeServerScript } = require('../cli');
 
   test('finds server-node.mjs in dist from dev mode', () => {
-    const srcDir = path.resolve(__dirname, '../src');
-    const distFile = path.resolve(srcDir, '..', 'dist', 'server-node.mjs');
+    const coreDir = path.resolve(__dirname, '..');
+    const distFile = path.resolve(coreDir, '..', '..', 'dist', 'server-node.mjs');
     const fs = require('fs');
     // Only test if the file exists (it may not be built yet)
     if (fs.existsSync(distFile)) {
-      const result = resolveNodeServerScript(srcDir, '');
+      const result = resolveNodeServerScript(coreDir, '');
       expect(result).toBe(distFile);
     }
   });
@@ -217,7 +217,7 @@ describe('resolveNodeServerScript', () => {
   });
 
   test('finds server-node.mjs adjacent to compiled binary', () => {
-    const distDir = path.resolve(__dirname, '../dist');
+    const distDir = path.resolve(__dirname, '..', '..', '..', 'dist');
     const distFile = path.join(distDir, 'server-node.mjs');
     const fs = require('fs');
     if (fs.existsSync(distFile)) {
