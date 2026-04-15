@@ -5,6 +5,11 @@
 
 Turns a planned software change into a repo-local design spec that `/tdd` can execute slice by slice. `/spec` is for planning. `/investigate` stays the front door for broken behavior and unclear root cause work.
 
+## Installation Surface
+
+- Claude installs `/spec` at `~/.claude/skills/spec`.
+- Codex installs `/spec` at `~/.codex/skills/spec`.
+
 ## Inputs
 
 - Current bead context

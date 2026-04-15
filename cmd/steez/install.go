@@ -179,7 +179,7 @@ func cmdInstall(args []string) int {
 
 	needsCodexSkillsDir := false
 	for _, name := range skillNames {
-		if installsGloballyInCodex(name) {
+		if installer.InstallsGloballyInCodex(name) {
 			needsCodexSkillsDir = true
 			break
 		}
@@ -217,7 +217,7 @@ func cmdInstall(args []string) int {
 			installed++
 		}
 
-		if !installsGloballyInCodex(name) {
+		if !installer.InstallsGloballyInCodex(name) {
 			continue
 		}
 
@@ -399,8 +399,4 @@ func resolveSkillArgs(m *installer.Manifest, args []string) ([]string, error) {
 	}
 
 	return skills, nil
-}
-
-func installsGloballyInCodex(name string) bool {
-	return name == "spawn-agent"
 }

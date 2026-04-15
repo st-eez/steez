@@ -409,7 +409,7 @@ func (m *setupModel) runInstall() {
 	// Ensure skills directory.
 	os.MkdirAll(skillsTarget, 0o755)
 	for _, name := range m.skillNames {
-		if installsGloballyInCodex(name) {
+		if installer.InstallsGloballyInCodex(name) {
 			if err := os.MkdirAll(codexSkillsTarget, 0o755); err != nil {
 				m.results = append(m.results, installResult{"~/.codex/skills/", false, err.Error()})
 				return
@@ -488,7 +488,7 @@ func (m *setupModel) runInstall() {
 			m.results = append(m.results, installResult{name, true, ""})
 		}
 
-		if !installsGloballyInCodex(name) {
+		if !installer.InstallsGloballyInCodex(name) {
 			continue
 		}
 
@@ -574,10 +574,6 @@ func (m setupModel) viewInstall() string {
 	b.WriteString(m.styles.Footer.Render("  Press any key to exit"))
 	b.WriteString("\n")
 	return b.String()
-}
-
-func installsGloballyInCodex(name string) bool {
-	return name == "spawn-agent"
 }
 
 // --- Helpers ---
