@@ -1105,4 +1105,135 @@ test_claude_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
 run_test "claude Stop hook fires evidence and notification arrives on spawner within 2s" \
   test_claude_stop_hook_fires_evidence_and_notification_arrives_within_2s
 
+# Codex Stop hook fast-evidence path. The Codex runtime invokes
+# `shared/steez/hooks/codex-stop.sh` on turn-end (via the user's
+# `codex_hooks=true` opt-in). The hook must shell out
+# `agent-eventsd evidence --state idle` so a live watch on the pane
+# resolves sub-second instead of waiting for 30s degraded fallback.
+#
+# This test invokes the hook the way Codex does — TMUX_PANE set, Stop
+# JSON on stdin — against a live watch armed by agent-send against a
+# fake codex pane. Default SILENCE_WINDOW_MS (30s) keeps degraded
+# reconcile out of the 2s budget, so the only path to resolution is
+# the hook firing evidence. Fails on HEAD (hook file does not exist).
+test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner
+  run_spawn_into target  codex
+  run_spawn_into spawner codex
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  local hook="$REPO_ROOT/shared/steez/hooks/codex-stop.sh"
+  [[ -x "$hook" ]] || {
+    echo "    codex-stop.sh not installed or not executable: $hook"
+    exit 1
+  }
+
+  # Fake codex sets @transcript_path lazily, on the first prompt. Kick
+  # the turn first, then read the pane vars for both panes. Default
+  # SILENCE_WINDOW_MS (30000) keeps degraded fallback out of the 2s
+  # budget — only fast evidence from the Stop hook can resolve in time.
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "stop-hook-evidence" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Only the target has a @transcript_path at this point — the fake codex
+  # spawner sets it lazily on its first prompt, which only arrives when
+  # the Stop hook resolves the watch and agent-deliver fires the
+  # notification onto the spawner. Fall back to agent-history for the
+  # spawner-side assertion.
+  local target_transcript
+  target_transcript=$(wait_pane_var "$target"  @transcript_path 50) || { echo "    target @transcript_path never set"; exit 1; }
+  [[ -f "$target_transcript"  ]] || { echo "    target transcript missing: $target_transcript"; exit 1; }
+
+  # Wait for the fake to write the prompt entry so the hook's cursor
+  # is past the prearm baseline.
+  local i
+  for ((i=0; i<100; i++)); do
+    grep -F 'stop-hook-evidence' "$target_transcript" >/dev/null 2>&1 && break
+    sleep 0.05
+  done
+  grep -F 'stop-hook-evidence' "$target_transcript" >/dev/null 2>&1 || {
+    echo "    target transcript never received the prompt:"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  }
+
+  local payload t0 t1 elapsed deadline list hook_rc=0 spawner_transcript sp_lines
+  payload=$(jq -cn --arg tp "$target_transcript" \
+    '{session_id: "fake-session", transcript_path: $tp, hook_event_name: "Stop"}')
+  t0=$(now_ms)
+  TMUX_PANE="$target" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    PATH="$TEST_BIN:$PATH" \
+    "$hook" <<<"$payload" || hook_rc=$?
+  [[ "$hook_rc" -eq 0 ]] || {
+    echo "    codex-stop.sh exited non-zero (rc=$hook_rc)"
+    exit 1
+  }
+
+  # The spawner sets @transcript_path lazily once it processes the
+  # delivered notification. Poll that pane var + the transcript directly;
+  # both agent-watch list and agent-history shell calls add enough
+  # latency to blow the 2s budget on cold starts.
+  deadline=$(( t0 + 4000 ))
+  list=""
+  spawner_transcript=""
+  sp_lines=0
+  t1=0
+  while :; do
+    if [[ -z "$spawner_transcript" ]]; then
+      spawner_transcript=$("$REAL_TMUX" -L "$TMUX_SOCK" show-options -pv -t "$spawner" @transcript_path 2>/dev/null) || spawner_transcript=""
+    fi
+    if [[ -n "$spawner_transcript" && -f "$spawner_transcript" ]]; then
+      sp_lines=$({ grep -Ec 'working -> idle' "$spawner_transcript" 2>/dev/null; } || true)
+      if [[ "${sp_lines:-0}" -ge 1 ]]; then
+        t1=$(now_ms)
+        break
+      fi
+    fi
+    if (( $(now_ms) >= deadline )); then
+      t1=$(now_ms)
+      elapsed=$(( t1 - t0 ))
+      echo "    codex Stop hook path never resolved (elapsed=${elapsed}ms)"
+      echo "    spawner @transcript_path: ${spawner_transcript:-<unset>}"
+      [[ -f "$spawner_transcript" ]] && { echo "    spawner transcript:"; sed 's/^/      /' "$spawner_transcript"; }
+      exit 1
+    fi
+    sleep 0.05
+  done
+
+  elapsed=$(( t1 - t0 ))
+  (( elapsed < 2000 )) || {
+    echo "    codex Stop hook delivery took ${elapsed}ms — exceeds 2000ms fast-path budget"
+    echo "    (no-fix path lands on 30s degraded fallback; this means the"
+    echo "     Stop hook did not fire agent-eventsd evidence)"
+    exit 1
+  }
+
+  # Final: watch must self-clear. Polled outside the latency budget —
+  # the evidence -> delivery hop is what we bound; slot cleanup happens
+  # right after and is incidental.
+  list=""
+  for ((i=0; i<200; i++)); do
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "$list" == "(no active watches)" ]] && break
+    sleep 0.05
+  done
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    watch did not self-clear after Stop hook resolution:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+}
+run_test "codex Stop hook fires agent-eventsd evidence and notification arrives within 2s" \
+  test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s
+
 report

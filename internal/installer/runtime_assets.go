@@ -47,5 +47,6 @@ func SharedClaudeHookSymlinks() []RuntimeSymlink {
 func SharedCodexHookSymlinks() []RuntimeSymlink {
 	return []RuntimeSymlink{
 		{Name: "session-start.sh", RelPath: "shared/steez/hooks/codex-session-start.sh"},
+		{Name: "codex-stop.sh", RelPath: "shared/steez/hooks/codex-stop.sh"},
 	}
 }
