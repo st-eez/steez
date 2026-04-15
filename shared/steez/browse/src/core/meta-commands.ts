@@ -10,19 +10,16 @@ import { validateNavigationUrl } from './url-validation';
 import * as Diff from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TEMP_DIR, isPathWithin } from './platform';
+import { TEMP_DIR, SAFE_DIRECTORIES, validateSafePath } from './platform';
 import { resolveConfig } from './config';
 import type { Frame } from 'playwright';
 
-// Security: Path validation to prevent path traversal attacks
-const SAFE_DIRECTORIES = [TEMP_DIR, process.cwd()];
-
+// Security: Path validation to prevent path traversal and symlink-escape
+// attacks. Write paths don't need to exist yet (screenshot/pdf/responsive
+// create the file), but the parent dir is realpath-resolved so a symlinked
+// parent still fails.
 export function validateOutputPath(filePath: string): void {
-  const resolved = path.resolve(filePath);
-  const isSafe = SAFE_DIRECTORIES.some(dir => isPathWithin(resolved, dir));
-  if (!isSafe) {
-    throw new Error(`Path must be within: ${SAFE_DIRECTORIES.join(', ')}`);
-  }
+  validateSafePath(filePath, SAFE_DIRECTORIES);
 }
 
 /** Tokenize a pipe segment respecting double-quoted strings. */

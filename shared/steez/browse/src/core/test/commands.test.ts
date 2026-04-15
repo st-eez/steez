@@ -1887,7 +1887,9 @@ describe('Path traversal prevention', () => {
       await handleWriteCommand('cookie-import', ['../../etc/shadow'], bm);
       expect(true).toBe(false);
     } catch (err: any) {
-      expect(err.message).toContain('Path traversal');
+      // Unified validator resolves `..` against cwd and then enforces the
+      // safe-dir check, so traversal surfaces as "Path must be within".
+      expect(err.message).toContain('Path must be within');
     }
   });
 

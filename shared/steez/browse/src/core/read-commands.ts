@@ -9,8 +9,7 @@ import type { BrowserManager } from './browser-manager';
 import { consoleBuffer, networkBuffer, dialogBuffer } from './buffers';
 import type { Page, Frame } from 'playwright';
 import * as fs from 'fs';
-import * as path from 'path';
-import { TEMP_DIR, isPathWithin } from './platform';
+import { SAFE_DIRECTORIES, validateSafePath } from './platform';
 
 /**
  * Parse a --since value into an absolute epoch ms threshold.
@@ -59,36 +58,11 @@ function wrapForEvaluate(code: string): string {
     : `(async()=>(${trimmed}))()`;
 }
 
-// Security: Path validation to prevent path traversal attacks
-// Resolve safe directories through realpathSync to handle symlinks (e.g., macOS /tmp → /private/tmp)
-const SAFE_DIRECTORIES = [TEMP_DIR, process.cwd()].map(d => {
-  try { return fs.realpathSync(d); } catch { return d; }
-});
-
+// Security: Path validation to prevent path traversal and symlink-escape attacks.
+// Delegates to the shared validateSafePath in platform.ts so every file-touching
+// command in browse goes through one realpath-based check.
 export function validateReadPath(filePath: string): void {
-  // Always resolve to absolute first (fixes relative path symlink bypass)
-  const resolved = path.resolve(filePath);
-  // Resolve symlinks — throw on non-ENOENT errors
-  let realPath: string;
-  try {
-    realPath = fs.realpathSync(resolved);
-  } catch (err: any) {
-    if (err.code === 'ENOENT') {
-      // File doesn't exist — resolve directory part for symlinks (e.g., /tmp → /private/tmp)
-      try {
-        const dir = fs.realpathSync(path.dirname(resolved));
-        realPath = path.join(dir, path.basename(resolved));
-      } catch {
-        realPath = resolved;
-      }
-    } else {
-      throw new Error(`Cannot resolve real path: ${filePath} (${err.code})`);
-    }
-  }
-  const isSafe = SAFE_DIRECTORIES.some(dir => isPathWithin(realPath, dir));
-  if (!isSafe) {
-    throw new Error(`Path must be within: ${SAFE_DIRECTORIES.join(', ')}`);
-  }
+  validateSafePath(filePath, SAFE_DIRECTORIES);
 }
 
 /**

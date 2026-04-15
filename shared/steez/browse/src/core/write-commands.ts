@@ -10,7 +10,7 @@ import { findInstalledBrowsers, importCookies, listSupportedBrowserNames } from 
 import { validateNavigationUrl } from './url-validation';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TEMP_DIR, isPathWithin } from './platform';
+import { SAFE_DIRECTORIES, validateSafePath } from './platform';
 
 export async function handleWriteCommand(
   command: string,
@@ -249,19 +249,23 @@ export async function handleWriteCommand(
       const [selector, ...filePaths] = args;
       if (!selector || filePaths.length === 0) throw new Error('Usage: browse upload <selector> <file1> [file2...]');
 
-      // Validate all files exist before upload
-      for (const fp of filePaths) {
-        if (!fs.existsSync(fp)) throw new Error(`File not found: ${fp}`);
-      }
+      // Security: upload sends file contents to a remote form on the current
+      // page, which is attacker-controllable. Gate to the same safe roots as
+      // read-commands and resolve symlinks so a link inside /tmp pointing to
+      // /etc/shadow cannot exfiltrate arbitrary files. mustExist catches the
+      // missing-file case too; the earlier fs.existsSync loop is subsumed.
+      const realPaths = filePaths.map(fp =>
+        validateSafePath(fp, SAFE_DIRECTORIES, { mustExist: true }),
+      );
 
       const resolved = await bm.resolveRef(selector);
       if ('locator' in resolved) {
-        await resolved.locator.setInputFiles(filePaths);
+        await resolved.locator.setInputFiles(realPaths);
       } else {
-        await target.locator(resolved.selector).setInputFiles(filePaths);
+        await target.locator(resolved.selector).setInputFiles(realPaths);
       }
 
-      const fileInfo = filePaths.map(fp => {
+      const fileInfo = realPaths.map(fp => {
         const stat = fs.statSync(fp);
         return `${path.basename(fp)} (${stat.size}B)`;
       }).join(', ');
@@ -286,19 +290,10 @@ export async function handleWriteCommand(
     case 'cookie-import': {
       const filePath = args[0];
       if (!filePath) throw new Error('Usage: browse cookie-import <json-file>');
-      // Path validation — prevent reading arbitrary files
-      if (path.isAbsolute(filePath)) {
-        const safeDirs = [TEMP_DIR, process.cwd()];
-        const resolved = path.resolve(filePath);
-        if (!safeDirs.some(dir => isPathWithin(resolved, dir))) {
-          throw new Error(`Path must be within: ${safeDirs.join(', ')}`);
-        }
-      }
-      if (path.normalize(filePath).includes('..')) {
-        throw new Error('Path traversal sequences (..) are not allowed');
-      }
-      if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
-      const raw = fs.readFileSync(filePath, 'utf-8');
+      // Realpath-based validation — blocks symlink escape, traversal, and
+      // absolute paths outside the safe roots in one shot.
+      const realFilePath = validateSafePath(filePath, SAFE_DIRECTORIES, { mustExist: true });
+      const raw = fs.readFileSync(realFilePath, 'utf-8');
       let cookies: any[];
       try { cookies = JSON.parse(raw); } catch { throw new Error(`Invalid JSON in ${filePath}`); }
       if (!Array.isArray(cookies)) throw new Error('Cookie file must contain a JSON array');
