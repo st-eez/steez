@@ -32,7 +32,6 @@ export const META_COMMANDS = new Set([
   'url', 'snapshot',
   'handoff', 'resume',
   'connect', 'disconnect', 'focus',
-  'inbox',
   'watch',
   'state',
   'frame',
@@ -137,8 +136,6 @@ export const COMMAND_DESCRIPTIONS: Record<string, { category: string; descriptio
   'connect': { category: 'Server', description: 'Launch headed Chromium with Chrome extension', usage: 'connect' },
   'disconnect': { category: 'Server', description: 'Disconnect headed browser, return to headless mode' },
   'focus':   { category: 'Server', description: 'Bring headed browser window to foreground (macOS)', usage: 'focus [@ref]' },
-  // Inbox
-  'inbox':   { category: 'Meta', description: 'List messages from sidebar scout inbox', usage: 'inbox [--clear]' },
   // Watch
   'watch':   { category: 'Meta', description: 'Passive observation — periodic snapshots while user browses', usage: 'watch [stop]' },
   // State

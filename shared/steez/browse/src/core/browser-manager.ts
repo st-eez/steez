@@ -184,41 +184,6 @@ export class BrowserManager {
   }
 
   /**
-   * Find the Chrome extension directory.
-   * Checks steez paths first, falls back to gstack (extension is shared).
-   */
-  private findExtensionPath(): string | null {
-    const fs = require('fs');
-    const path = require('path');
-    const candidates = [
-      // Relative to this source file (dev mode: src/core/ -> ../../../extension)
-      path.resolve(__dirname, '..', '..', '..', 'extension'),
-      // Global steez install
-      path.join(process.env.HOME || '', '.claude', 'skills', 'steez', 'browse', 'extension'),
-      // Fallback: global gstack install (extension is shared)
-      path.join(process.env.HOME || '', '.claude', 'skills', 'gstack', 'extension'),
-      // Git repo root (detected via BROWSE_STATE_FILE location)
-      (() => {
-        const stateFile = process.env.BROWSE_STATE_FILE || '';
-        if (stateFile) {
-          const repoRoot = path.resolve(path.dirname(stateFile), '..');
-          return path.join(repoRoot, '.claude', 'skills', 'gstack', 'extension');
-        }
-        return '';
-      })(),
-    ].filter(Boolean);
-
-    for (const candidate of candidates) {
-      try {
-        if (fs.existsSync(path.join(candidate, 'manifest.json'))) {
-          return candidate;
-        }
-      } catch {}
-    }
-    return null;
-  }
-
-  /**
    * Get the ref map for external consumers (e.g., /refs endpoint).
    */
   getRefMap(): Array<{ ref: string; role: string; name: string }> {
@@ -230,12 +195,7 @@ export class BrowserManager {
   }
 
   async launch() {
-    // ─── Extension Support ────────────────────────────────────
-    // BROWSE_EXTENSIONS_DIR points to an unpacked Chrome extension directory.
-    // Extensions only work in headed mode, so we use an off-screen window.
-    const extensionsDir = process.env.BROWSE_EXTENSIONS_DIR;
     const launchArgs: string[] = [];
-    let useHeadless = true;
 
     // Docker/CI: Chromium sandbox requires unprivileged user namespaces which
     // are typically disabled in containers. Detect container environment and
@@ -244,19 +204,8 @@ export class BrowserManager {
       launchArgs.push('--no-sandbox');
     }
 
-    if (extensionsDir) {
-      launchArgs.push(
-        `--disable-extensions-except=${extensionsDir}`,
-        `--load-extension=${extensionsDir}`,
-        '--window-position=-9999,-9999',
-        '--window-size=1,1',
-      );
-      useHeadless = false; // extensions require headed mode; off-screen window simulates headless
-      console.log(`[browse] Extensions loaded from: ${extensionsDir}`);
-    }
-
     this.browser = await chromium.launch({
-      headless: useHeadless,
+      headless: true,
       // On Windows, Chromium's sandbox fails when the server is spawned through
       // the Bun→Node process chain (GitHub #276). Disable it — local daemon
       // browsing user-specified URLs has marginal sandbox benefit.
@@ -293,13 +242,13 @@ export class BrowserManager {
 
   // ─── Headed Mode ─────────────────────────────────────────────
   /**
-   * Launch Playwright's bundled Chromium in headed mode with the
-   * Chrome extension auto-loaded. Uses launchPersistentContext() which
-   * is required for extension loading (launch() + newContext() can't
-   * load extensions).
+   * Launch Playwright's bundled Chromium in headed mode via
+   * launchPersistentContext so the user's profile (cookies, localStorage)
+   * persists across sessions.
    *
    * The browser launches headed with a visible window — the user sees
-   * every action Claude takes in real time.
+   * every action Claude takes in real time. Used by `handoff` to let
+   * the user solve CAPTCHAs, MFA, or anything else headless can't.
    */
   async launchHeaded(): Promise<void> {
     // Clear old state before repopulating
@@ -307,18 +256,10 @@ export class BrowserManager {
     this.refMap.clear();
     this.nextTabId = 1;
 
-    // Find the Chrome extension directory for auto-loading
-    const extensionPath = this.findExtensionPath();
     const launchArgs = ['--hide-crash-restore-bubble'];
-    if (extensionPath) {
-      launchArgs.push(`--disable-extensions-except=${extensionPath}`);
-      launchArgs.push(`--load-extension=${extensionPath}`);
-    }
 
-    // Launch headed Chromium via Playwright's persistent context.
-    // Extensions REQUIRE launchPersistentContext (not launch + newContext).
-    // Real Chrome (executablePath/channel) silently blocks --load-extension,
-    // so we use Playwright's bundled Chromium which reliably loads extensions.
+    // Launch headed Chromium via Playwright's persistent context so the
+    // user's profile (cookies, localStorage) persists across sessions.
     const fs = require('fs');
     const path = require('path');
     const userDataDir = path.join(process.env.HOME || '/tmp', '.steez', 'browse', 'chromium-profile');
@@ -328,11 +269,6 @@ export class BrowserManager {
       headless: false,
       args: launchArgs,
       viewport: null,  // Use browser's default viewport (real window size)
-      // Playwright adds flags that block extension loading
-      ignoreDefaultArgs: [
-        '--disable-extensions',
-        '--disable-component-extensions-with-background-pages',
-      ],
     });
     this.browser = this.context.browser();
     this.connectionMode = 'headed';
@@ -399,8 +335,7 @@ export class BrowserManager {
     if (this.browser) {
       this.browser.on('disconnected', () => {
         if (this.intentionalDisconnect) return;
-        console.error('[browse] Real browser disconnected (user closed or crashed).');
-        console.error('[browse] Run `$B connect` to reconnect.');
+        console.error('[browse] Headed browser disconnected (user closed or crashed).');
         if (this.onDisconnect) this.onDisconnect(2); else process.exit(2);
       });
     }
@@ -923,21 +858,12 @@ export class BrowserManager {
     const state = await this.saveState();
     const currentUrl = this.getCurrentUrl();
 
-    // 2. Launch new headed browser with extension (same as launchHeaded)
-    //    Uses launchPersistentContext so the extension auto-loads.
+    // 2. Launch new headed browser via persistent context (same as launchHeaded)
     let newContext: BrowserContext;
     try {
       const fs = require('fs');
       const path = require('path');
-      const extensionPath = this.findExtensionPath();
       const launchArgs = ['--hide-crash-restore-bubble'];
-      if (extensionPath) {
-        launchArgs.push(`--disable-extensions-except=${extensionPath}`);
-        launchArgs.push(`--load-extension=${extensionPath}`);
-        console.log(`[browse] Handoff: loading extension from ${extensionPath}`);
-      } else {
-        console.log('[browse] Handoff: extension not found — headed mode without side panel');
-      }
 
       const userDataDir = path.join(process.env.HOME || '/tmp', '.steez', 'browse', 'chromium-profile');
       fs.mkdirSync(userDataDir, { recursive: true });
@@ -946,10 +872,6 @@ export class BrowserManager {
         headless: false,
         args: launchArgs,
         viewport: null,
-        ignoreDefaultArgs: [
-          '--disable-extensions',
-          '--disable-component-extensions-with-background-pages',
-        ],
         timeout: 15000,
       });
     } catch (err: unknown) {

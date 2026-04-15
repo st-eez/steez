@@ -24,10 +24,9 @@ describe('Server auth security', () => {
   // Test 1: /health response must not leak the auth token
   test('/health response must not contain token field', () => {
     const healthBlock = sliceBetween(SERVER_SRC, "url.pathname === '/health'", "url.pathname === '/refs'");
-    // The old pattern was: token: AUTH_TOKEN
-    // The new pattern should have a comment indicating token was removed
+    // /health must never echo the bearer token in any form
     expect(healthBlock).not.toContain('token: AUTH_TOKEN');
-    expect(healthBlock).toContain('token removed');
+    expect(healthBlock).not.toContain('AUTH_TOKEN');
   });
 
   // Test 2: /refs endpoint requires auth via validateAuth
@@ -44,13 +43,13 @@ describe('Server auth security', () => {
 
   // Test 4: /activity/history requires auth via validateAuth
   test('/activity/history requires authentication', () => {
-    const historyBlock = sliceBetween(SERVER_SRC, "url.pathname === '/activity/history'", 'Sidebar endpoints');
+    const historyBlock = sliceBetween(SERVER_SRC, "url.pathname === '/activity/history'", 'Auth-required endpoints');
     expect(historyBlock).toContain('validateAuth');
   });
 
   // Test 5: /activity/history has no wildcard CORS header
   test('/activity/history has no wildcard CORS header', () => {
-    const historyBlock = sliceBetween(SERVER_SRC, "url.pathname === '/activity/history'", 'Sidebar endpoints');
+    const historyBlock = sliceBetween(SERVER_SRC, "url.pathname === '/activity/history'", 'Auth-required endpoints');
     expect(historyBlock).not.toContain("'*'");
   });
 

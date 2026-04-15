@@ -123,8 +123,7 @@ steez/                                    # repo root
 │   ├── {branch}-reviews.jsonl            # review logs per branch
 │   └── *-design-*.md                     # design docs from /office-hours
 └── browse/
-    ├── chromium-profile/                 # persistent Chromium state (login sessions, cache)
-    └── sidebar-sessions/                 # sidebar daemon sessions
+    └── chromium-profile/                 # persistent Chromium state (login sessions, cache)
 ```
 
 ## Upstream Relationship
