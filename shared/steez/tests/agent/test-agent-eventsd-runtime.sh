@@ -563,4 +563,122 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
 run_test "second prompt supersedes the first live watch without duplicate delivery" \
   test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_delivery
 
+test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked_unknown() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner ctl_dir ctl_path
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  ctl_dir="$STEEZ_STATE_DIR/fakes/ctl"
+  ctl_path="$ctl_dir/$target"
+  mkdir -p "$ctl_dir"
+  mkfifo "$ctl_path"
+
+  local target_transcript spawner_transcript
+  target_transcript=$(wait_pane_var "$target"  @transcript_path 25) || { echo "    target @transcript_path never set"; exit 1; }
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    SILENCE_WINDOW_MS=150 RECONCILE_INTERVAL_MS=100 INDETERMINATE_TIMEOUT_MS=350 EVENTSD_TICK_INTERVAL_SEC=0.05 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "degrade-me" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  write_fifo_line "$ctl_path" "state working" || {
+    echo "    fake control fifo never accepted state working"
+    exit 1
+  }
+
+  local i state_json records wid watch_path degraded_since last_reconcile list blocked_lines
+  for ((i=0; i<100; i++)); do
+    state_json=$(run_bin agent-state "$target" 2>/dev/null || true)
+    if printf '%s' "$state_json" | jq -e '.state == "working"' >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  printf '%s' "$state_json" | jq -e '.state == "working"' >/dev/null || {
+    echo "    agent-state never reported working for the live turn:"
+    printf '%s\n' "$state_json" | sed 's/^/      /'
+    exit 1
+  }
+
+  wid=""
+  for ((i=0; i<100; i++)); do
+    records=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+      "$HOME/.steez/bin/agent-eventsd" list 2>/dev/null || true)
+    wid=$(printf '%s\n' "$records" | jq -r --arg pane "$target" '
+      select(.pane_id == $pane and .state == "armed") | .watch_id
+    ' | head -1)
+    [[ -n "$wid" ]] && break
+    sleep 0.1
+  done
+  [[ -n "$wid" ]] || {
+    echo "    never found the live watch for the degraded test:"
+    printf '%s\n' "$records" | sed 's/^/      /'
+    exit 1
+  }
+
+  watch_path="$STEEZ_STATE_DIR/eventsd/watches/$wid.json"
+  for ((i=0; i<100; i++)); do
+    [[ -f "$watch_path" ]] || { sleep 0.1; continue; }
+    degraded_since=$(jq -r '.degraded_since_ms // 0' "$watch_path" 2>/dev/null || echo 0)
+    last_reconcile=$(jq -r '.last_reconcile_ms // 0' "$watch_path" 2>/dev/null || echo 0)
+    if [[ "${degraded_since:-0}" != "0" && "${last_reconcile:-0}" != "0" ]]; then
+      break
+    fi
+    sleep 0.1
+  done
+  [[ -f "$watch_path" ]] || { echo "    watch record missing: $watch_path"; exit 1; }
+  degraded_since=$(jq -r '.degraded_since_ms // 0' "$watch_path" 2>/dev/null || echo 0)
+  last_reconcile=$(jq -r '.last_reconcile_ms // 0' "$watch_path" 2>/dev/null || echo 0)
+  [[ "${degraded_since:-0}" != "0" ]] || {
+    echo "    watch never entered degraded mode:"
+    sed 's/^/      /' "$watch_path"
+    exit 1
+  }
+  [[ "${last_reconcile:-0}" != "0" ]] || {
+    echo "    degraded watch never reconciled through agent-state:"
+    sed 's/^/      /' "$watch_path"
+    exit 1
+  }
+
+  list=""
+  blocked_lines=0
+  for ((i=0; i<200; i++)); do
+    blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "${blocked_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]] && break
+    sleep 0.1
+  done
+
+  sleep 1
+  blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+  [[ "${blocked_lines:-0}" -eq 1 ]] || {
+    echo "    expected exactly 1 blocked:unknown notification, saw $blocked_lines:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    degraded watch did not self-clear after blocked:unknown timeout:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+
+  if grep -F '"stop_reason":"end_turn"' "$target_transcript" >/dev/null 2>&1; then
+    echo "    target reached idle instead of timing out through degraded reconcile:"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  fi
+}
+run_test "loss of fast evidence degrades through agent-state and times out to blocked:unknown" \
+  test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked_unknown
+
 report
