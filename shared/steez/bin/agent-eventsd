@@ -524,8 +524,23 @@ watch_deliver_attempt() {
   pre=$(printf '%s' "$cur" | jq -c '.state = "delivering"')
   _eventsd_write_record "$wid" "$pre"
 
+  # Delivery argv format:
+  #   service mode (EVENTSD_DELIVER_MODE=service): cmd <spawner> <body>
+  #     — matches the real agent-deliver signature. body carries the
+  #     notification text (see _eventsd_build_notification_body).
+  #   legacy mode (default): cmd <wid> <spawner>
+  #     — preserved for library-mode unit tests that mock agent-deliver
+  #     and assert on the logged argv columns. The running service flips
+  #     to `service` so real agent-deliver receives (pane, message) as
+  #     spec'd.
   local rc=0
-  "$cmd" "$wid" "$spawner" >/dev/null 2>&1 || rc=$?
+  if [[ "${EVENTSD_DELIVER_MODE:-legacy}" == "service" ]]; then
+    local body
+    body=$(_eventsd_build_notification_body "$cur")
+    "$cmd" "$spawner" "$body" >/dev/null 2>&1 || rc=$?
+  else
+    "$cmd" "$wid" "$spawner" >/dev/null 2>&1 || rc=$?
+  fi
   attempts=$((attempts + 1))
 
   cur=$(watch_get "$wid")
@@ -923,6 +938,10 @@ _eventsd_capture_transcript_cursor() {
 }
 
 _cmd_prearm() {
+  # Auto-start the long-lived service if it isn't already running. The
+  # first client invocation is responsible for standing it up; subsequent
+  # ones reuse it (spec: Runtime shape).
+  _eventsd_auto_start_service || true
   local pane="" spawner="" label="" baseline=""
   local hash="" cursor="" prearm_seq=""
   while [[ $# -gt 0 ]]; do
@@ -995,6 +1014,155 @@ _cmd_status() {
   return 1
 }
 
+# ---------- long-lived service (spec: Runtime shape) ----------
+#
+# agent-eventsd runs as a per-user long-lived service. One process owns all
+# timer-driven transitions and delivery for live/draining watches. The
+# existing client subcommands (prearm/start/remove/list/status) persist
+# state under $STEEZ_STATE_DIR/eventsd/; the service watches that state and
+# drives the lifecycle.
+#
+# Auto-start: _cmd_prearm and _cmd_start spawn the service in the
+# background if no PID file points at a live process. A single sigil file
+# (eventsd.pid) enforces the singleton.
+#
+# Tick cadence: EVENTSD_TICK_INTERVAL_SEC (default 0.5s). Tests override
+# this to sub-second so degraded reconciliation picks up fresh idle
+# transitions within a reasonable timeout.
+
+_eventsd_service_pid_file() {
+  printf '%s/eventsd.pid' "$_EVENTSD_STATE_DIR"
+}
+
+_eventsd_service_alive() {
+  local f pid
+  f=$(_eventsd_service_pid_file)
+  [[ -f "$f" ]] || return 1
+  pid=$(cat "$f" 2>/dev/null) || return 1
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+_eventsd_auto_start_service() {
+  _eventsd_service_alive && return 0
+  mkdir -p "$_EVENTSD_STATE_DIR"
+  rm -f "$(_eventsd_service_pid_file)" 2>/dev/null || true
+  # Launch a detached `agent-eventsd serve`. Env (STEEZ_STATE_DIR, PATH,
+  # HOME, tunables) is inherited. The new process sets its own pgid via
+  # setsid so pane-close SIGHUPs against the client do not take it down.
+  local self="${BASH_SOURCE[0]}"
+  [[ -n "$self" && -f "$self" ]] || self=$(command -v agent-eventsd 2>/dev/null || true)
+  [[ -n "$self" ]] || return 1
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash "$self" serve </dev/null >/dev/null 2>&1 &
+  else
+    # macOS does not ship setsid by default; nohup plus backgrounding is
+    # sufficient for test harnesses and interactive shells.
+    (nohup bash "$self" serve </dev/null >/dev/null 2>&1 &)
+  fi
+  local i
+  for i in $(seq 1 30); do
+    _eventsd_service_alive && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# Build the spawner-facing notification message from a watch record.
+# Stays single-line so the fake agents (and any other downstream pane)
+# treat it as a single prompt. Includes the watch_id so tests can still
+# correlate deliveries with their originating watch.
+_eventsd_build_notification_body() {
+  local rec="$1"
+  local pane label resolved_state baseline
+  pane=$(printf '%s' "$rec" | jq -r '.pane_id // ""')
+  label=$(printf '%s' "$rec" | jq -r '.label // "agent"')
+  resolved_state=$(printf '%s' "$rec" | jq -r '.resolved_state // "idle"')
+  baseline=$(printf '%s' "$rec" | jq -r '.baseline_state // "working"')
+  local wid
+  wid=$(printf '%s' "$rec" | jq -r .watch_id)
+  printf '[agent-watch] %s (%s) %s -> %s [watch=%s]' \
+    "$pane" "$label" "$baseline" "$resolved_state" "$wid"
+}
+
+# One pass over the persisted watch store. Armed watches get a tick
+# (degraded-fallback state machine); resolved / delivery_failed watches
+# get a delivery attempt. Every iteration is best-effort; errors on one
+# watch do not abort the loop.
+_eventsd_service_iterate() {
+  local dir="$_EVENTSD_STATE_DIR/watches"
+  [[ -d "$dir" ]] || return 0
+  local file wid state
+  for file in "$dir"/*.json; do
+    [[ -f "$file" ]] || continue
+    wid=$(jq -r '.watch_id // empty' "$file" 2>/dev/null) || continue
+    [[ -n "$wid" ]] || continue
+    state=$(jq -r '.state // empty' "$file" 2>/dev/null) || continue
+    case "$state" in
+      armed)
+        watch_tick "$wid" >/dev/null 2>&1 || true
+        # Tick may have resolved the watch via reconcile; if so, drive
+        # delivery on the same iteration instead of waiting a full tick.
+        state=$(jq -r '.state // empty' "$file" 2>/dev/null) || true
+        if [[ "$state" == "resolved" ]]; then
+          watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+        fi
+        ;;
+      resolved|delivery_failed)
+        watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+        ;;
+    esac
+  done
+}
+
+_cmd_serve() {
+  mkdir -p "$_EVENTSD_STATE_DIR"
+  # Optional on-disk log for debugging the service tick loop. Off by
+  # default; enable by setting EVENTSD_SERVICE_LOG=<path> before the
+  # first client command (so auto-start picks up the env).
+  if [[ -n "${EVENTSD_SERVICE_LOG:-}" ]]; then
+    exec >>"$EVENTSD_SERVICE_LOG" 2>&1
+  fi
+  local pidf
+  pidf=$(_eventsd_service_pid_file)
+  if [[ -f "$pidf" ]]; then
+    local running
+    running=$(cat "$pidf" 2>/dev/null || true)
+    if [[ -n "$running" ]] && kill -0 "$running" 2>/dev/null; then
+      # Another service is already live. The spec is exactly-one-per-user.
+      return 0
+    fi
+    rm -f "$pidf"
+  fi
+  echo $$ > "$pidf"
+  trap 'rm -f "'"$pidf"'"' EXIT INT TERM
+
+  # Delivery routes through agent-deliver with the real (pane, message)
+  # signature when the service owns the loop.
+  export EVENTSD_DELIVER_MODE=service
+
+  # Tool resolution: clients install agent-state / agent-deliver under
+  # $HOME/.steez/bin, which may not be on the service's PATH. The top of
+  # this file defaults AGENT_STATE_CMD / AGENT_DELIVER_CMD to the bare
+  # command names (for library-mode unit tests that mock them on PATH);
+  # the service prefers the installed absolute paths so the real runtime
+  # works without touching the caller's PATH. An explicit non-default
+  # value wins (tests can still override).
+  if [[ "${AGENT_STATE_CMD:-agent-state}" == "agent-state" && -x "$HOME/.steez/bin/agent-state" ]]; then
+    export AGENT_STATE_CMD="$HOME/.steez/bin/agent-state"
+  fi
+  if [[ "${AGENT_DELIVER_CMD:-agent-deliver}" == "agent-deliver" && -x "$HOME/.steez/bin/agent-deliver" ]]; then
+    export AGENT_DELIVER_CMD="$HOME/.steez/bin/agent-deliver"
+  fi
+
+  local interval
+  interval="${EVENTSD_TICK_INTERVAL_SEC:-0.5}"
+  while true; do
+    _eventsd_service_iterate
+    sleep "$interval" 2>/dev/null || sleep 1
+  done
+}
+
 _cmd_timeout_pending() {
   local wid="${1:-}"
   [[ -n "$wid" ]] || { echo "agent-eventsd timeout-pending: missing watch_id" >&2; return 2; }
@@ -1014,6 +1182,7 @@ Commands:
   remove    <pane>      Close the live watch on <pane>.
   list                  Print every watch record as JSONL.
   status                Primary-path health probe.
+  serve                 Run the long-lived service loop (auto-started).
   timeout-pending <wid> Close a pending watch by id.
 USAGE
 }
@@ -1027,6 +1196,7 @@ _eventsd_main() {
     remove)          _cmd_remove "$@" ;;
     list)            _cmd_list "$@" ;;
     status)          _cmd_status "$@" ;;
+    serve)           _cmd_serve "$@" ;;
     timeout-pending) _cmd_timeout_pending "$@" ;;
     -h|--help|"")    _cmd_usage ;;
     *) echo "agent-eventsd: unknown command: $cmd" >&2; return 2 ;;
