@@ -301,4 +301,119 @@ test_no_watch_against_fake_claude_delivers_to_target_without_live_watch_or_spawn
 run_test "--no-watch against fake claude delivers to target without live watch or spawner notification" \
   test_no_watch_against_fake_claude_delivers_to_target_without_live_watch_or_spawner_notification
 
+write_fifo_line() {
+  local fifo="$1" line="$2"
+  python3 - "$fifo" "$line" <<'PYEOF'
+import errno
+import os
+import sys
+import time
+
+fifo, line = sys.argv[1:]
+deadline = time.time() + 3.0
+while time.time() < deadline:
+    try:
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+    except OSError as exc:
+        if exc.errno in (errno.ENXIO, errno.ENOENT):
+            time.sleep(0.05)
+            continue
+        raise
+    with os.fdopen(fd, "w", encoding="utf-8", buffering=1) as fh:
+        fh.write(line + "\n")
+    raise SystemExit(0)
+raise SystemExit(1)
+PYEOF
+}
+
+test_blocked_question_against_fake_claude_resolves_and_agent_history_returns_prompt_text() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner ctl_dir ctl_path
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  ctl_dir="$STEEZ_STATE_DIR/fakes/ctl"
+  ctl_path="$ctl_dir/$target"
+  mkdir -p "$ctl_dir"
+  mkfifo "$ctl_path"
+
+  local target_transcript spawner_transcript
+  target_transcript=$(wait_pane_var "$target"  @transcript_path 25) || { echo "    target @transcript_path never set"; exit 1; }
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+
+  local send_rc=0 send_out question
+  question="Which repo should I use?"
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "help me choose" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  write_fifo_line "$ctl_path" "state blocked:question $question" || {
+    echo "    fake control fifo never accepted blocked:question"
+    exit 1
+  }
+
+  local i hist_json state_json list sp_lines
+  hist_json=""
+  for ((i=0; i<100; i++)); do
+    hist_json=$(run_bin agent-history "$target" --blocked 2>/dev/null || true)
+    if printf '%s' "$hist_json" | jq -e --arg q "$question" '.tool == "AskUserQuestion" and .question == $q' >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  printf '%s' "$hist_json" | jq -e --arg q "$question" '.tool == "AskUserQuestion" and .question == $q' >/dev/null || {
+    echo "    agent-history --blocked never returned the question text:"
+    printf '%s\n' "$hist_json" | sed 's/^/      /'
+    exit 1
+  }
+
+  state_json=""
+  for ((i=0; i<100; i++)); do
+    state_json=$(run_bin agent-state "$target" 2>/dev/null || true)
+    if printf '%s' "$state_json" | jq -e '.state == "blocked:question"' >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  printf '%s' "$state_json" | jq -e '.state == "blocked:question"' >/dev/null || {
+    echo "    agent-state never reported blocked:question:"
+    printf '%s\n' "$state_json" | sed 's/^/      /'
+    exit 1
+  }
+
+  list=""
+  for ((i=0; i<200; i++)); do
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "$list" == "(no active watches)" ]] && break
+    sleep 0.1
+  done
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    watch did not self-clear after blocked:question:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+
+  for ((i=0; i<200; i++)); do
+    sp_lines=$({ grep -Ec 'blocked:question' "$spawner_transcript" 2>/dev/null; } || true)
+    [[ "${sp_lines:-0}" -ge 1 ]] && break
+    sleep 0.1
+  done
+  sp_lines=$({ grep -Ec 'blocked:question' "$spawner_transcript" 2>/dev/null; } || true)
+  [[ "${sp_lines:-0}" -eq 1 ]] || {
+    echo "    expected exactly one blocked:question notification, saw $sp_lines:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+}
+run_test "blocked:question against fake claude resolves and agent-history returns the question text" \
+  test_blocked_question_against_fake_claude_resolves_and_agent_history_returns_prompt_text
+
 report
