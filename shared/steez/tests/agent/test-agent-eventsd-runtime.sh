@@ -29,19 +29,21 @@ go build -o "$FAKES_BUILD/claude" "$FAKES_SRC_DIR/fake-agent" || {
   echo "  fake-agent build failed"
   exit 1
 }
+cp "$FAKES_BUILD/claude"          "$FAKES_BUILD/codex"
 cp "$FAKES_SRC_DIR/claude.impl.sh" "$FAKES_BUILD/impl.sh"
 cp "$FAKES_SRC_DIR/ren"            "$FAKES_BUILD/ren"
-chmod +x "$FAKES_BUILD/claude" "$FAKES_BUILD/impl.sh" "$FAKES_BUILD/ren"
+cp "$FAKES_SRC_DIR/ren-codex"      "$FAKES_BUILD/ren-codex"
+chmod +x "$FAKES_BUILD/claude" "$FAKES_BUILD/codex" "$FAKES_BUILD/impl.sh" "$FAKES_BUILD/ren" "$FAKES_BUILD/ren-codex"
 
 setup_runtime() {
   RUNTIME_TMP=$(mktemp -d)
   export HOME="$RUNTIME_TMP/home"
   export STEEZ_STATE_DIR="$RUNTIME_TMP/state"
-  mkdir -p "$HOME/.claude" "$HOME/.steez/bin" "$HOME/.steez/agent-state/claude" "$STEEZ_STATE_DIR/eventsd"
+  mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.steez/bin" "$HOME/.steez/agent-state/claude" "$STEEZ_STATE_DIR/eventsd"
 
   # Real agent-eventsd, agent-state, agent-deliver, agent-send, agent-watch,
   # agent-history — the service must drive real binaries end-to-end. The
-  # only replaced component is the agent process itself (fake claude).
+  # only replaced component is the agent process itself (fake agent).
   ln -sf "$BIN_DIR/agent-state"    "$HOME/.steez/bin/agent-state"
   ln -sf "$BIN_DIR/agent-deliver"  "$HOME/.steez/bin/agent-deliver"
   ln -sf "$BIN_DIR/agent-eventsd"  "$HOME/.steez/bin/agent-eventsd"
@@ -51,9 +53,11 @@ setup_runtime() {
   TEST_BIN="$RUNTIME_TMP/bin"
   mkdir -p "$TEST_BIN"
   cp "$FAKES_BUILD/claude"  "$TEST_BIN/claude"
+  cp "$FAKES_BUILD/codex"   "$TEST_BIN/codex"
   cp "$FAKES_BUILD/impl.sh" "$TEST_BIN/impl.sh"
   cp "$FAKES_BUILD/ren"     "$TEST_BIN/ren"
-  chmod +x "$TEST_BIN/claude" "$TEST_BIN/impl.sh" "$TEST_BIN/ren"
+  cp "$FAKES_BUILD/ren-codex" "$TEST_BIN/ren-codex"
+  chmod +x "$TEST_BIN/claude" "$TEST_BIN/codex" "$TEST_BIN/impl.sh" "$TEST_BIN/ren" "$TEST_BIN/ren-codex"
 
   cat > "$TEST_BIN/tmux" <<EOF
 #!/bin/bash
@@ -232,6 +236,97 @@ test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_
 }
 run_test "watched prompt against fake claude fires exactly one idle notification and watch self-clears" \
   test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_watch_self_clears
+
+run_watched_idle_turn_for_model() (
+  local model="$1"
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner
+  run_spawn_into target "$model"
+  run_spawn_into spawner "$model"
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  local state_json
+  state_json=$(run_bin agent-state "$target" 2>/dev/null || true)
+  printf '%s' "$state_json" | jq -e --arg agent "$model" '.agent == $agent and .state == "idle"' >/dev/null || {
+    echo "    target did not boot as idle $model:"
+    printf '%s\n' "$state_json" | sed 's/^/      /'
+    exit 1
+  }
+  state_json=$(run_bin agent-state "$spawner" 2>/dev/null || true)
+  printf '%s' "$state_json" | jq -e --arg agent "$model" '.agent == $agent and .state == "idle"' >/dev/null || {
+    echo "    spawner did not boot as idle $model:"
+    printf '%s\n' "$state_json" | sed 's/^/      /'
+    exit 1
+  }
+
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR"     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "hello-$model" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send failed for $model (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  local i target_last spawner_history list
+  target_last=""
+  for ((i=0; i<200; i++)); do
+    target_last=$(run_bin agent-history "$target" --last 2>/dev/null || true)
+    if printf '%s' "$target_last" | jq -e --arg agent "$model" --arg prompt "hello-$model" '.agent == $agent and .prompt == $prompt and .response == "ok"' >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  printf '%s' "$target_last" | jq -e --arg agent "$model" --arg prompt "hello-$model" '.agent == $agent and .prompt == $prompt and .response == "ok"' >/dev/null || {
+    echo "    target never completed an idle turn for $model:"
+    printf '%s\n' "$target_last" | sed 's/^/      /'
+    exit 1
+  }
+
+  spawner_history=""
+  for ((i=0; i<200; i++)); do
+    spawner_history=$(run_bin agent-history "$spawner" --history 10 2>/dev/null || true)
+    if printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) >= 1 and (.pairs[-1].prompt | contains("[agent-watch]")) and (.pairs[-1].prompt | contains($target)) and .pairs[-1].response == "ok"' >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) >= 1 and (.pairs[-1].prompt | contains("[agent-watch]")) and (.pairs[-1].prompt | contains($target)) and .pairs[-1].response == "ok"' >/dev/null || {
+    echo "    spawner never received the watched idle notification for $model:"
+    printf '%s\n' "$spawner_history" | sed 's/^/      /'
+    exit 1
+  }
+
+  list=""
+  for ((i=0; i<200; i++)); do
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "$list" == "(no active watches)" ]] && break
+    sleep 0.1
+  done
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    watch did not self-clear for $model:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+
+  sleep 1
+  spawner_history=$(run_bin agent-history "$spawner" --history 10 2>/dev/null || true)
+  printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) == 1 and (.pairs[0].prompt | contains("[agent-watch]")) and (.pairs[0].prompt | contains($target)) and .pairs[0].response == "ok"' >/dev/null || {
+    echo "    expected exactly one watched idle notification for $model:"
+    printf '%s\n' "$spawner_history" | sed 's/^/      /'
+    exit 1
+  }
+)
+
+test_watched_prompt_against_fake_codex_and_ren_variants_fires_exactly_one_idle_notification_and_watch_self_clears() {
+  local model
+  for model in codex ren-codex ren; do
+    run_watched_idle_turn_for_model "$model" || exit 1
+  done
+}
+run_test "watched prompt against fake codex, ren-codex, and ren fires exactly one idle notification and watch self-clears" \
+  test_watched_prompt_against_fake_codex_and_ren_variants_fires_exactly_one_idle_notification_and_watch_self_clears
 
 # Acceptance #5 (fake-agent-harness spec): "In the no-watch scenario,
 # agent-send --no-watch delivers bytes to the fake, creates no watch

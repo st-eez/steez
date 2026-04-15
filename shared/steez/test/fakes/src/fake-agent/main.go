@@ -41,7 +41,7 @@ func main() {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), "FAKE_AGENT_NAME="+filepath.Base(os.Args[0]))
 
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "fake-agent: exec failed:", err)

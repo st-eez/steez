@@ -1,108 +1,168 @@
 #!/bin/bash
-# Fake claude / ren implementation — runs under the Go wrapper at
-# shared/steez/test/fakes/src/fake-agent (built as `claude` in tests). The
-# wrapper preserves the "claude" basename in `ps` and the REN_SESSION=1
-# env for ren; this script is the behavior. Spec: specs/fake-agent-harness.md.
+# Fake agent implementation for the zero-token harness.
 #
-# Current slice: boot contract + auto-reply + blocked:question and
-# working-state control via the fifo. Later slices still own permission,
-# degraded, and pane-close behavior.
+# The compiled wrapper preserves the process basename (`claude` or `codex`).
+# `ren` and `ren-codex` are thin wrappers that only set REN_SESSION=1.
 set -uo pipefail
 
-# Silently consume the documented permission-bypass flag. Any other
-# argument is a test bug — reject it so fidelity issues can't hide.
+FAKE_AGENT_NAME="${FAKE_AGENT_NAME:-claude}"
+
+case "$FAKE_AGENT_NAME" in
+  claude|codex) ;;
+  *) echo "fake-agent: unsupported fake agent '$FAKE_AGENT_NAME'" >&2; exit 1 ;;
+esac
+
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dangerously-skip-permissions) shift ;;
-    *) echo "fake-claude: unknown argument: $1" >&2; exit 1 ;;
+  case "$FAKE_AGENT_NAME:$1" in
+    claude:--dangerously-skip-permissions) shift ;;
+    codex:--dangerously-bypass-approvals-and-sandbox) shift ;;
+    *) echo "fake-$FAKE_AGENT_NAME: unknown argument: $1" >&2; exit 1 ;;
   esac
 done
 
-# 1. Generate an opaque session_id. Lower-case to match the Claude hook shape.
-if command -v uuidgen >/dev/null 2>&1; then
-  SESSION_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-else
-  SESSION_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
-fi
+SESSION_ID=""
+TRANSCRIPT_PATH=""
+msg_counter=0
 
-# 2. Create the JSONL transcript up front. Path shape matches the spec's
-# recommendation so agent-state's Claude filesystem-fallback path could
-# also find it, though the pane var is the primary signal.
-TRANSCRIPT_DIR="${HOME}/.claude/projects/fake"
-mkdir -p "$TRANSCRIPT_DIR"
-TRANSCRIPT_PATH="${TRANSCRIPT_DIR}/${SESSION_ID}.jsonl"
-: > "$TRANSCRIPT_PATH"
+new_session_id() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  else
+    python3 -c 'import uuid; print(uuid.uuid4())'
+  fi
+}
 
-# 3. Set the pane vars the real SessionStart hook sets. spawn.sh's boot
-# wait polls @session_id; agent-state / agent-history resolve the transcript
-# through @transcript_path.
-if [[ -n "${TMUX_PANE:-}" ]] && command -v tmux >/dev/null 2>&1; then
+set_tmux_metadata() {
+  [[ -n "${TMUX_PANE:-}" ]] || return 0
+  command -v tmux >/dev/null 2>&1 || return 0
   tmux set-option -p -t "$TMUX_PANE" @session_id      "$SESSION_ID"      >/dev/null 2>&1 || true
   tmux set-option -p -t "$TMUX_PANE" @transcript_path "$TRANSCRIPT_PATH" >/dev/null 2>&1 || true
-fi
+}
 
-# 4. Render a neutral prompt surface. Keeps the pane visibly "ready" without
-# triggering any agent-state screen-scrape patterns.
-printf 'fake-claude ready (session %s)\n> ' "$SESSION_ID"
+ensure_session_metadata() {
+  [[ -n "$SESSION_ID" && -n "$TRANSCRIPT_PATH" ]] && return 0
+
+  SESSION_ID=$(new_session_id)
+  if [[ "$FAKE_AGENT_NAME" == "codex" ]]; then
+    local transcript_dir="${HOME}/.codex/sessions/fake"
+    mkdir -p "$transcript_dir"
+    TRANSCRIPT_PATH="${transcript_dir}/rollout-${SESSION_ID}.jsonl"
+  else
+    local transcript_dir="${HOME}/.claude/projects/fake"
+    mkdir -p "$transcript_dir"
+    TRANSCRIPT_PATH="${transcript_dir}/${SESSION_ID}.jsonl"
+  fi
+
+  : > "$TRANSCRIPT_PATH"
+  set_tmux_metadata
+}
+
+render_idle_prompt() {
+  if [[ "$FAKE_AGENT_NAME" == "codex" ]]; then
+    printf '\033[999;1H\033[2K› '
+  else
+    printf '> '
+  fi
+}
 
 transcript_append() {
   local mode="$1"; shift
-  python3 - "$TRANSCRIPT_PATH" "$mode" "$@" <<'PYEOF'
+  python3 - "$TRANSCRIPT_PATH" "$FAKE_AGENT_NAME" "$mode" "$@" <<'PYEOF'
 import json
 import os
 import sys
 
 transcript = sys.argv[1]
-mode = sys.argv[2]
+agent = sys.argv[2]
+mode = sys.argv[3]
+args = sys.argv[4:]
 
-if mode == "prompt":
-    user_text, = sys.argv[3:]
-    entry = {
-        "type": "user",
-        "message": {"content": user_text},
-        "isMeta": False,
-        "isSidechain": False,
-    }
-elif mode == "idle":
-    msg_id, reply_text = sys.argv[3:]
-    entry = {
-        "type": "assistant",
-        "message": {
-            "id": msg_id,
-            "content": [{"type": "text", "text": reply_text}],
-            "stop_reason": "end_turn",
-        },
-    }
-elif mode == "working":
-    msg_id, tool_id = sys.argv[3:]
-    entry = {
-        "type": "assistant",
-        "message": {
-            "id": msg_id,
-            "content": [{
-                "type": "tool_use",
-                "id": tool_id,
-                "name": "ReadFile",
-                "input": {"path": "/tmp/fake-working"},
-            }],
-        },
-    }
-elif mode == "blocked-question":
-    msg_id, tool_id, question = sys.argv[3:]
-    entry = {
-        "type": "assistant",
-        "message": {
-            "id": msg_id,
-            "content": [{
-                "type": "tool_use",
-                "id": tool_id,
-                "name": "AskUserQuestion",
-                "input": {"questions": [{"question": question}]},
-            }],
-        },
-    }
+if agent == "claude":
+    if mode == "prompt":
+        (user_text,) = args
+        entry = {
+            "type": "user",
+            "message": {"content": user_text},
+            "isMeta": False,
+            "isSidechain": False,
+        }
+    elif mode == "idle":
+        msg_id, reply_text = args
+        entry = {
+            "type": "assistant",
+            "message": {
+                "id": msg_id,
+                "content": [{"type": "text", "text": reply_text}],
+                "stop_reason": "end_turn",
+            },
+        }
+    elif mode == "working":
+        msg_id, tool_id = args
+        entry = {
+            "type": "assistant",
+            "message": {
+                "id": msg_id,
+                "content": [{
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": "ReadFile",
+                    "input": {"path": "/tmp/fake-working"},
+                }],
+            },
+        }
+    elif mode == "blocked-question":
+        msg_id, tool_id, question = args
+        entry = {
+            "type": "assistant",
+            "message": {
+                "id": msg_id,
+                "content": [{
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": "AskUserQuestion",
+                    "input": {"questions": [{"question": question}]},
+                }],
+            },
+        }
+    else:
+        raise SystemExit(f"unknown transcript append mode: {mode}")
 else:
-    raise SystemExit(f"unknown transcript append mode: {mode}")
+    if mode == "prompt":
+        (user_text,) = args
+        entry = {
+            "type": "event_msg",
+            "payload": {"type": "user_message", "message": user_text},
+        }
+    elif mode == "idle":
+        _msg_id, reply_text = args
+        entry = {
+            "type": "event_msg",
+            "payload": {"type": "task_complete", "last_agent_message": reply_text},
+        }
+    elif mode == "working":
+        _msg_id, tool_id = args
+        entry = {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "call_id": tool_id,
+                "name": "read_file",
+                "arguments": "{\"path\":\"/tmp/fake-working\"}",
+            },
+        }
+    elif mode == "blocked-question":
+        _msg_id, tool_id, question = args
+        entry = {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "call_id": tool_id,
+                "name": "request_user_input",
+                "arguments": json.dumps({"questions": [{"question": question}]}),
+            },
+        }
+    else:
+        raise SystemExit(f"unknown transcript append mode: {mode}")
 
 with open(transcript, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(entry) + "\n")
@@ -147,34 +207,41 @@ drive_turn_from_fifo() {
         ;;
       "state idle")
         transcript_append "idle" "$msg_id" "ok"
-        printf '> '
+        render_idle_prompt
         return 0
         ;;
       "state idle "*)
         reply_text="${cmd#state idle }"
         transcript_append "idle" "$msg_id" "$reply_text"
-        printf '> '
+        render_idle_prompt
         return 0
         ;;
       *)
-        echo "fake-claude: unsupported control command: $cmd" >&2
+        echo "fake-$FAKE_AGENT_NAME: unsupported control command: $cmd" >&2
         return 1
         ;;
     esac
   done
 }
 
-# Auto-reply default (no control fifo): each line arriving on the pane tty
-# becomes one prompt. If the per-pane fifo exists when the prompt lands,
-# block on the control command instead.
-msg_counter=0
+if [[ "$FAKE_AGENT_NAME" == "claude" ]]; then
+  ensure_session_metadata
+  printf 'fake-claude ready (session %s)\n' "$SESSION_ID"
+fi
+render_idle_prompt
+
 while IFS= read -r line; do
   if [[ -z "$line" ]]; then
-    printf '> '
+    if [[ "$FAKE_AGENT_NAME" == "claude" ]]; then
+      render_idle_prompt
+    fi
     continue
   fi
+
   msg_counter=$((msg_counter + 1))
   msg_id="msg_$msg_counter"
+
+  ensure_session_metadata
   transcript_append "prompt" "$line"
 
   ctl_path=""
@@ -184,5 +251,5 @@ while IFS= read -r line; do
   fi
 
   transcript_append "idle" "$msg_id" "ok"
-  printf '> '
+  render_idle_prompt
 done

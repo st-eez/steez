@@ -514,6 +514,8 @@ emit_json() {
   local pane="$1" agent="$2" state="$3" name="$4"
   local content="${5:-}" session_id="${6:-}" cwd="${7:-}" transcript="${8:-}"
 
+  local base_filter='{pane: $pane, agent: $agent, state: $state, name: $name}'
+  local content_filter='. as $content | {pane: $pane, agent: $agent, state: $state, name: $name, content: $content}'
   local detail_filter='if ($sid != "" or $cwd != "" or $tp != "") then
       {detail: {
         session_id: (if $sid != "" then $sid else null end),
@@ -527,14 +529,12 @@ emit_json() {
     printf '%s' "$(printf '%s' "$content" | jq -Rsc \
       --arg pane "$pane" --arg agent "$agent" --arg state "$state" --arg name "$name" \
       --arg sid "$session_id" --arg cwd "$cwd" --arg tp "$transcript" \
-      ". as \$content | {pane: \$pane, agent: \$agent, state: \$state, name: \$name, content: \$content}
-       + $detail_filter")"
+      "$content_filter + $detail_filter")"
   else
     printf '%s' "$(jq -nc \
       --arg pane "$pane" --arg agent "$agent" --arg state "$state" --arg name "$name" \
       --arg sid "$session_id" --arg cwd "$cwd" --arg tp "$transcript" \
-      "{pane: \$pane, agent: \$agent, state: \$state, name: \$name}
-       + $detail_filter")"
+      "$base_filter + $detail_filter")"
   fi
 }
 
