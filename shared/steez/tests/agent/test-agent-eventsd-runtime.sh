@@ -867,4 +867,119 @@ test_fake_claude_exit_while_watched_resolves_blocked_unknown_and_clears_live_wat
 run_test "fake claude exit while watched resolves blocked:unknown and clears the live watch" \
   test_fake_claude_exit_while_watched_resolves_blocked_unknown_and_clears_live_watch
 
+# Fast-path external evidence: hooks (and other external callers) feed
+# fresh evidence into a live watch via `agent-eventsd evidence`. The CLI
+# must look up the pane's live watch, assign a monotonic seq, route through
+# the canonical resolver, and exit fire-and-forget. End-to-end, a fresh
+# terminal state shelled through this command must resolve the armed watch
+# and fire exactly one delivery on the spawner — without touching the
+# degraded fallback timers.
+test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  local spawner_transcript
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+  [[ -f "$spawner_transcript" ]] || { echo "    spawner transcript missing: $spawner_transcript"; exit 1; }
+
+  # Drive the two-step turn directly through the agent-eventsd CLI. The
+  # default SILENCE_WINDOW_MS (30s) keeps the degraded path from engaging
+  # during the test — only the evidence CLI can resolve this watch.
+  local wid
+  wid=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-eventsd" prearm --pane "$target" --spawner "$spawner" \
+      --label test --baseline-state working \
+      --prearm-screen-hash baseline-hash --prearm-transcript-cursor 0 2>/dev/null) || {
+    echo "    agent-eventsd prearm failed"
+    exit 1
+  }
+  [[ -n "$wid" ]] || { echo "    prearm did not return watch_id"; exit 1; }
+
+  PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    "$BIN_DIR/agent-eventsd" start --pane "$target" --watch-id "$wid" || {
+    echo "    agent-eventsd start failed"
+    exit 1
+  }
+
+  # Capture the prearm cursor from the public `list` surface — not from a
+  # direct read under $STEEZ_STATE_DIR/eventsd/.
+  local records prearm_cursor
+  records=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    "$BIN_DIR/agent-eventsd" list 2>/dev/null || true)
+  prearm_cursor=$(printf '%s\n' "$records" | jq -r --arg wid "$wid" \
+    'select(.watch_id == $wid) | .prearm_transcript_cursor' | head -1)
+  [[ -n "$prearm_cursor" && "$prearm_cursor" != "null" ]] || {
+    echo "    agent-eventsd list never returned prearm_transcript_cursor for $wid:"
+    printf '%s\n' "$records" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Shell fresh evidence: cursor advances past prearm, state idle differs
+  # from baseline working → resolver fires → delivery lands on spawner.
+  local ev_rc=0 ev_out
+  ev_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    "$BIN_DIR/agent-eventsd" evidence --pane "$target" --state idle \
+      --transcript-cursor $((prearm_cursor + 100)) 2>&1) || ev_rc=$?
+  [[ "$ev_rc" -eq 0 ]] || {
+    echo "    agent-eventsd evidence failed (rc=$ev_rc):"
+    printf '%s\n' "$ev_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Poll spawner-pane output (public surface) for the delivery.
+  local i sp_lines list
+  sp_lines=0
+  for ((i=0; i<200; i++)); do
+    sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
+    [[ "${sp_lines:-0}" -ge 1 ]] && break
+    sleep 0.1
+  done
+  [[ "${sp_lines:-0}" -ge 1 ]] || {
+    echo "    evidence CLI never fired a delivery on spawner:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+
+  # Live watch must self-clear once delivery completes.
+  list=""
+  for ((i=0; i<200; i++)); do
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "$list" == "(no active watches)" ]] && break
+    sleep 0.1
+  done
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    watch did not self-clear after evidence CLI:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Settle and confirm no second tick or retry duplicated the delivery, and
+  # that the notification was tied to this watch and the idle resolution.
+  sleep 1
+  sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
+  [[ "${sp_lines:-0}" -eq 1 ]] || {
+    echo "    expected exactly 1 evidence-triggered delivery, saw $sp_lines:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+  grep -F "[watch=$wid]" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner notification was not tied to the evidence-resolved watch:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+  grep -F 'working -> idle' "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner notification was not the idle resolution:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+}
+run_test "evidence CLI on armed watch fires delivery on spawner and clears the live watch" \
+  test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch
+
 report

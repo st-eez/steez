@@ -1183,6 +1183,49 @@ _cmd_timeout_pending() {
   watch_pending_timeout "$wid"
 }
 
+# External fast-path evidence entry point. Hooks (Claude Stop,
+# PermissionRequest; Codex equivalents) call this with the pane and the
+# canonical state they just observed so the resolver can fire before the
+# degraded-fallback silence window ever engages.
+#
+# Fire-and-forget: the caller has a 5s budget and does not care whether a
+# live watch exists or freshness passed. We only reject on bad flags. If
+# the pane has no live watch (stale hook, already-resolved turn, superseded
+# watch), exit 0 — not an error.
+_cmd_evidence() {
+  # Auto-start the service (match _cmd_prearm): hook callers may fire
+  # before any prearm has stood the daemon up.
+  _eventsd_auto_start_service || true
+  local pane="" state="" cursor="" hash=""
+  local has_cursor=0 has_hash=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pane) pane="$2"; shift 2 ;;
+      --state) state="$2"; shift 2 ;;
+      --transcript-cursor) cursor="$2"; has_cursor=1; shift 2 ;;
+      --screen-hash) hash="$2"; has_hash=1; shift 2 ;;
+      *) echo "agent-eventsd evidence: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+  [[ -n "$pane" ]]  || { echo "agent-eventsd evidence: missing --pane" >&2; return 2; }
+  [[ -n "$state" ]] || { echo "agent-eventsd evidence: missing --state" >&2; return 2; }
+
+  # Fire-and-forget: no live watch means the hook lost the race with
+  # resolution or supersession. Not an error.
+  local live wid seq
+  live=$(watch_get_live "$pane") || true
+  [[ -n "$live" ]] || return 0
+  wid=$(printf '%s' "$live" | jq -r .watch_id)
+  [[ -n "$wid" ]] || return 0
+
+  seq=$(seq_next "$pane")
+  local args=(--watch-id "$wid" --seq "$seq" --candidate-state "$state" --source fast)
+  (( has_cursor )) && args+=(--transcript-cursor "$cursor")
+  (( has_hash ))   && args+=(--screen-hash "$hash")
+  watch_feed_evidence "${args[@]}" >/dev/null 2>&1 || true
+  return 0
+}
+
 _cmd_usage() {
   cat <<'USAGE'
 Usage: agent-eventsd <command> [args]
@@ -1198,6 +1241,8 @@ Commands:
   status                Primary-path health probe.
   serve                 Run the long-lived service loop (auto-started).
   timeout-pending <wid> Close a pending watch by id.
+  evidence  --pane P --state S [--transcript-cursor N] [--screen-hash H]
+            Feed fast-path evidence for the pane's live watch. Fire-and-forget.
 USAGE
 }
 
@@ -1212,6 +1257,7 @@ _eventsd_main() {
     status)          _cmd_status "$@" ;;
     serve)           _cmd_serve "$@" ;;
     timeout-pending) _cmd_timeout_pending "$@" ;;
+    evidence)        _cmd_evidence "$@" ;;
     -h|--help|"")    _cmd_usage ;;
     *) echo "agent-eventsd: unknown command: $cmd" >&2; return 2 ;;
   esac
