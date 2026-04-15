@@ -40,6 +40,12 @@ func setupDoctorHome(t *testing.T, repoPath string) string {
 		os.Symlink(filepath.Join(repoSymlink, hs.RelPath), filepath.Join(hookDir, hs.Name))
 	}
 
+	codexHookDir := filepath.Join(home, ".codex", "hooks")
+	os.MkdirAll(codexHookDir, 0o755)
+	for _, hs := range SharedCodexHookSymlinks() {
+		os.Symlink(filepath.Join(repoSymlink, hs.RelPath), filepath.Join(codexHookDir, hs.Name))
+	}
+
 	return home
 }
 
@@ -178,6 +184,35 @@ func TestDoctor_FixMode(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected broken to be reported as fixed")
+	}
+}
+
+func TestDoctor_WarnsWhenCodexHookSymlinkMissing(t *testing.T) {
+	tmp := t.TempDir()
+	repoPath := filepath.Join(tmp, "repo")
+	createSharedRuntime(t, repoPath)
+
+	home := setupDoctorHome(t, repoPath)
+	if err := os.Remove(filepath.Join(home, ".codex", "hooks", "codex-stop.sh")); err != nil {
+		t.Fatalf("remove codex-stop hook: %v", err)
+	}
+
+	reg := &config.Registry{}
+	writeRegistry(t, home, reg)
+
+	results, err := RunDoctor(repoPath, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, r := range results {
+		if r.Name == "~/.codex/hooks/codex-stop.sh" && r.Status == "warn" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected missing codex-stop hook warning")
 	}
 }
 

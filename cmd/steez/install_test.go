@@ -96,3 +96,29 @@ func TestInstallStarterExcludesDeprecatedPlanningSkills(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallCreatesCodexHookSymlinks(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoPath := findRepoRoot(t)
+	if code := cmdInstall([]string{"--repo", repoPath, "spec"}); code != 0 {
+		t.Fatalf("cmdInstall exit code = %d, want 0", code)
+	}
+
+	for _, hook := range installer.SharedCodexHookSymlinks() {
+		target := filepath.Join(home, ".codex", "hooks", hook.Name)
+		if err := installer.ValidateSymlink(target); err != nil {
+			t.Fatalf("validate codex hook symlink %s: %v", target, err)
+		}
+
+		resolved, err := os.Readlink(target)
+		if err != nil {
+			t.Fatalf("readlink %s: %v", target, err)
+		}
+		want := filepath.Join(home, ".steez", "repo", hook.RelPath)
+		if resolved != want {
+			t.Fatalf("symlink %s -> %s, want %s", target, resolved, want)
+		}
+	}
+}

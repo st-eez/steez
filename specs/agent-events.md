@@ -312,8 +312,8 @@ These rules apply on top of the TDD relationship above. They exist because steez
 
 ## Codex Stop hook
 
-`shared/steez/hooks/codex-stop.sh` is the Codex-side fast-evidence producer for turn-end. It reads the Codex `Stop` payload on stdin, takes the transcript byte-count as the `transcript_cursor`, and shells out `agent-eventsd evidence --pane "$TMUX_PANE" --state idle --transcript-cursor <cursor>` fire-and-forget. The resolver then closes the live watch on the pane through the canonical evidence path.
+`shared/steez/hooks/codex-stop.sh` is the Codex-side fast-evidence producer for turn-end. It reads the Codex `Stop` payload on stdin, takes the transcript byte-count as the `transcript_cursor`, shells out `agent-eventsd evidence --pane "$TMUX_PANE" --state idle --transcript-cursor <cursor>` fire-and-forget, and returns `{"continue":true}` on stdout so Codex accepts the hook result. The resolver then closes the live watch on the pane through the canonical evidence path.
 
-The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and does **not** mutate `~/.codex/config.toml` or `~/.codex/hooks.json`. Users opt in by setting `[features] codex_hooks = true` in `~/.codex/config.toml` and registering the Stop hook (with `async = true`) to point at `$HOME/.codex/hooks/codex-stop.sh`.
+The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and does **not** mutate `~/.codex/config.toml` or `~/.codex/hooks.json`. Users opt in by setting `[features] codex_hooks = true` in `~/.codex/config.toml` and registering a `Stop` hook group with no matcher override that points at `bash $HOME/.codex/hooks/codex-stop.sh`.
 
 Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state` and resolves at the `SILENCE_WINDOW_MS` + `RECONCILE_INTERVAL_MS` cadence, not the fast path.

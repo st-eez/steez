@@ -271,6 +271,7 @@ func cmdInstall(args []string) int {
 	// Check if settings.json needs the Skill hook registered.
 	if !*dryRun {
 		installer.CheckHookRegistration(home)
+		installer.CheckCodexHookRegistration(home)
 	}
 
 	// Build browse binary if requested.

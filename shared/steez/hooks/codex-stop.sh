@@ -13,8 +13,7 @@
 #        [features]
 #        codex_hooks = true
 #   2. Register this hook for the Stop event in ~/.codex/hooks.json:
-#        { "Stop": [ { "command": "$HOME/.codex/hooks/codex-stop.sh",
-#                      "async": true } ] }
+#        { "Stop": [ { "hooks": [ { "command": "bash $HOME/.codex/hooks/codex-stop.sh" } ] } ] }
 # The installer symlinks this file into ~/.codex/hooks/codex-stop.sh
 # but does NOT mutate config.toml or hooks.json.
 set -u
@@ -30,4 +29,4 @@ fi
 "$HOME/.steez/bin/agent-eventsd" evidence \
   --pane "$TMUX_PANE" --state idle \
   --transcript-cursor "$cursor" >/dev/null 2>&1 &
-exit 0
+printf '%s\n' '{"continue":true}'

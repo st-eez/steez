@@ -216,6 +216,13 @@ func TestIntegration_DoctorAfterInstall(t *testing.T) {
 		target := filepath.Join(hookDir, hs.Name)
 		CreateSymlink(source, target, false, false)
 	}
+	codexHookDir := filepath.Join(home, ".codex", "hooks")
+	os.MkdirAll(codexHookDir, 0o755)
+	for _, hs := range SharedCodexHookSymlinks() {
+		source := filepath.Join(repoSymlink, hs.RelPath)
+		target := filepath.Join(codexHookDir, hs.Name)
+		CreateSymlink(source, target, false, false)
+	}
 
 	// Install one skill.
 	source := filepath.Join(repoPath, "skills", "spawn-agent")

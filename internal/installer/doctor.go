@@ -189,36 +189,44 @@ func checkBinSymlinks(steezHome string) []CheckResult {
 }
 
 func checkHookSymlinks(home string) []CheckResult {
-	hookDir := filepath.Join(home, ".claude", "hooks")
+	var results []CheckResult
+	results = append(results, checkHookSymlinkSet(home, ".claude", SharedClaudeHookSymlinks())...)
+	results = append(results, checkHookSymlinkSet(home, ".codex", SharedCodexHookSymlinks())...)
+	return results
+}
+
+func checkHookSymlinkSet(home, appDir string, hooks []RuntimeSymlink) []CheckResult {
+	hookDir := filepath.Join(home, appDir, "hooks")
+	displayDir := "~/" + appDir + "/hooks"
 
 	var results []CheckResult
-
 	if _, err := os.Stat(hookDir); os.IsNotExist(err) {
 		results = append(results, CheckResult{
-			Name:    "Hooks directory",
+			Name:    fmt.Sprintf("%s directory", displayDir),
 			Status:  "warn",
-			Message: "Missing: ~/.claude/hooks/ — run steez install",
+			Message: fmt.Sprintf("Missing: %s/ — run steez install", displayDir),
 			FixCmd:  "steez install",
 		})
 		return results
 	}
 
-	for _, hook := range SharedClaudeHookSymlinks() {
+	for _, hook := range hooks {
 		path := filepath.Join(hookDir, hook.Name)
+		checkName := fmt.Sprintf("%s/%s", displayDir, hook.Name)
 		isSym, resolved, err := IsSymlink(path)
 		if err != nil || !isSym {
 			if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 				results = append(results, CheckResult{
-					Name:    fmt.Sprintf("hooks/%s", hook.Name),
+					Name:    checkName,
 					Status:  "warn",
-					Message: fmt.Sprintf("Missing: ~/.claude/hooks/%s", hook.Name),
+					Message: fmt.Sprintf("Missing: %s/%s", displayDir, hook.Name),
 					FixCmd:  "steez install",
 				})
 			} else {
 				results = append(results, CheckResult{
-					Name:    fmt.Sprintf("hooks/%s", hook.Name),
+					Name:    checkName,
 					Status:  "warn",
-					Message: fmt.Sprintf("~/.claude/hooks/%s is not a symlink", hook.Name),
+					Message: fmt.Sprintf("%s/%s is not a symlink", displayDir, hook.Name),
 				})
 			}
 			continue
@@ -226,18 +234,18 @@ func checkHookSymlinks(home string) []CheckResult {
 
 		if err := ValidateSymlink(path); err != nil {
 			results = append(results, CheckResult{
-				Name:    fmt.Sprintf("hooks/%s", hook.Name),
+				Name:    checkName,
 				Status:  "fail",
-				Message: fmt.Sprintf("Dangling: ~/.claude/hooks/%s → %s", hook.Name, resolved),
+				Message: fmt.Sprintf("Dangling: %s/%s → %s", displayDir, hook.Name, resolved),
 				FixCmd:  "steez install",
 			})
 			continue
 		}
 
 		results = append(results, CheckResult{
-			Name:    fmt.Sprintf("hooks/%s", hook.Name),
+			Name:    checkName,
 			Status:  "pass",
-			Message: fmt.Sprintf("~/.claude/hooks/%s → %s", hook.Name, resolved),
+			Message: fmt.Sprintf("%s/%s → %s", displayDir, hook.Name, resolved),
 		})
 	}
 

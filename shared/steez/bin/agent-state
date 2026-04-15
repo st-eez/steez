@@ -48,8 +48,9 @@ Setup (--detail):
   Codex CLI — enable hooks in ~/.codex/config.toml:
     [features]
     codex_hooks = true
-  Then create ~/.codex/hooks.json with a SessionStart hook pointing to
-  ~/.codex/hooks/session-start.sh (same pane variable pattern).
+  Then ensure ~/.codex/hooks.json registers SessionStart for
+  bash ~/.codex/hooks/session-start.sh and Stop for
+  bash ~/.codex/hooks/codex-stop.sh.
 EOF
   exit 0
 }
