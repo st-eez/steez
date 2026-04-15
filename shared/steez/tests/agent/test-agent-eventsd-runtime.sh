@@ -416,4 +416,151 @@ test_blocked_question_against_fake_claude_resolves_and_agent_history_returns_pro
 run_test "blocked:question against fake claude resolves and agent-history returns the question text" \
   test_blocked_question_against_fake_claude_resolves_and_agent_history_returns_prompt_text
 
+test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_delivery() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner ctl_dir ctl_path
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  ctl_dir="$STEEZ_STATE_DIR/fakes/ctl"
+  ctl_path="$ctl_dir/$target"
+  mkdir -p "$ctl_dir"
+  mkfifo "$ctl_path"
+
+  local target_transcript spawner_transcript
+  target_transcript=$(wait_pane_var "$target"  @transcript_path 25) || { echo "    target @transcript_path never set"; exit 1; }
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "first-live" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    first agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  write_fifo_line "$ctl_path" "state working" || {
+    echo "    fake control fifo never accepted state working"
+    exit 1
+  }
+
+  local i records first_watch second_watch first_state list sp_lines
+  for ((i=0; i<100; i++)); do
+    grep -F '"tool_use"' "$target_transcript" >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  grep -F '"tool_use"' "$target_transcript" >/dev/null 2>&1 || {
+    echo "    first turn never entered unresolved working state:"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  }
+
+  records=""
+  first_watch=""
+  for ((i=0; i<100; i++)); do
+    records=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+      "$HOME/.steez/bin/agent-eventsd" list 2>/dev/null || true)
+    first_watch=$(printf '%s\n' "$records" | jq -r --arg pane "$target" '
+      select(.pane_id == $pane and .state == "armed") | .watch_id
+    ' | head -1)
+    [[ -n "$first_watch" ]] && break
+    sleep 0.1
+  done
+  [[ -n "$first_watch" ]] || {
+    echo "    never found the first live watch:"
+    printf '%s\n' "$records" | sed 's/^/      /'
+    exit 1
+  }
+
+  send_rc=0
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "second-wins" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    second agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  records=""
+  first_state=""
+  second_watch=""
+  for ((i=0; i<100; i++)); do
+    records=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+      "$HOME/.steez/bin/agent-eventsd" list 2>/dev/null || true)
+    first_state=$(printf '%s\n' "$records" | jq -r --arg wid "$first_watch" '
+      select(.watch_id == $wid) | "\(.state):\(.close_reason // "")"
+    ' | head -1)
+    second_watch=$(printf '%s\n' "$records" | jq -r --arg pane "$target" --arg first "$first_watch" '
+      select(.pane_id == $pane and .watch_id != $first and .state == "armed") | .watch_id
+    ' | head -1)
+    [[ "$first_state" == "closed:superseded" && -n "$second_watch" ]] && break
+    sleep 0.1
+  done
+  [[ "$first_state" == "closed:superseded" ]] || {
+    echo "    first live watch was not superseded:"
+    printf '%s\n' "$records" | sed 's/^/      /'
+    exit 1
+  }
+  [[ -n "$second_watch" ]] || {
+    echo "    second watch never armed cleanly:"
+    printf '%s\n' "$records" | sed 's/^/      /'
+    exit 1
+  }
+
+  for ((i=0; i<100; i++)); do
+    grep -F 'second-wins' "$target_transcript" >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  grep -F 'second-wins' "$target_transcript" >/dev/null 2>&1 || {
+    echo "    second prompt never reached the target transcript:"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  }
+
+  write_fifo_line "$ctl_path" "state idle second-ok" || {
+    echo "    fake control fifo never accepted second state idle"
+    exit 1
+  }
+
+  list=""
+  sp_lines=0
+  for ((i=0; i<200; i++)); do
+    sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "${sp_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]] && break
+    sleep 0.1
+  done
+
+  sleep 1
+  sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
+  [[ "${sp_lines:-0}" -eq 1 ]] || {
+    echo "    expected exactly 1 spawner delivery after supersede, saw $sp_lines:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+  grep -F "[watch=$second_watch]" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner notification was not tied to the second watch:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+  if grep -F "[watch=$first_watch]" "$spawner_transcript" >/dev/null 2>&1; then
+    echo "    superseded first watch still delivered to the spawner:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  fi
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    watch did not self-clear after the second prompt:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+}
+run_test "second prompt supersedes the first live watch without duplicate delivery" \
+  test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_delivery
+
 report

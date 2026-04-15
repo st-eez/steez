@@ -4,9 +4,9 @@
 # wrapper preserves the "claude" basename in `ps` and the REN_SESSION=1
 # env for ren; this script is the behavior. Spec: specs/fake-agent-harness.md.
 #
-# Current slice: boot contract + auto-reply + blocked:question via the
-# control fifo. Later slices still own permission, supersede, degraded, and
-# pane-close behavior.
+# Current slice: boot contract + auto-reply + blocked:question and
+# working-state control via the fifo. Later slices still own permission,
+# degraded, and pane-close behavior.
 set -uo pipefail
 
 # Silently consume the documented permission-bypass flag. Any other
@@ -73,6 +73,20 @@ elif mode == "idle":
             "stop_reason": "end_turn",
         },
     }
+elif mode == "working":
+    msg_id, tool_id = sys.argv[3:]
+    entry = {
+        "type": "assistant",
+        "message": {
+            "id": msg_id,
+            "content": [{
+                "type": "tool_use",
+                "id": tool_id,
+                "name": "ReadFile",
+                "input": {"path": "/tmp/fake-working"},
+            }],
+        },
+    }
 elif mode == "blocked-question":
     msg_id, tool_id, question = sys.argv[3:]
     entry = {
@@ -117,6 +131,11 @@ drive_turn_from_fifo() {
     fi
 
     case "$cmd" in
+      "state working")
+        tool_counter=$((tool_counter + 1))
+        transcript_append "working" "$msg_id" "tool_$tool_counter"
+        return 0
+        ;;
       "state blocked:question "*)
         question="${cmd#state blocked:question }"
         tool_counter=$((tool_counter + 1))
