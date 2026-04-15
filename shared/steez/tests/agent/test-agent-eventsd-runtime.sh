@@ -233,4 +233,72 @@ test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_
 run_test "watched prompt against fake claude fires exactly one idle notification and watch self-clears" \
   test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_watch_self_clears
 
+# Acceptance #5 (fake-agent-harness spec): "In the no-watch scenario,
+# agent-send --no-watch delivers bytes to the fake, creates no watch
+# visible via agent-watch list, and produces no delivery against the
+# spawner pane."
+test_no_watch_against_fake_claude_delivers_to_target_without_live_watch_or_spawner_notification() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  local target_transcript spawner_transcript
+  target_transcript=$(wait_pane_var "$target"  @transcript_path 25) || { echo "    target @transcript_path never set"; exit 1; }
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+  [[ -f "$target_transcript"  ]] || { echo "    target transcript missing: $target_transcript"; exit 1; }
+  [[ -f "$spawner_transcript" ]] || { echo "    spawner transcript missing: $spawner_transcript"; exit 1; }
+
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-send" --no-watch --spawner "$spawner" "$target" "hello-no-watch" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send --no-watch failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  local i lines
+  for ((i=0; i<100; i++)); do
+    lines=$(wc -l < "$target_transcript" 2>/dev/null | tr -d ' ')
+    [[ "${lines:-0}" -ge 2 ]] && break
+    sleep 0.1
+  done
+  lines=$(wc -l < "$target_transcript" 2>/dev/null | tr -d ' ')
+  [[ "${lines:-0}" -ge 2 ]] || {
+    echo "    fake target never handled --no-watch delivery (transcript lines=$lines):"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  }
+
+  grep -F 'hello-no-watch' "$target_transcript" >/dev/null 2>&1 || {
+    echo "    target transcript never received the delivered bytes:"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  }
+
+  local list
+  list=$(run_bin agent-watch list 2>/dev/null || true)
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    expected no live watch after --no-watch, saw:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+
+  sleep 1
+  local sp_lines
+  sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
+  [[ "${sp_lines:-0}" -eq 0 ]] || {
+    echo "    expected no spawner notification after --no-watch, saw $sp_lines:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+}
+run_test "--no-watch against fake claude delivers to target without live watch or spawner notification" \
+  test_no_watch_against_fake_claude_delivers_to_target_without_live_watch_or_spawner_notification
+
 report
