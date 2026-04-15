@@ -681,4 +681,95 @@ test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked
 run_test "loss of fast evidence degrades through agent-state and times out to blocked:unknown" \
   test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked_unknown
 
+
+# Acceptance #9 (fake-agent-harness spec): "In the pane close scenario,
+# exiting the fake while a watch is live causes the watch to close per the
+# pane-close rules, and agent-watch list no longer shows it as live."
+# This slice pins the armed-watch path: the fake agent exits mid-turn, the
+# daemon treats the watched pane like a pane-close event, falls back to
+# blocked:unknown, notifies the spawner once, and frees the live slot.
+test_fake_claude_exit_while_watched_resolves_blocked_unknown_and_clears_live_watch() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner ctl_dir ctl_path
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  ctl_dir="$STEEZ_STATE_DIR/fakes/ctl"
+  ctl_path="$ctl_dir/$target"
+  mkdir -p "$ctl_dir"
+  mkfifo "$ctl_path"
+
+  local spawner_transcript
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+  [[ -f "$spawner_transcript" ]] || { echo "    spawner transcript missing: $spawner_transcript"; exit 1; }
+
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    EVENTSD_TICK_INTERVAL_SEC=0.05 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "exit-mid-turn" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  local i list agent_gone blocked_lines
+  list=""
+  for ((i=0; i<100; i++)); do
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    printf '%s\n' "$list" | grep -F "$target" >/dev/null 2>&1 && break
+    sleep 0.1
+  done
+  printf '%s\n' "$list" | grep -F "$target" >/dev/null 2>&1 || {
+    echo "    target never appeared as a live watch before exit:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+
+  write_fifo_line "$ctl_path" "exit" || {
+    echo "    fake control fifo never accepted exit"
+    exit 1
+  }
+
+  agent_gone=0
+  for ((i=0; i<100; i++)); do
+    if ! run_bin agent-state "$target" >/dev/null 2>&1; then
+      agent_gone=1
+      break
+    fi
+    sleep 0.1
+  done
+  [[ "$agent_gone" -eq 1 ]] || {
+    echo "    fake target never stopped being a recognized agent after control fifo exit"
+    exit 1
+  }
+
+  list=""
+  blocked_lines=0
+  for ((i=0; i<200; i++)); do
+    blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    [[ "${blocked_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]] && break
+    sleep 0.1
+  done
+
+  sleep 1
+  blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+  [[ "${blocked_lines:-0}" -eq 1 ]] || {
+    echo "    expected exactly 1 blocked:unknown pane-close notification, saw $blocked_lines:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+  [[ "$list" == "(no active watches)" ]] || {
+    echo "    pane-close left a stray live watch:"
+    printf '%s\n' "$list" | sed 's/^/      /'
+    exit 1
+  }
+}
+run_test "fake claude exit while watched resolves blocked:unknown and clears the live watch" \
+  test_fake_claude_exit_while_watched_resolves_blocked_unknown_and_clears_live_watch
+
 report

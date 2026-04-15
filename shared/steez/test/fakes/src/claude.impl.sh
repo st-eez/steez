@@ -131,6 +131,9 @@ drive_turn_from_fifo() {
     fi
 
     case "$cmd" in
+      "exit")
+        exit 0
+        ;;
       "state working")
         tool_counter=$((tool_counter + 1))
         transcript_append "working" "$msg_id" "tool_$tool_counter"
