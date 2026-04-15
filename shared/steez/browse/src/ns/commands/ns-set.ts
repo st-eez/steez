@@ -377,6 +377,11 @@ async function recoverFromRedirect(bm: BrowserManager): Promise<NsError | null> 
   await page.waitForLoadState('load', { timeout: 6_000 }).catch(() => {});
   await waitForSettle(page, { timeoutMs: 3_000, stableMs: 500 });
 
+  // Obvious session-expired shapes (login URL, "session has expired" notice)
+  // are knowable without polling — check before burning the 6s NS-API wait.
+  const sessionErr = await detectSessionExpiry(page);
+  if (sessionErr) return sessionErr;
+
   // Poll for NS API readiness. page.waitForFunction has been observed to hang
   // past its own timeout on freshly-navigated pages, so we poll manually.
   const nsApiDeadline = Date.now() + 6_000;
@@ -388,15 +393,9 @@ async function recoverFromRedirect(bm: BrowserManager): Promise<NsError | null> 
     await new Promise(r => setTimeout(r, 100));
   }
 
-  // URL + body-text pattern match for the known session-expired shapes
-  // (login redirect, "session has expired" notice, etc).
-  const sessionErr = await detectSessionExpiry(page);
-  if (sessionErr) return sessionErr;
-
-  // Definitive NS-API readiness check on the active target (NS can load its
-  // API inside a nested iframe). If it's missing after the wait ceiling,
-  // the redirect did not land on a usable form — treat as session-expired
-  // since that's the overwhelmingly common cause of a post-redirect API loss.
+  // Backstop: NS API still missing after the wait ceiling. In practice the
+  // overwhelming cause is an expired session cookie landing on a page that
+  // detectSessionExpiry's text patterns didn't match, so surface that.
   const target = bm.getActiveFrameOrPage();
   const guardErr = await guardNsApi(target);
   if (guardErr) {
