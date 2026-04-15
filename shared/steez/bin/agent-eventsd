@@ -1006,7 +1006,7 @@ _cmd_list() {
 # Auto-start lives in _cmd_prearm / _cmd_start; status deliberately does
 # not spawn so operators see real liveness.
 _cmd_status() {
-  if _eventsd_service_alive; then
+  if _eventsd_service_alive && [[ -d "$_EVENTSD_STATE_DIR" && -w "$_EVENTSD_STATE_DIR" ]]; then
     echo "ready"
     return 0
   fi

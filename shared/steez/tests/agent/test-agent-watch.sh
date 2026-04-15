@@ -272,6 +272,35 @@ test_daemon_status_reports_agent_eventsd_health() {
 }
 run_test "daemon_status_reports_agent_eventsd_health" test_daemon_status_reports_agent_eventsd_health
 
+test_daemon_status_is_unavailable_when_service_state_dir_is_not_writable() {
+  # Spec (agent-watch daemon-status): ready requires both a live
+  # long-lived service and a writable eventsd state dir.
+  _install_real_eventsd
+  _install_daemon_tripwire
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
+
+  local eventsd_dir="$STEEZ_STATE_DIR/eventsd"
+  chmod 0555 "$eventsd_dir" || {
+    _stop_real_eventsd_service >/dev/null 2>&1 || true
+    echo "    failed to make eventsd state dir read-only"
+    return 1
+  }
+
+  local out rc=0
+  out=$("$BIN_DIR/agent-watch" daemon-status 2>&1) || rc=$?
+
+  chmod 0755 "$eventsd_dir" || true
+  _stop_real_eventsd_service >/dev/null 2>&1 || true
+
+  assert_exit_code "1" "$rc"
+  assert_contains "$out" "agent-eventsd" || return 1
+  assert_contains "$out" "unavailable" || return 1
+  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
+    || { echo "    daemon-status spawned agent-watch-daemon"; return 1; }
+}
+run_test "daemon_status_is_unavailable_when_service_state_dir_is_not_writable" \
+  test_daemon_status_is_unavailable_when_service_state_dir_is_not_writable
+
 test_daemon_status_is_unavailable_when_no_long_lived_service_running() {
   # A writable state dir is not enough — without the long-lived service,
   # armed watches never tick and notifications never fire. daemon-status
