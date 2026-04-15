@@ -72,3 +72,27 @@ func TestInstallSpecInstallsClaudeAndCodexSkills(t *testing.T) {
 		t.Fatal("registry missing codex-global spec entry")
 	}
 }
+
+func TestInstallStarterExcludesDeprecatedPlanningSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoPath := findRepoRoot(t)
+	if code := cmdInstall([]string{"--repo", repoPath, "starter"}); code != 0 {
+		t.Fatalf("cmdInstall exit code = %d, want 0", code)
+	}
+
+	for _, name := range []string{"spec", "agenda", "jira"} {
+		target := filepath.Join(home, ".claude", "skills", name)
+		if err := installer.ValidateSymlink(target); err != nil {
+			t.Fatalf("validate starter symlink %s: %v", target, err)
+		}
+	}
+
+	for _, name := range []string{"workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "autoplan"} {
+		target := filepath.Join(home, ".claude", "skills", name)
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("deprecated planning skill still installed at %s", target)
+		}
+	}
+}

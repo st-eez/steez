@@ -133,23 +133,14 @@ not inline telemetry. The hook fires mechanically on every Skill tool invocation
 Skills communicate through the filesystem, not through shared memory:
 
 ```
-/office-hours
-  writes → ~/.steez/projects/{slug}/{user}-{branch}-design-{ts}.md
+/spec
+  writes → plans/<bead-id>-<topic-slug>-design-spec.md
            │
-/plan-ceo-review
-  reads  ← design doc
-  writes → review log entry (via review-log)
-           │
-/plan-design-review
-  reads  ← design doc + prior review logs
-  writes → review log entry
-           │
-/plan-eng-review
-  reads  ← design doc + prior review logs
-  writes → review log entry
+Build step
+  reads  ← design spec
 ```
 
-`/autoplan` runs the three plan reviews sequentially. `/workshop` sits upstream of this chain but communicates through beads (one bead per session, `--label=workshop`) rather than filesystem artifacts.
+The legacy planning stack still exists in the repo, but `/spec` is the only active planning front door on the install surface.
 
 ### Review Readiness Dashboard
 
@@ -235,7 +226,7 @@ This means crashed sessions don't permanently block accounts. The next agent to 
 Skill errors are for the AI agent, not for humans. Every error message should be actionable — tell Claude what went wrong and what to do next. This principle is inherited from gstack's browse server (which rewrites Playwright errors through `wrapError()`) and applied to skill design:
 
 - If a config value is missing, fall back to a sensible default
-- If a design doc isn't found, the skill tells the agent to run `/office-hours` first
+- If a design spec isn't found, the skill tells the agent to run `/spec` first
 - If a review log is empty, the Review Readiness Dashboard says "no reviews found" instead of erroring
 
 ## What's intentionally not here

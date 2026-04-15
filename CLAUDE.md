@@ -121,7 +121,7 @@ steez/                                    # repo root
 │   └── spec-review.jsonl                 # spec/review analytics
 ├── projects/{slug}/
 │   ├── {branch}-reviews.jsonl            # review logs per branch
-│   └── *-design-*.md                     # design docs from /office-hours
+│   └── *-design-*.md                     # legacy planning artifacts from deprecated front doors
 └── browse/
     └── chromium-profile/                 # persistent Chromium state (login sessions, cache)
 ```

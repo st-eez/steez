@@ -8,22 +8,14 @@ Forked from [gstack](https://github.com/garrytan/gstack) (v0.13.0.0), stripped t
 
 ```
 You:    I want to add OAuth login to my side project.
-You:    /workshop
+You:    /spec
 
-Claude: Before you build anything — is this actually an auth
-        problem, or is it "I have no users and auth feels
-        like productive work"? [five lenses fire, carry-cost
-        lands hardest] Build it, but keep scope to just login.
-        Drops a bead.
-
-You:    /office-hours
-        [six forcing questions on the committed product]
-        [writes design doc → saved to ~/.steez/projects/]
-
-You:    /autoplan
-        [runs /plan-ceo-review, /plan-design-review,
-        /plan-eng-review in sequence, surfaces only taste
-        decisions for approval]
+Claude: Before you build anything — is this actually the
+        right problem, what does the carry cost look like,
+        and what is the smallest useful slice? [writes
+        plans/<bead>-oauth-login-design-spec.md]
+        [asks one load-bearing question]
+        [locks the implementation slices]
 
 You:    Approve plan. Build it.
         [writes 1,800 lines across 9 files]
@@ -43,7 +35,7 @@ You:    /codex review
         All green. Ready to merge.
 ```
 
-You said "OAuth login." `/workshop` said "is this actually an auth problem, or productive work that feels like progress?" — because it listened to the pain, not the feature request. Seven commands, fuzzy hunch to merge-ready code. Every skill reads what the previous one wrote — the workshop bead, the design doc, the test plan — so nothing falls through the cracks.
+You said "OAuth login." `/spec` turned that into an execution contract before code existed. The plan got pressure-tested, sliced, and written down in-repo. Then the rest of the sprint could execute against something concrete.
 
 ## The sprint
 
@@ -51,16 +43,13 @@ steez is a process, not a toolbox. The skills run in the order a sprint runs:
 
 **Think → Plan → Build → Test → Review**
 
-Each skill feeds into the next. `/workshop` sharpens fuzzy ideas before they hit the plan pipeline. `/office-hours` writes a design doc that `/plan-ceo-review` reads. `/plan-eng-review` writes a test plan that `/steez-qa` picks up. `/codex review` and `/cso` catch issues before you merge. Nothing falls through the cracks because every step knows what came before it.
+`/spec` is the planning front door for software changes. It writes the design spec the build step executes against. `/steez-qa`, `/codex review`, and `/cso` are still the downstream safety net before merge.
+
+The old planning stack still ships in the repo for explicit install by name, but it is deprecated and no longer part of the built-in install profiles.
 
 | Skill | Your specialist | What they do |
 |-------|----------------|--------------|
-| `/workshop` | **Thinking Partner** | Start here for fuzzy ideas. Five lenses (XY check, carry cost, pre-mortem, landscape check, smallest disprover) to chew on half-formed thoughts until they dispose into a bead, a memory entry, a kill, or a graduation to `/office-hours`. |
-| `/office-hours` | **Product Strategist** | Six forcing questions that reframe the problem before you write code. Two modes: Startup (diagnostic) and Builder (brainstorm). Writes a design doc that feeds every downstream skill. |
-| `/plan-ceo-review` | **CEO / Founder** | Rethink the problem. Find the 10-star product hiding inside the request. Four modes: Expansion, Selective Expansion, Hold Scope, Reduction. |
-| `/plan-eng-review` | **Eng Manager** | Lock in architecture, data flow, edge cases, test coverage. ASCII diagrams. Forces hidden assumptions into the open. |
-| `/plan-design-review` | **Senior Designer** | Rates each design dimension 0-10, explains what a 10 looks like, then edits the plan to get there. AI slop detection. |
-| `/autoplan` | **Review Pipeline** | One command, fully reviewed plan. Runs CEO → design → eng review automatically with encoded decision principles. Surfaces only taste decisions for your approval. |
+| `/spec` | **Planner** | The front door for planned software changes. Pressure-tests the ask, writes a repo-local design spec, and stops when implementation can run slice by slice without reconstructing the conversation. |
 | `/agenda` | **Morning Planner** | Structured morning triage. Overdue tasks, inbox, daily slate — the ritual that turns a pile of open loops into a day's work. |
 | `/jira` | **Jira Operator** | Manage Jira tickets — search, create, update, transition, log time. |
 | `/browse` | **Browser Operator** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
@@ -106,8 +95,8 @@ steez setup     # interactive TUI
 
 ```sh
 steez setup           # Interactive TUI — pick skills to install
-steez install starter # Install the starter kit (8 workflow skills)
-steez install all     # Install everything
+steez install starter # Install the starter kit (3 workflow skills)
+steez install all     # Install all active skills
 steez list            # Show installed skills
 steez doctor          # Validate install health
 steez update          # Pull latest and re-link
@@ -117,16 +106,16 @@ steez update          # Pull latest and re-link
 
 | Category | Skills | Description |
 |---|---|---|
-| **Workflow** | spec, workshop, office-hours, plan-ceo-review, plan-eng-review, plan-design-review, agenda, jira | Sprint pipeline: Think, Plan, Build |
+| **Workflow** | spec, agenda, jira | Active planning and daily workflow surface |
 | **QA & Testing** | browse, steez-qa, steez-qa-only, design-review | Browser-based testing and visual QA |
 | **Infrastructure** | investigate, cso, spawn-agent, audit | Debugging, security, and orchestration |
 | **Design** | design-consultation | Design system creation |
-| **Meta** | codex, autoplan, reminders, loop-prompt, sharpen-skill | Automation, AI consult, and skill improvement |
+| **Meta** | codex, reminders, loop-prompt, sharpen-skill | Automation, AI consult, and skill improvement |
 
 ## Profiles
 
-- **Starter Kit** — 8 workflow skills (the sprint pipeline spine). Recommended for new users.
-- **All** — Everything available.
+- **Starter Kit** — 3 workflow skills on the active planning surface. Recommended for new users.
+- **All** — All active skills.
 
 ## Development
 
@@ -153,8 +142,8 @@ Skills write session data and analytics to `~/.steez/` (not in the repo):
     {slug}.md
   projects/
     {slug}/
-      *-design-*.md              # design docs from /office-hours
-      *-reviews.jsonl            # review logs from /plan-ceo-review, /plan-eng-review, /plan-design-review
+      *-design-*.md              # legacy planning artifacts from deprecated front doors
+      *-reviews.jsonl            # legacy review logs from deprecated planning skills
   browse/                        # browse daemon state
     auth.json                    # NS credentials (chmod 600, slot-keyed for multi-agent)
     locks/                       # account lock files (auto-managed, PID + 2h TTL)

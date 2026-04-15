@@ -50,6 +50,32 @@ func TestLoadManifestIncludesSpecSkillAndWorkflowCategory(t *testing.T) {
 	t.Fatal("workflow category missing spec skill")
 }
 
+func TestLoadManifestDeprecatedPlanningSkillsAreNotInInstallCategories(t *testing.T) {
+	repoPath := findRepoRoot(t)
+
+	manifest, err := LoadManifest(filepath.Join(repoPath, "skills.json"))
+	if err != nil {
+		t.Fatalf("loading manifest: %v", err)
+	}
+
+	deprecated := map[string]bool{
+		"workshop":           true,
+		"office-hours":       true,
+		"plan-ceo-review":    true,
+		"plan-eng-review":    true,
+		"plan-design-review": true,
+		"autoplan":           true,
+	}
+
+	for categoryName, category := range manifest.Categories {
+		for _, skill := range category.Skills {
+			if deprecated[skill.Name] {
+				t.Fatalf("category %q still exposes deprecated planning skill %q", categoryName, skill.Name)
+			}
+		}
+	}
+}
+
 func TestIntegration_CleanInstall(t *testing.T) {
 	repoPath := findRepoRoot(t)
 	home := setupTestHome(t)
@@ -72,8 +98,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		t.Fatalf("resolving profile: %v", err)
 	}
 
-	if len(skills) != 8 {
-		t.Fatalf("starter profile has %d skills, want 8", len(skills))
+	if len(skills) != 3 {
+		t.Fatalf("starter profile has %d skills, want 3", len(skills))
 	}
 
 	// Create repo symlink.
@@ -102,9 +128,9 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		config.AddToRegistry(reg, name, source, target)
 	}
 
-	// Verify 8 entries (8 skills, repo/bin symlinks not in registry).
-	if len(reg.Symlinks) != 8 {
-		t.Errorf("registry has %d entries, want 8", len(reg.Symlinks))
+	// Verify 3 entries (3 skills, repo/bin symlinks not in registry).
+	if len(reg.Symlinks) != 3 {
+		t.Errorf("registry has %d entries, want 3", len(reg.Symlinks))
 	}
 
 	// Save and reload registry to verify persistence.
@@ -113,8 +139,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading registry: %v", err)
 	}
-	if len(loaded.Symlinks) != 8 {
-		t.Errorf("loaded registry has %d entries, want 8", len(loaded.Symlinks))
+	if len(loaded.Symlinks) != 3 {
+		t.Errorf("loaded registry has %d entries, want 3", len(loaded.Symlinks))
 	}
 
 	// Verify all symlinks resolve.

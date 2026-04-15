@@ -82,7 +82,7 @@
     "workflow": {
       "label": "Workflow",
       "description": "Sprint pipeline: Think → Plan → Build → QA",
-      "skills": ["spec", "workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "agenda", "jira"]
+      "skills": ["spec", "agenda", "jira"]
     },
     "qa": {
       "label": "QA & Testing",
@@ -102,18 +102,18 @@
     "meta": {
       "label": "Meta",
       "description": "Automation, AI consult, and skill improvement",
-      "skills": ["codex", "autoplan", "reminders", "loop-prompt", "sharpen-skill", "skillify", "ren-update"]
+      "skills": ["codex", "reminders", "loop-prompt", "sharpen-skill", "skillify", "ren-update"]
     }
   },
   "profiles": {
     "starter": {
       "label": "Starter Kit (recommended)",
-      "description": "8 workflow skills — the sprint pipeline spine",
+      "description": "3 workflow skills — the active planning surface",
       "categories": ["workflow"]
     },
     "all": {
       "label": "All Skills",
-      "description": "Everything available",
+      "description": "All active skills",
       "exclude_categories": []
     }
   },

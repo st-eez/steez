@@ -194,8 +194,8 @@ var profiles = []struct {
 	label string
 	desc  string
 }{
-	{"starter", "Starter Kit (recommended)", "8 workflow skills — the sprint pipeline spine"},
-	{"all", "All Skills", "Everything available"},
+	{"starter", "Starter Kit (recommended)", "3 workflow skills — the active planning surface"},
+	{"all", "All Skills", "All active skills"},
 	{"custom", "Custom", "Pick exactly what you want"},
 }
 
