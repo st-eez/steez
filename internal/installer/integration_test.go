@@ -24,6 +24,32 @@ func findRepoRoot(t *testing.T) string {
 	return root
 }
 
+func TestLoadManifestIncludesSpecSkillAndWorkflowCategory(t *testing.T) {
+	repoPath := findRepoRoot(t)
+
+	manifest, err := LoadManifest(filepath.Join(repoPath, "skills.json"))
+	if err != nil {
+		t.Fatalf("loading manifest: %v", err)
+	}
+
+	if _, ok := manifest.Skills["spec"]; !ok {
+		t.Fatal("manifest missing spec skill")
+	}
+
+	workflow, ok := manifest.Categories["workflow"]
+	if !ok {
+		t.Fatal("manifest missing workflow category")
+	}
+
+	for _, skill := range workflow.Skills {
+		if skill.Name == "spec" {
+			return
+		}
+	}
+
+	t.Fatal("workflow category missing spec skill")
+}
+
 func TestIntegration_CleanInstall(t *testing.T) {
 	repoPath := findRepoRoot(t)
 	home := setupTestHome(t)
@@ -46,8 +72,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		t.Fatalf("resolving profile: %v", err)
 	}
 
-	if len(skills) != 7 {
-		t.Fatalf("starter profile has %d skills, want 7", len(skills))
+	if len(skills) != 8 {
+		t.Fatalf("starter profile has %d skills, want 8", len(skills))
 	}
 
 	// Create repo symlink.
@@ -76,9 +102,9 @@ func TestIntegration_CleanInstall(t *testing.T) {
 		config.AddToRegistry(reg, name, source, target)
 	}
 
-	// Verify 7 entries (7 skills, repo/bin symlinks not in registry).
-	if len(reg.Symlinks) != 7 {
-		t.Errorf("registry has %d entries, want 7", len(reg.Symlinks))
+	// Verify 8 entries (8 skills, repo/bin symlinks not in registry).
+	if len(reg.Symlinks) != 8 {
+		t.Errorf("registry has %d entries, want 8", len(reg.Symlinks))
 	}
 
 	// Save and reload registry to verify persistence.
@@ -87,8 +113,8 @@ func TestIntegration_CleanInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loading registry: %v", err)
 	}
-	if len(loaded.Symlinks) != 7 {
-		t.Errorf("loaded registry has %d entries, want 7", len(loaded.Symlinks))
+	if len(loaded.Symlinks) != 8 {
+		t.Errorf("loaded registry has %d entries, want 8", len(loaded.Symlinks))
 	}
 
 	// Verify all symlinks resolve.

@@ -86,7 +86,7 @@ steez/                                    # repo root
 │   └── package.json                      # ecosystem tests
 ├── skills/                               # skill directories
 │   ├── browse/SKILL.md                   # browse skill definition
-│   └── {name}/SKILL.md                   # 22 workflow skills
+│   └── {name}/SKILL.md                   # 23 skill directories
 ├── cmd/steez/                            # Go CLI entrypoint
 ├── internal/                             # Go packages
 ├── specs/                                # subsystem contracts (source of truth)

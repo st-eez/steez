@@ -4,7 +4,7 @@ This document explains **why** steez is built the way it is. For the skill catal
 
 ## The core idea
 
-steez is 22 Markdown files that turn Claude Code into a structured engineering team. No build step for the skills, no runtime dependencies, no server — just SKILL.md files that Claude reads when you invoke a slash command.
+steez is 23 Markdown files that turn Claude Code into a structured engineering team. No build step for the skills, no runtime dependencies, no server — just SKILL.md files that Claude reads when you invoke a slash command.
 
 The key insight: AI agents don't need frameworks, they need **opinionated instructions**. A well-written SKILL.md with clear phases, explicit voice, and filesystem-based data flow produces better results than a sophisticated template engine. steez adapts gstack's sprint pipeline — Think → Plan → Build → Test → Review — with a Go CLI installer for symlink management and git for version control.
 
@@ -22,7 +22,7 @@ steez/                                # repo root
 │   ├── config/                       # ~/.steez/installed.json loader
 │   ├── tui/                          # Bubble Tea setup flow
 │   └── updater/                      # git-based update logic
-├── skills/                           # 22 skill directories, each {name}/SKILL.md
+├── skills/                           # 23 skill directories, each {name}/SKILL.md
 ├── skills.json                       # manifest: skills + categories + profiles
 ├── shared/steez/                     # shared runtime (deployed via symlinks)
 │   ├── bin/                          # 9 bash helper scripts
@@ -240,7 +240,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 
 ## What's intentionally not here
 
-- **No template system.** 22 skills is manageable by hand. The build step complexity isn't justified. See "Why no templates" above.
+- **No template system.** 23 skills is manageable by hand. The build step complexity isn't justified. See "Why no templates" above.
 - **No multi-user support.** This is personal tooling. No contributor detection, no collaborative review workflows.
 - **No remote telemetry.** All analytics are local JSONL files. No Supabase, no network calls.
 - **No onboarding flow.** Config is pre-seeded. No first-run prompts, no opt-in gates.
@@ -258,7 +258,7 @@ Skill errors are for the AI agent, not for humans. Every error message should be
 | Telemetry | Local JSONL + opt-in Supabase sync | Local JSONL only |
 | Onboarding | First-run prompts | None (pre-seeded) |
 | Voice | Garry Tan / GStack identity | Agent definition (soul.md) |
-| Skill count | 29 skills | 22 skills |
+| Skill count | 29 skills | 23 skills |
 | Update mechanism | `/gstack-upgrade` self-updater | `git pull` in source checkout (live via symlinks) |
 
 ## Extending steez

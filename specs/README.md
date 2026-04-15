@@ -2,6 +2,12 @@
 
 Root specifications for steez subsystems. Each spec documents what IS — purpose, interface, behavioral contracts, and integration points. Specs are the source of truth that tests and docs reference.
 
+## Workflow Specs
+
+| Spec | Path | Search Terms |
+|------|------|-------------|
+| [spec](./spec.md) | `skills/spec/SKILL.md` | planning front door, design spec, software change planning, implementation slices, tdd handoff |
+
 ## Agent Subsystem
 
 The agent subsystem manages AI coding agents (ren, ren-codex, claude, codex) across tmux panes. A long-lived per-user service (`agent-eventsd`) owns watch state; surrounding scripts handle state detection, message delivery, transcript parsing, and orchestrated spawning.

@@ -106,7 +106,7 @@ steez setup     # interactive TUI
 
 ```sh
 steez setup           # Interactive TUI — pick skills to install
-steez install starter # Install the starter kit (7 workflow skills)
+steez install starter # Install the starter kit (8 workflow skills)
 steez install all     # Install everything
 steez list            # Show installed skills
 steez doctor          # Validate install health
@@ -117,7 +117,7 @@ steez update          # Pull latest and re-link
 
 | Category | Skills | Description |
 |---|---|---|
-| **Workflow** | workshop, office-hours, plan-ceo-review, plan-eng-review, plan-design-review, agenda, jira | Sprint pipeline: Think, Plan, Build |
+| **Workflow** | spec, workshop, office-hours, plan-ceo-review, plan-eng-review, plan-design-review, agenda, jira | Sprint pipeline: Think, Plan, Build |
 | **QA & Testing** | browse, steez-qa, steez-qa-only, design-review | Browser-based testing and visual QA |
 | **Infrastructure** | investigate, cso, spawn-agent, audit | Debugging, security, and orchestration |
 | **Design** | design-consultation | Design system creation |
@@ -125,7 +125,7 @@ steez update          # Pull latest and re-link
 
 ## Profiles
 
-- **Starter Kit** — 7 workflow skills (the sprint pipeline spine). Recommended for new users.
+- **Starter Kit** — 8 workflow skills (the sprint pipeline spine). Recommended for new users.
 - **All** — Everything available.
 
 ## Development

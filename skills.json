@@ -1,6 +1,9 @@
 {
   "version": "1.0.0",
   "skills": {
+    "spec": {
+      "description": "Plan software changes into an execution-ready design spec for /tdd"
+    },
     "workshop": {
       "description": "Thinking partner for fuzzy ideas — five lenses, one bead per session"
     },
@@ -79,7 +82,7 @@
     "workflow": {
       "label": "Workflow",
       "description": "Sprint pipeline: Think → Plan → Build → QA",
-      "skills": ["workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "agenda", "jira"]
+      "skills": ["spec", "workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "agenda", "jira"]
     },
     "qa": {
       "label": "QA & Testing",
@@ -105,7 +108,7 @@
   "profiles": {
     "starter": {
       "label": "Starter Kit (recommended)",
-      "description": "7 workflow skills — the sprint pipeline spine",
+      "description": "8 workflow skills — the sprint pipeline spine",
       "categories": ["workflow"]
     },
     "all": {
