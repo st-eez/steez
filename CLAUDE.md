@@ -26,9 +26,9 @@
 cd shared/steez/browse
 bun install                # install dependencies (playwright, diff)
 bun run build              # compile browse binary + node server
-bun test                   # run all tests except e2e (<5s, free)
-bun test:core              # run core browser tests only
-bun test:ns                # run NetSuite automation tests only
+bun run test               # run all tests except e2e
+bun run test:core          # run core browser tests only
+bun run test:ns            # run NetSuite automation tests only
 bun run dev <cmd>          # run CLI in dev mode (no compile step)
 
 # Go CLI
@@ -52,7 +52,7 @@ upstream-diff <skill>            # diff a steez skill against gstack upstream
 upstream-diff --all              # show divergence summary for all skills
 ```
 
-`bun test` runs before every commit to browse source. Both core and NS tests
+`bun run test` runs before every commit to browse source. Both core and NS tests
 start local HTTP servers with fixture HTML — no external dependencies, no
 network calls, no credentials.
 
