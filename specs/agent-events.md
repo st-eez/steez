@@ -39,7 +39,7 @@ Exactly one `agent-eventsd` service instance runs per user at a time. That servi
 The `agent-eventsd` executable has two roles:
 
 1. **Service mode.** Runs the long-lived daemon in the foreground (`agent-eventsd serve`, or the equivalent default when launched by the auto-start path). One per user.
-2. **Client mode.** Subcommands `prearm`, `start`, `remove`, `list`, and `status` are thin clients. Each client invocation connects to the running service, submits a request, receives a response, and exits. Client invocations never execute lifecycle logic in-process and never run timers.
+2. **Client mode.** Subcommands `prearm`, `start`, `remove`, `list`, `status`, and `evidence` are thin clients. Each client invocation connects to the running service, submits a request, receives a response, and exits. Client invocations never execute lifecycle logic in-process and never run timers.
 
 The first client invocation that finds no running service **must** start one and then issue its request against that service (auto-start). Subsequent invocations reuse it. Clients never fall back to running watch logic locally when the service is missing — they surface an error or trigger auto-start, they do not simulate the daemon.
 
@@ -68,6 +68,7 @@ Events are exchanged between clients and the running service (see Runtime shape)
 - `watch.start` promotes a pending watch to armed.
 - `watch.remove` closes an unresolved watch.
 - fast evidence events come from transcript append, screen refresh, or both.
+- native-hook CLI injection is a valid fast-evidence producer: agent hooks (Claude `Stop` / `PermissionRequest` / `PreToolUse(AskUserQuestion)`, and Codex equivalents) shell out to `agent-eventsd evidence` on turn boundaries, feeding the canonical resolver before the degraded-fallback silence window engages.
 - degraded reconciliation comes from `agent-state`.
 - pane closure is a terminal watcher event.
 

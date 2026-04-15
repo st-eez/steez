@@ -982,4 +982,127 @@ test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch
 run_test "evidence CLI on armed watch fires delivery on spawner and clears the live watch" \
   test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch
 
+# Production hook path: real Claude invokes `permission-state.sh` as a
+# `Stop` hook at turn-end. The hook must translate that into
+# `agent-eventsd evidence --state idle` so the armed watch resolves via
+# the fast path, not the 30s degraded fallback.
+#
+# This test rides on top of the fake-harness evidence path shipped in
+# steez-s4t: steez-s4t proves the fake can fire evidence via its fifo
+# handler. This test proves the PRODUCTION hook path is what real Claude
+# would call. Default `SILENCE_WINDOW_MS` (30000) keeps degraded fallback
+# outside the 2s budget — so fast delivery requires the hook calling the
+# evidence CLI. No fifo is created, so the fake auto-replies silently
+# (transcript append only, no fire_evidence). Only the hook can drive
+# resolution inside the budget.
+now_ms() {
+  python3 -c 'import time; print(int(time.time()*1000))'
+}
+
+test_claude_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  local target_transcript spawner_transcript target_session_id
+  target_transcript=$(wait_pane_var "$target"  @transcript_path 25) || { echo "    target @transcript_path never set"; exit 1; }
+  spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
+  target_session_id=$(wait_pane_var "$target"  @session_id 25)       || { echo "    target @session_id never set"; exit 1; }
+  [[ -f "$target_transcript"  ]] || { echo "    target transcript missing: $target_transcript"; exit 1; }
+  [[ -f "$spawner_transcript" ]] || { echo "    spawner transcript missing: $spawner_transcript"; exit 1; }
+
+  # Default SILENCE_WINDOW_MS (30000), default RECONCILE_INTERVAL_MS
+  # (5000). Degraded fallback cannot rescue this watch inside the 2s
+  # budget — only the hook can.
+  local send_rc=0 send_out
+  send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "hook-me" 2>&1) || send_rc=$?
+  [[ "$send_rc" -eq 0 ]] || {
+    echo "    agent-send failed (rc=$send_rc):"
+    printf '%s\n' "$send_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Wait for the fake's auto-reply to append the idle line. Without this
+  # the hook's cursor might still equal prearm and fail freshness.
+  local i lines
+  for ((i=0; i<100; i++)); do
+    lines=$(wc -l < "$target_transcript" 2>/dev/null | tr -d ' ')
+    [[ "${lines:-0}" -ge 2 ]] && break
+    sleep 0.1
+  done
+  lines=$(wc -l < "$target_transcript" 2>/dev/null | tr -d ' ')
+  [[ "${lines:-0}" -ge 2 ]] || {
+    echo "    fake target never auto-replied (transcript lines=$lines):"
+    sed 's/^/      /' "$target_transcript"
+    exit 1
+  }
+
+  # Fire the Stop hook exactly as real Claude would: pipe the payload on
+  # stdin, with TMUX_PANE pointing at the target pane. The hook uses
+  # $HOME/.steez/bin/agent-eventsd which setup_runtime already symlinks
+  # to the real binary. t0 is wall-clock just before dispatch.
+  local hook_payload t0 t1 elapsed deadline sp_lines list
+  hook_payload=$(jq -n \
+    --arg sid "$target_session_id" \
+    --arg tp "$target_transcript" \
+    '{session_id:$sid,transcript_path:$tp,hook_event_name:"Stop",cwd:"/tmp"}')
+
+  t0=$(now_ms)
+  TMUX_PANE="$target" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    PATH="$TEST_BIN:$PATH" \
+    bash "$REPO_ROOT/shared/steez/hooks/permission-state.sh" <<<"$hook_payload" || {
+      echo "    permission-state.sh hook invocation failed"
+      exit 1
+    }
+
+  # Poll <= 2s for delivery. Deadline budget is 4s so a slow-but-present
+  # resolution still reports elapsed-ms rather than a silent timeout.
+  deadline=$(( t0 + 4000 ))
+  sp_lines=0
+  list=""
+  while :; do
+    sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
+    list=$(run_bin agent-watch list 2>/dev/null || true)
+    if [[ "${sp_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]]; then
+      t1=$(now_ms)
+      break
+    fi
+    if (( $(now_ms) >= deadline )); then
+      t1=$(now_ms)
+      elapsed=$(( t1 - t0 ))
+      echo "    Stop hook never resolved the watch (elapsed=${elapsed}ms sp_lines=$sp_lines)"
+      echo "    agent-watch list:"
+      printf '%s\n' "$list" | sed 's/^/      /'
+      echo "    spawner transcript:"
+      sed 's/^/      /' "$spawner_transcript"
+      exit 1
+    fi
+    sleep 0.05
+  done
+
+  elapsed=$(( t1 - t0 ))
+  (( elapsed < 2000 )) || {
+    echo "    Stop hook delivery took ${elapsed}ms — exceeds 2000ms fast-path budget"
+    echo "    (no-fix path lands on 30s degraded fallback; this means the"
+    echo "     permission-state.sh hook is not firing agent-eventsd evidence)"
+    exit 1
+  }
+
+  # Tie the delivery to the idle resolution so a stale write can't sneak
+  # past the budget check.
+  grep -F 'working -> idle' "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner delivery was not the idle resolution:"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+}
+run_test "claude Stop hook fires evidence and notification arrives on spawner within 2s" \
+  test_claude_stop_hook_fires_evidence_and_notification_arrives_within_2s
+
 report
