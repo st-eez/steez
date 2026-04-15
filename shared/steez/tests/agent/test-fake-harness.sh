@@ -153,16 +153,26 @@ test_claude_boot_state_and_history() {
     exit 1
   }
 
+  # Boot-wait proof: spawn.sh emits "WARN: agent not ready after 15s" when
+  # its own poll loop blows BOOT_TIMEOUT. IDLE alone is not proof — spawn.sh
+  # prints IDLE unconditionally after the warn. Asserting the WARN is absent
+  # is what proves @session_id landed inside BOOT_TIMEOUT against the fake.
+  if grep -q 'WARN: agent not ready' "$SPAWN_OUT"; then
+    echo "    spawn.sh boot wait timed out (the fake didn't set @session_id in time):"
+    sed 's/^/      /' "$SPAWN_OUT"
+    exit 1
+  fi
+
   local sid
-  sid=$(wait_pane_var "$TARGET_PANE" @session_id 25) || {
-    echo "    @session_id never appeared on $TARGET_PANE within 5s"
+  sid=$(wait_pane_var "$TARGET_PANE" @session_id 5) || {
+    echo "    @session_id missing on $TARGET_PANE after spawn.sh exited"
     exit 1
   }
   [[ -n "$sid" ]] || { echo "    @session_id is empty"; exit 1; }
 
   local transcript
-  transcript=$(wait_pane_var "$TARGET_PANE" @transcript_path 10) || {
-    echo "    @transcript_path never appeared on $TARGET_PANE"
+  transcript=$(wait_pane_var "$TARGET_PANE" @transcript_path 5) || {
+    echo "    @transcript_path missing on $TARGET_PANE"
     exit 1
   }
   [[ -f "$transcript" ]] || { echo "    transcript file missing: $transcript"; exit 1; }
@@ -206,8 +216,14 @@ test_ren_detected_via_env() {
   trap cleanup_runtime EXIT
   run_spawn ren
 
-  wait_pane_var "$TARGET_PANE" @session_id 25 >/dev/null || {
-    echo "    ren never set @session_id within 5s"
+  if grep -q 'WARN: agent not ready' "$SPAWN_OUT"; then
+    echo "    spawn.sh boot wait timed out for ren:"
+    sed 's/^/      /' "$SPAWN_OUT"
+    exit 1
+  fi
+
+  wait_pane_var "$TARGET_PANE" @session_id 5 >/dev/null || {
+    echo "    ren never set @session_id"
     exit 1
   }
 
