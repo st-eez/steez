@@ -73,6 +73,57 @@ func TestInstallSpecInstallsClaudeAndCodexSkills(t *testing.T) {
 	}
 }
 
+func TestInstallTDDInstallsClaudeAndCodexSkills(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	repoPath := findRepoRoot(t)
+	if code := cmdInstall([]string{"--repo", repoPath, "tdd"}); code != 0 {
+		t.Fatalf("cmdInstall exit code = %d, want 0", code)
+	}
+
+	claudeTarget := filepath.Join(home, ".claude", "skills", "tdd")
+	codexTarget := filepath.Join(home, ".codex", "skills", "tdd")
+	for _, target := range []string{claudeTarget, codexTarget} {
+		if err := installer.ValidateSymlink(target); err != nil {
+			t.Fatalf("validate symlink %s: %v", target, err)
+		}
+
+		resolved, err := os.Readlink(target)
+		if err != nil {
+			t.Fatalf("readlink %s: %v", target, err)
+		}
+		if resolved != filepath.Join(repoPath, "skills", "tdd") {
+			t.Fatalf("symlink %s -> %s, want %s", target, resolved, filepath.Join(repoPath, "skills", "tdd"))
+		}
+	}
+
+	reg, err := config.LoadRegistry()
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+
+	var foundClaude, foundCodex bool
+	for _, entry := range reg.Symlinks {
+		if entry.Name != "tdd" {
+			continue
+		}
+		if entry.Scope == "claude-global" && entry.Target == claudeTarget {
+			foundClaude = true
+		}
+		if entry.Scope == "codex-global" && entry.Target == codexTarget {
+			foundCodex = true
+		}
+	}
+
+	if !foundClaude {
+		t.Fatal("registry missing claude-global tdd entry")
+	}
+	if !foundCodex {
+		t.Fatal("registry missing codex-global tdd entry")
+	}
+}
+
 func TestInstallStarterExcludesDeprecatedPlanningSkills(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

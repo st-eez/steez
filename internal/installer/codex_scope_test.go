@@ -11,6 +11,10 @@ func TestInstallsGloballyInCodex(t *testing.T) {
 		t.Fatal("spec should install globally in Codex")
 	}
 
+	if !InstallsGloballyInCodex("tdd") {
+		t.Fatal("tdd should install globally in Codex")
+	}
+
 	if InstallsGloballyInCodex("investigate") {
 		t.Fatal("investigate should not install globally in Codex")
 	}

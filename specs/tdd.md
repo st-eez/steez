@@ -36,3 +36,4 @@ Executes one approved slice from a `/spec` design spec with a strict red → gre
 9. Exercise user-visible UI through `/browse` after green, or record explicitly that browse could not run.
 10. Append slice evidence to the parent bead with `bd update --append-notes`.
 11. Treat missing slice ID, failed precheck, missing failing-test evidence, or missing verification-command evidence as hard failures.
+12. Installing `tdd` through `steez install` must create both the Claude-global and Codex-global skill symlinks.
