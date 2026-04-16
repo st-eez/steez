@@ -717,13 +717,11 @@ watch_feed_evidence() {
   fi
   (( fresh )) || return 0
 
-  # Fast-path fresh evidence returns the watch to healthy (spec: Degraded
-  # fallback — "Returning to healthy clears the degraded timer"). Stamp
-  # last_evidence_ms against the current clock and drop the degraded
-  # markers so the next silence starts a brand-new window. Reconcile
-  # evidence must never do this: by definition it is not a sign that a
-  # fast observer is alive again.
-  if [[ "$source" == "fast" ]]; then
+  # Fresh fast-path evidence returns the watch to healthy. A degraded
+  # reconcile that still proves `working` must do the same: it is fresh
+  # liveness proof for the active watch, so the deadman window must restart
+  # from that proof instead of timing out to blocked:unknown.
+  if [[ "$source" == "fast" || ( "$source" == "reconcile" && "$state" == "working" ) ]]; then
     local now
     now=$(_eventsd_now_ms)
     cur=$(printf '%s' "$cur" | jq -c \
@@ -908,14 +906,19 @@ watch_tick() {
           --source reconcile >/dev/null || true
       fi
     fi
-    # Only stamp last_reconcile_ms if the watch is still armed (the reconcile
-    # may have resolved it via the canonical resolver).
+    # Only stamp last_reconcile_ms while the watch is still degraded. A
+    # `working` reconcile can return it to healthy and clear the degraded
+    # markers for the next silence window.
     rec=$(watch_get "$wid")
     state=$(printf '%s' "$rec" | jq -r .state)
     if [[ "$state" == "armed" ]]; then
-      rec=$(printf '%s' "$rec" | jq -c \
-        --argjson t "$now" '.last_reconcile_ms = $t')
-      _eventsd_write_record "$wid" "$rec"
+      local degraded_now
+      degraded_now=$(printf '%s' "$rec" | jq -r '.degraded_since_ms // 0')
+      if (( degraded_now != 0 )); then
+        rec=$(printf '%s' "$rec" | jq -c \
+          --argjson t "$now" '.last_reconcile_ms = $t')
+        _eventsd_write_record "$wid" "$rec"
+      fi
     fi
   fi
 }

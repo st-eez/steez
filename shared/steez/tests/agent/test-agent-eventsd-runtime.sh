@@ -237,7 +237,7 @@ test_watched_prompt_against_fake_claude_fires_exactly_one_attention_notification
 
   # Settle and confirm the notification was delivered exactly once —
   # no duplicate fires from retries, buffered evidence, or a second tick.
-  sleep 1
+  sleep 2
   sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
   [[ "${sp_lines:-0}" -eq 1 ]] || {
     echo "    expected exactly 1 delivery to spawner, saw $sp_lines:"
@@ -674,7 +674,7 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
 run_test "second prompt supersedes the first live watch without duplicate delivery" \
   test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_delivery
 
-test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked_unknown() {
+test_loss_of_fast_evidence_degrades_through_agent_state_working_without_attention_ping() {
   setup_runtime
   trap cleanup_runtime EXIT
 
@@ -709,7 +709,7 @@ test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked
     exit 1
   }
 
-  local i state_json records wid watch_path degraded_since last_reconcile list blocked_lines
+  local i state_json records wid watch_path list blocked_lines watch_state
   for ((i=0; i<100; i++)); do
     state_json=$(run_bin agent-state "$target" 2>/dev/null || true)
     if printf '%s' "$state_json" | jq -e '.state == "working"' >/dev/null 2>&1; then
@@ -740,47 +740,24 @@ test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked
   }
 
   watch_path="$STEEZ_STATE_DIR/eventsd/watches/$wid.json"
-  for ((i=0; i<100; i++)); do
-    [[ -f "$watch_path" ]] || { sleep 0.1; continue; }
-    degraded_since=$(jq -r '.degraded_since_ms // 0' "$watch_path" 2>/dev/null || echo 0)
-    last_reconcile=$(jq -r '.last_reconcile_ms // 0' "$watch_path" 2>/dev/null || echo 0)
-    if [[ "${degraded_since:-0}" != "0" && "${last_reconcile:-0}" != "0" ]]; then
-      break
-    fi
-    sleep 0.1
-  done
   [[ -f "$watch_path" ]] || { echo "    watch record missing: $watch_path"; exit 1; }
-  degraded_since=$(jq -r '.degraded_since_ms // 0' "$watch_path" 2>/dev/null || echo 0)
-  last_reconcile=$(jq -r '.last_reconcile_ms // 0' "$watch_path" 2>/dev/null || echo 0)
-  [[ "${degraded_since:-0}" != "0" ]] || {
-    echo "    watch never entered degraded mode:"
-    sed 's/^/      /' "$watch_path"
-    exit 1
-  }
-  [[ "${last_reconcile:-0}" != "0" ]] || {
-    echo "    degraded watch never reconciled through agent-state:"
-    sed 's/^/      /' "$watch_path"
-    exit 1
-  }
-
-  list=""
-  blocked_lines=0
-  for ((i=0; i<200; i++)); do
-    blocked_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
-    list=$(run_bin agent-watch list 2>/dev/null || true)
-    [[ "${blocked_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]] && break
-    sleep 0.1
-  done
 
   sleep 1
   blocked_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
-  [[ "${blocked_lines:-0}" -eq 1 ]] || {
-    echo "    expected exactly 1 attention ping, saw $blocked_lines:"
+  list=$(run_bin agent-watch list 2>/dev/null || true)
+  watch_state=$(jq -r '.state // empty' "$watch_path" 2>/dev/null || true)
+  [[ "${blocked_lines:-0}" -eq 0 ]] || {
+    echo "    expected 0 attention pings while reconcile kept proving working, saw $blocked_lines:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
-  [[ "$list" == "(no active watches)" ]] || {
-    echo "    degraded watch did not self-clear after blocked:unknown timeout:"
+  [[ "$watch_state" == "armed" ]] || {
+    echo "    still-working degraded watch did not stay armed:"
+    sed 's/^/      /' "$watch_path"
+    exit 1
+  }
+  printf '%s\n' "$list" | grep -F "$target" >/dev/null 2>&1 || {
+    echo "    still-working degraded watch disappeared from agent-watch list:"
     printf '%s\n' "$list" | sed 's/^/      /'
     exit 1
   }
@@ -791,8 +768,8 @@ test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked
     exit 1
   fi
 }
-run_test "loss of fast evidence degrades through agent-state and times out to blocked:unknown" \
-  test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked_unknown
+run_test "loss of fast evidence degrades through agent-state working without attention ping" \
+  test_loss_of_fast_evidence_degrades_through_agent_state_working_without_attention_ping
 
 
 # Acceptance #9 (fake-agent-harness spec): "In the pane close scenario,

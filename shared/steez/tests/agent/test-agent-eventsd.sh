@@ -975,7 +975,9 @@ _set_now() { export EVENTSD_NOW_MS="$1"; }
 _install_agent_state_mock() {
   export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
   : > "$AGENT_STATE_LOG"
-  : "${AGENT_STATE_RESPONSE:='{"pane":"%0","agent":"codex","state":"working","name":"t"}'}"
+  if [[ -z "${AGENT_STATE_RESPONSE:-}" ]]; then
+    AGENT_STATE_RESPONSE='{"pane":"%0","agent":"codex","state":"working","name":"t"}'
+  fi
   export AGENT_STATE_RESPONSE
   cat > "$MOCK_BIN/agent-state" <<'MOCK'
 #!/usr/bin/env bash
@@ -1013,18 +1015,16 @@ _arm_on_bead6() {
   printf '%s' "$wid"
 }
 
-test_silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state() {
+test_silence_then_indeterminate_timeout_reconcile_working_keeps_watch_armed() {
   # Required first red test for bead 6. Drives acceptance #5 end to end:
   #
   #   (a) under the silence window, ticks must neither degrade nor call
   #       agent-state;
   #   (b) at SILENCE_WINDOW_MS of silence the watch degrades and the first
   #       agent-state reconcile fires;
-  #   (c) across the full 120s degraded episode, agent-state is invoked
-  #       once per RECONCILE_INTERVAL_MS and `working` reconciles never
-  #       resolve the watch via the canonical resolver;
-  #   (d) at INDETERMINATE_TIMEOUT_MS past degraded-start the watch resolves
-  #       to blocked:unknown regardless of what agent-state is reporting;
+  #   (c) degraded reconcile reporting `working` must keep the watch armed
+  #       across and past the old timeout boundary instead of resolving it;
+  #   (d) the pane's live slot must stay owned by the same watch;
   #   (e) every agent-state invocation carries the watched pane as argv.
   _install_deliver_mock
   _install_agent_state_mock
@@ -1058,45 +1058,35 @@ test_silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state
   rec=$(watch_get "$wid")
   assert_json_field "$rec" .state armed || return 1
 
-  # (c) Drive the full degraded episode at RECONCILE_INTERVAL_MS cadence.
-  # Every tick must see a working reconcile and keep the watch armed.
-  for (( t = t0 + 35000; t < t0 + 30000 + 120000; t += 5000 )); do
+  # (c) Drive well past the old timeout boundary. `working` reconcile must
+  # refresh liveness enough that the watch never resolves.
+  for (( t = t0 + 35000; t <= t0 + 30000 + 120000 + 5000; t += 5000 )); do
     _set_now "$t"
     watch_tick "$wid" >/dev/null || return 1
     rec=$(watch_get "$wid")
     assert_json_field "$rec" .state armed || return 1
   done
 
-  # (d) At INDETERMINATE_TIMEOUT_MS past the degraded transition the watch
-  # must resolve to blocked:unknown without requiring a terminal reconcile.
-  _set_now $((t0 + 30000 + 120000))
-  watch_tick "$wid" >/dev/null || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state resolved || return 1
-  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
-
-  # Resolved watches are draining — pane's live slot is freed.
-  assert_eq "" "$(watch_get_live "$pane")" || return 1
-
-  # Across 120s at 5s cadence we expect ~24 reconciles; the timeout tick
-  # resolves without adding a reconcile.
-  local calls
-  calls=$(_agent_state_call_count)
-  (( calls >= 24 )) || {
-    echo "    expected >=24 agent-state calls, got: $calls"; return 1; }
+  # (d) A still-working reconcile must not free the pane's live slot.
+  local live
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_json_field "$live" .state armed || return 1
 
   # (e) Every invocation targets the watched pane.
   local panes
   panes=$(sort -u "$AGENT_STATE_LOG")
   assert_eq "$pane" "$panes" || return 1
 }
-run_test "silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state" test_silence_then_indeterminate_timeout_resolves_blocked_unknown_via_agent_state
+run_test "silence_then_indeterminate_timeout_reconcile_working_keeps_watch_armed" test_silence_then_indeterminate_timeout_reconcile_working_keeps_watch_armed
 
 test_fresh_fast_evidence_after_degraded_returns_to_healthy_and_clears_degraded_timer() {
   # Spec (Degraded fallback): "Returning to healthy clears the degraded
   # timer." Proves the marker fields are actually cleared on fresh
   # fast-path evidence — not just that the resolver keeps the watch armed.
   _install_deliver_mock
+  AGENT_STATE_RESPONSE='{"state":"blocked:unknown"}'
+  export AGENT_STATE_RESPONSE
   _install_agent_state_mock
 
   local pane="%91" wid rec ds t0=2000000
@@ -1137,6 +1127,8 @@ test_second_degraded_episode_starts_a_new_indeterminate_timeout_window() {
   # leak its elapsed time into the next one. Proves the window is timed
   # from the most recent degraded_since_ms, not from arm.
   _install_deliver_mock
+  AGENT_STATE_RESPONSE='{"state":"blocked:unknown"}'
+  export AGENT_STATE_RESPONSE
   _install_agent_state_mock
 
   local pane="%92" wid rec t0=3000000

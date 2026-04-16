@@ -226,9 +226,11 @@ In degraded mode the daemon must run `agent-state <pane>` every `RECONCILE_INTER
 
 Deadman reconciliation uses the same canonical states and the same live-resolution rule as fast evidence. It is not a second state machine.
 
+If degraded reconciliation proves `working`, that is fresh liveness proof for the active watch. The daemon must keep the watch armed, clear the degraded timer, and start any later timeout window from the next silence episode instead of the old one.
+
 If degraded reconciliation proves a live-resolving terminal state, the watch resolves normally.
 
-If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state, the watch must resolve to `blocked:unknown`.
+If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state and without degraded reconciliation proving `working`, the watch must resolve to `blocked:unknown`.
 
 Returning to healthy clears the degraded timer. A later degraded episode starts a new timeout window.
 
@@ -339,7 +341,7 @@ Keep the acceptance set short and derived from behavior:
 2. Evidence at or before the prearm baseline is stale. Manual add on an already-idle or already-blocked pane does not resolve without fresh evidence.
 3. A new `turn.prearm` supersedes an unresolved live watch without blocking the new turn.
 4. One `watch_id` produces one logical notification across duplicate evidence, retries, and restart recovery.
-5. Degraded watches reconcile through `agent-state` and end in either a live-resolving terminal state or `blocked:unknown` by timeout.
+5. Degraded watches reconcile through `agent-state`, stay armed when reconcile keeps proving `working`, and only fall back to `blocked:unknown` when reconcile cannot prove the pane is still working.
 6. Restart recovery preserves the same `watch_id` and bounded delivery attempts.
 7. `agent-eventsd status` returns `ready` only when the service process is running and responsive; killing the service flips the result to `unavailable`.
 
@@ -361,4 +363,4 @@ These rules apply on top of the TDD relationship above. They exist because steez
 
 The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and does **not** mutate `~/.codex/config.toml` or `~/.codex/hooks.json`. Users opt in by setting `[features] codex_hooks = true` in `~/.codex/config.toml` and registering a `Stop` hook group with no matcher override that points at `bash $HOME/.codex/hooks/codex-stop.sh`.
 
-Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state` and resolves at the `SILENCE_WINDOW_MS` + `RECONCILE_INTERVAL_MS` cadence, not the fast path.
+Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state`. That path stays armed while reconcile keeps proving `working`, and only resolves when reconcile proves a terminal state or the bounded `blocked:unknown` fallback takes over.
