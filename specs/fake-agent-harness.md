@@ -42,7 +42,7 @@ Tests **must**:
 - Prepend a test-only `bin/` containing the four fakes to `$PATH`.
 - Set `HOME` to a tmp dir so `~/.claude`, `~/.codex`, and `~/.steez` writes stay isolated.
 - Set `STEEZ_STATE_DIR` to a tmp dir so `agent-eventsd` watch state stays isolated.
-- When using `EVENTSD_REQUIRE_EXPLICIT_SERVICE=1`, start and stop the real `agent-eventsd serve` process explicitly inside the harness.
+- When using `EVENTSD_REQUIRE_EXPLICIT_SERVICE=1`, start and stop the real `agent-eventsd serve` process explicitly inside the harness. Persist the harness-owned service PID outside `$STEEZ_STATE_DIR/eventsd/` so tests may clear daemon state without orphaning the process.
 
 Tests **must not**:
 
