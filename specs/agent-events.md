@@ -224,15 +224,15 @@ A watch is healthy when at least one fast observer can still produce fresh evide
 
 A watch becomes degraded when fast observers are unavailable, disconnected, or silent for `SILENCE_WINDOW_MS`.
 
-In degraded mode the daemon must run `agent-state <pane>` every `RECONCILE_INTERVAL_MS`.
+In degraded mode the daemon must run `agent-state <pane> --detail` every `RECONCILE_INTERVAL_MS`. The `--detail` flag is required because the freshness gate below depends on `detail.transcript_path`.
 
 Deadman reconciliation uses the same canonical states and the same live-resolution rule as fast evidence. It is not a second state machine.
 
-If degraded reconciliation proves `working`, that is fresh liveness proof for the active watch. The daemon must keep the watch armed, clear the degraded timer, and start any later timeout window from the next silence episode instead of the old one.
+If degraded reconciliation proves `working`, that is fresh liveness proof for the active watch only when the transcript cursor (byte length of `detail.transcript_path`) strictly advances over both the prearm cursor and the most recent reconcile cursor. A frozen worker returning `working` with the same cursor every reconcile is not liveness proof; the daemon must not refresh the deadman in that case. When the cursor does advance, the daemon must keep the watch armed, clear the degraded timer, and start any later timeout window from the next silence episode instead of the old one. Per-tick synthetic screen-hash tokens are not acceptable freshness signals on this branch.
 
 If degraded reconciliation proves a live-resolving terminal state, the watch resolves normally.
 
-If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state and without degraded reconciliation proving `working`, the watch must resolve to `blocked:unknown`.
+If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state and without degraded reconciliation proving `working`, the watch must resolve to `blocked:unknown` — but only if at least one reconcile in the episode returned non-empty inspector output. A degraded episode in which `agent-state` was silent for the whole window (zero observations) must keep the watch armed and keep reconciling; resolving to `blocked:unknown` without any observation would deliver a spurious notification while the real completion arrives later in silence. Inspector failures must be logged to stderr so the broken inspector is visible.
 
 Returning to healthy clears the degraded timer. A later degraded episode starts a new timeout window.
 

@@ -1145,71 +1145,6 @@ _arm_on_bead6() {
   printf '%s' "$wid"
 }
 
-test_silence_then_indeterminate_timeout_reconcile_working_keeps_watch_armed() {
-  # Required first red test for bead 6. Drives acceptance #5 end to end:
-  #
-  #   (a) under the silence window, ticks must neither degrade nor call
-  #       agent-state;
-  #   (b) at SILENCE_WINDOW_MS of silence the watch degrades and the first
-  #       agent-state reconcile fires;
-  #   (c) degraded reconcile reporting `working` must keep the watch armed
-  #       across and past the old timeout boundary instead of resolving it;
-  #   (d) the pane's live slot must stay owned by the same watch;
-  #   (e) every agent-state invocation carries the watched pane as argv.
-  _install_deliver_mock
-  _install_agent_state_mock
-  declare -F watch_tick >/dev/null \
-    || { echo "    missing: watch_tick"; return 1; }
-
-  # Spec defaults are load-bearing for this test.
-  [[ "${SILENCE_WINDOW_MS:-0}" == "30000" ]] \
-    || { echo "    SILENCE_WINDOW_MS must default to 30000"; return 1; }
-  [[ "${RECONCILE_INTERVAL_MS:-0}" == "5000" ]] \
-    || { echo "    RECONCILE_INTERVAL_MS must default to 5000"; return 1; }
-  [[ "${INDETERMINATE_TIMEOUT_MS:-0}" == "120000" ]] \
-    || { echo "    INDETERMINATE_TIMEOUT_MS must default to 120000"; return 1; }
-
-  local pane="%90" wid rec t0=1000000 t
-  _set_now "$t0"
-  wid=$(_arm_on_bead6 "$pane") || return 1
-
-  # (a) Inside the silence window — no reconcile, no degradation.
-  _set_now $((t0 + 29999))
-  watch_tick "$wid" >/dev/null || return 1
-  assert_eq 0 "$(_agent_state_call_count)" || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state armed || return 1
-
-  # (b) Crossing SILENCE_WINDOW_MS degrades the watch and triggers the
-  # first reconcile.
-  _set_now $((t0 + 30000))
-  watch_tick "$wid" >/dev/null || return 1
-  assert_eq 1 "$(_agent_state_call_count)" || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state armed || return 1
-
-  # (c) Drive well past the old timeout boundary. `working` reconcile must
-  # refresh liveness enough that the watch never resolves.
-  for (( t = t0 + 35000; t <= t0 + 30000 + 120000 + 5000; t += 5000 )); do
-    _set_now "$t"
-    watch_tick "$wid" >/dev/null || return 1
-    rec=$(watch_get "$wid")
-    assert_json_field "$rec" .state armed || return 1
-  done
-
-  # (d) A still-working reconcile must not free the pane's live slot.
-  local live
-  live=$(watch_get_live "$pane")
-  assert_json_field "$live" .watch_id "$wid" || return 1
-  assert_json_field "$live" .state armed || return 1
-
-  # (e) Every invocation targets the watched pane.
-  local panes
-  panes=$(sort -u "$AGENT_STATE_LOG")
-  assert_eq "$pane" "$panes" || return 1
-}
-run_test "silence_then_indeterminate_timeout_reconcile_working_keeps_watch_armed" test_silence_then_indeterminate_timeout_reconcile_working_keeps_watch_armed
-
 test_fresh_fast_evidence_after_degraded_returns_to_healthy_and_clears_degraded_timer() {
   # Spec (Degraded fallback): "Returning to healthy clears the degraded
   # timer." Proves the marker fields are actually cleared on fresh
@@ -1354,6 +1289,247 @@ MOCK
   assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
 }
 run_test "fuzzy_blocked_unknown_does_not_resolve_a_live_watch" test_fuzzy_blocked_unknown_does_not_resolve_a_live_watch
+
+# ----- bead steez-j815: real-cursor freshness in degraded reconcile -----
+#
+# The degraded-fallback reconcile used to synthesize a per-tick screen hash
+# (`hash="degraded-$now"`) which trivially differed from the prearm hash, so
+# every reconcile passed the freshness gate regardless of actual liveness.
+# That produced two opposite failure modes:
+#
+#   A. Inspector silent (agent-state non-zero) — no evidence fed, no fresh
+#      signal, deadman matured, watch resolved to a fake blocked:unknown and
+#      delivered. Spawner saw a spurious notif and the real completion was
+#      silent.
+#
+#   B. Stale `working` (hung Claude) — reconcile returned working with the
+#      same transcript cursor every tick. Synthetic hash made every reconcile
+#      "fresh", deadman reset forever, watch never timed out.
+#
+# The fix replaces the synthetic hash with a real transcript-cursor signal
+# and requires advance for reconcile+working. A belt-and-suspenders gate on
+# the indeterminate timeout keeps the watch armed when the inspector has
+# never returned output at all (case A safety).
+
+# _install_transcript_agent_state_mock <transcript_path>
+# Install an agent-state mock that emits state=$AGENT_STATE_RESPONSE_STATE
+# (default "working") with detail.transcript_path pointed at <transcript_path>.
+# Tests grow/shrink that file between ticks to simulate cursor advance or
+# freeze.
+_install_transcript_agent_state_mock() {
+  local tpath="$1"
+  export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
+  export AGENT_STATE_TPATH="$tpath"
+  : > "$AGENT_STATE_LOG"
+  cat > "$MOCK_BIN/agent-state" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${AGENT_STATE_LOG:-/dev/null}"
+state="${AGENT_STATE_RESPONSE_STATE:-working}"
+printf '{"pane":"%s","agent":"codex","state":"%s","name":"t","detail":{"transcript_path":"%s"}}\n' \
+  "$1" "$state" "${AGENT_STATE_TPATH:-}"
+MOCK
+  chmod +x "$MOCK_BIN/agent-state"
+  export AGENT_STATE_CMD="$MOCK_BIN/agent-state"
+}
+
+# Install an agent-state mock that always exits non-zero with no output,
+# simulating an inspector that is broken / the pane not discoverable / the
+# worker process gone.
+_install_failing_agent_state_mock() {
+  export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
+  : > "$AGENT_STATE_LOG"
+  cat > "$MOCK_BIN/agent-state" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${AGENT_STATE_LOG:-/dev/null}"
+exit 1
+MOCK
+  chmod +x "$MOCK_BIN/agent-state"
+  export AGENT_STATE_CMD="$MOCK_BIN/agent-state"
+}
+
+test_inspector_silent_throughout_degraded_window_keeps_watch_armed() {
+  # Acceptance A (steez-j815): when agent-state exits non-zero for the full
+  # indeterminate window, no evidence is fed, the watch must NOT mature to
+  # blocked:unknown. `last_reconcile_ms` is the safety gate — it must stay
+  # 0 while the inspector is silent, blocking the timeout path. Stderr must
+  # carry at least one inspector-failure line per reconcile so operators
+  # can see the broken inspector.
+  _install_deliver_mock
+  _install_failing_agent_state_mock
+
+  local pane="%94" wid rec stderr_file t0=5000000 t
+  stderr_file="$TEST_TMP/eventsd.stderr.94"
+  : > "$stderr_file"
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # Cross silence. Reconcile call happens but returns empty output.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >>"$stderr_file" 2>&1 || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_eq 1 "$(_agent_state_call_count)" || return 1
+  # Safety-gate marker: last_reconcile_ms must remain unset while the
+  # inspector is broken — otherwise the indeterminate timeout would mature.
+  assert_json_field "$rec" '.last_reconcile_ms // 0' 0 || return 1
+
+  # Drive well past the indeterminate timeout. Watch must stay armed on
+  # every tick; resolving to blocked:unknown here is the bug being fixed.
+  for (( t = t0 + 35000; t <= t0 + 30000 + 120000 + 10000; t += 5000 )); do
+    _set_now "$t"
+    watch_tick "$wid" >>"$stderr_file" 2>&1 || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed || return 1
+  done
+
+  # Pane slot still owned by the same watch.
+  local live
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_json_field "$live" .state armed || return 1
+
+  # Each reconcile must log an inspector-failure line to stderr so silent
+  # inspector drift is visible in production.
+  local fail_lines
+  fail_lines=$(grep -c 'reconcile inspector returned empty output' "$stderr_file" || true)
+  local call_count
+  call_count=$(_agent_state_call_count)
+  [[ "$fail_lines" -ge "$call_count" ]] \
+    || { echo "    expected >= $call_count stderr lines, got $fail_lines"; return 1; }
+}
+run_test "inspector_silent_throughout_degraded_window_keeps_watch_armed" test_inspector_silent_throughout_degraded_window_keeps_watch_armed
+
+test_stale_working_with_unchanged_cursor_times_out_to_blocked_unknown() {
+  # Acceptance B (steez-j815): a frozen Claude returns state=working with
+  # the same transcript cursor every reconcile. The old synthetic-hash
+  # regime kept the watch armed forever; with real-cursor freshness, a
+  # reconcile whose cursor has not advanced past both prearm and the last
+  # reconcile cursor is NOT fresh, the deadman does not reset, and the
+  # indeterminate timeout matures normally to blocked:unknown.
+  _install_deliver_mock
+
+  # Transcript file pinned at exactly prearm_transcript_cursor (4096) so
+  # the frozen-worker cursor fails `cursor > prearm_cursor` on every
+  # reconcile. `_arm_on_bead6` sets prearm_transcript_cursor to 4096.
+  local tpath="$TEST_TMP/transcript-95.jsonl"
+  : > "$tpath"
+  head -c 4096 < /dev/zero > "$tpath"
+  _install_transcript_agent_state_mock "$tpath"
+  export AGENT_STATE_RESPONSE_STATE="working"
+
+  local pane="%95" wid rec t0=6000000
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # Cross silence. First reconcile: cursor frozen at prearm value → not
+  # fresh, degraded_since stays stamped, last_reconcile_ms stamped.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms $((t0 + 30000)) || return 1
+  assert_json_field "$rec" .last_reconcile_ms $((t0 + 30000)) || return 1
+
+  # One tick just before the indeterminate window closes — still armed.
+  _set_now $((t0 + 30000 + 120000 - 1))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+
+  # Crossing the full window resolves to blocked:unknown. The safety gate
+  # on `last_reconcile_ms != 0` is satisfied because reconciles succeeded
+  # (they just returned a frozen cursor), so the timeout matures normally.
+  _set_now $((t0 + 30000 + 120000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+
+  # Delivery fires for the resolved watch (exactly once — the canonical
+  # notifier path is already covered elsewhere; here we just confirm the
+  # timeout path still reaches delivery under the safety gate).
+  watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  [[ "$(_deliver_call_count)" -ge 1 ]] \
+    || { echo "    delivery never fired after indeterminate timeout"; return 1; }
+}
+run_test "stale_working_with_unchanged_cursor_times_out_to_blocked_unknown" test_stale_working_with_unchanged_cursor_times_out_to_blocked_unknown
+
+test_working_with_cursor_advance_keeps_watch_armed_indefinitely() {
+  # Acceptance C (steez-j815): when reconcile+working carries a strictly
+  # advancing transcript cursor, that IS fresh liveness proof for the
+  # active watch. The daemon must keep the watch armed, push
+  # last_evidence_ms forward, and never mature the indeterminate timeout.
+  _install_deliver_mock
+
+  local tpath="$TEST_TMP/transcript-96.jsonl"
+  head -c 5000 < /dev/zero > "$tpath"  # starts > prearm_cursor (4096)
+  _install_transcript_agent_state_mock "$tpath"
+  export AGENT_STATE_RESPONSE_STATE="working"
+
+  local pane="%96" wid rec t0=7000000 t last_ev prev_ev
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # Cross silence. First reconcile: cursor=5000 > prearm=4096 and >
+  # last_reconcile_cursor=0 → fresh. Watch returns to healthy.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  last_ev=$(printf '%s' "$rec" | jq -r '.last_evidence_ms')
+  assert_eq $((t0 + 30000)) "$last_ev" || return 1
+
+  # Drive far past the old timeout boundary. Between ticks, grow the
+  # transcript so each reconcile observes a strictly larger cursor.
+  prev_ev="$last_ev"
+  for (( t = t0 + 60000; t <= t0 + 30000 + 120000 + 30000; t += 30000 )); do
+    # Silence → degraded → one reconcile tick with fresh cursor.
+    head -c 200 < /dev/zero >> "$tpath"
+    _set_now "$t"
+    watch_tick "$wid" >/dev/null || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed || return 1
+    last_ev=$(printf '%s' "$rec" | jq -r '.last_evidence_ms')
+    [[ "$last_ev" -gt "$prev_ev" ]] \
+      || { echo "    last_evidence_ms did not advance: $prev_ev -> $last_ev"; return 1; }
+    prev_ev="$last_ev"
+  done
+
+  # Pane slot still owned by the same watch.
+  local live
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+}
+run_test "working_with_cursor_advance_keeps_watch_armed_indefinitely" test_working_with_cursor_advance_keeps_watch_armed_indefinitely
+
+test_idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown() {
+  # Acceptance D (steez-j815): a reconcile that proves idle (live-resolving
+  # terminal, != baseline) must resolve the watch to idle via the normal
+  # fast-path semantics, not blocked:unknown. Baseline is `working` via
+  # `_arm_on_bead6`; the cursor is advanced beyond prearm so freshness
+  # passes for the else-branch (non-working reconcile) path.
+  _install_deliver_mock
+
+  local tpath="$TEST_TMP/transcript-97.jsonl"
+  head -c 5000 < /dev/zero > "$tpath"
+  _install_transcript_agent_state_mock "$tpath"
+  export AGENT_STATE_RESPONSE_STATE="idle"
+
+  local pane="%97" wid rec t0=8000000
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # Cross silence. Reconcile returns idle with cursor=5000 > prearm=4096,
+  # which is the freshness rule for non-working reconciles. idle is a
+  # live-resolving terminal state and differs from baseline=working, so
+  # the watch resolves cleanly to idle.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+}
+run_test "idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown" test_idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown
 
 # ----- pane close and daemon restart recovery (bead 7) -----
 #

@@ -708,12 +708,30 @@ watch_feed_evidence() {
   # Freshness rule 2: evidence must show progress since prearm — either the
   # transcript cursor advanced past the prearm cursor, or the screen hash
   # differs from the prearm hash. Evidence lacking both is not fresh.
+  #
+  # Reconcile + working is stricter (steez-j815). A frozen Claude returns
+  # state=working with the same transcript cursor every reconcile; the old
+  # synthetic-hash regime let that pass freshness, reset the deadman, and
+  # kept the watch armed forever. Require strict cursor advance over BOTH
+  # the prearm cursor AND the most recent reconcile observation. Screen
+  # hashes are ignored on this branch — a per-tick hash cannot prove
+  # liveness.
   local fresh=0
-  if (( has_cursor )) && (( cursor > prearm_cursor )); then
-    fresh=1
-  fi
-  if (( has_hash )) && [[ "$hash" != "$prearm_hash" ]]; then
-    fresh=1
+  if [[ "$source" == "reconcile" && "$state" == "working" ]]; then
+    local last_recon_cursor
+    last_recon_cursor=$(printf '%s' "$cur" | jq -r '.last_reconcile_cursor // 0')
+    if (( has_cursor )) \
+      && (( cursor > prearm_cursor )) \
+      && (( cursor > last_recon_cursor )); then
+      fresh=1
+    fi
+  else
+    if (( has_cursor )) && (( cursor > prearm_cursor )); then
+      fresh=1
+    fi
+    if (( has_hash )) && [[ "$hash" != "$prearm_hash" ]]; then
+      fresh=1
+    fi
   fi
   (( fresh )) || return 0
 
@@ -880,7 +898,16 @@ watch_tick() {
 
   # Indeterminate timeout takes priority over further reconciliation — once
   # the episode has run its course, the spec mandates blocked:unknown.
-  if (( now - degraded_since >= indeterminate_timeout )); then
+  #
+  # Safety gate (steez-j815): never mature to blocked:unknown if no reconcile
+  # has ever returned output for this degraded episode. `last_reconcile_ms`
+  # is only stamped when agent-state returns non-empty output; a silent
+  # inspector leaves it at 0, which means we have zero observations and
+  # cannot justify a terminal resolution. Keep the watch armed and keep
+  # trying — a real stuck worker still hits this path because reconciles
+  # succeed (and cursor-advance freshness blocks the reset-to-healthy).
+  if (( now - degraded_since >= indeterminate_timeout )) \
+    && (( last_reconcile != 0 )); then
     watch_resolve "$wid" "blocked:unknown"
     return 0
   fi
@@ -888,35 +915,62 @@ watch_tick() {
   # Run a reconcile if one is due. First reconcile (last_reconcile == 0) is
   # due immediately on entering degraded.
   if (( last_reconcile == 0 || now - last_reconcile >= reconcile_interval )); then
-    local cmd out observed seq hash
+    local cmd out observed seq cursor tpath
     cmd="${AGENT_STATE_CMD:-agent-state}"
-    out=$("$cmd" "$pane" 2>/dev/null || true)
-    if [[ -n "$out" ]]; then
+    # --detail (steez-j815): agent-state only emits .detail.transcript_path
+    # when --detail is passed. The reconcile cursor depends on this field,
+    # so omitting --detail leaves cursor=0 and every freshness check fails.
+    out=$("$cmd" "$pane" --detail 2>/dev/null || true)
+    if [[ -z "$out" ]]; then
+      # Inspector failure (steez-j815). Log so operators see the broken
+      # inspector, and do NOT stamp last_reconcile_ms — the indeterminate
+      # timeout safety gate depends on zero-observation silence staying
+      # visible here (case A). Otherwise a silent inspector matures to a
+      # spurious blocked:unknown and the spawner goes blind to the real
+      # completion.
+      printf 'agent-eventsd: reconcile inspector returned empty output for pane %s (watch %s)\n' \
+        "$pane" "$wid" >&2
+    else
       observed=$(printf '%s' "$out" | jq -r '.state // empty' 2>/dev/null || true)
+      # Real transcript cursor (steez-j815). Replace the synthetic
+      # `hash="degraded-$now"` token with a byte count of the pane's
+      # transcript file — the only observation we have that is actually
+      # anchored to worker progress. A frozen Claude returns the same
+      # cursor on every reconcile; the freshness gate now requires a
+      # strict advance over both prearm and the last reconcile cursor
+      # before accepting the evidence as fresh liveness proof.
+      cursor=0
+      tpath=$(printf '%s' "$out" | jq -r '.detail.transcript_path // empty' 2>/dev/null || true)
+      if [[ -n "$tpath" && -f "$tpath" ]]; then
+        cursor=$(wc -c < "$tpath" 2>/dev/null | tr -d ' ')
+        [[ -n "$cursor" ]] || cursor=0
+      fi
       if [[ -n "$observed" ]]; then
-        # Reconcile evidence must pass the canonical resolver's freshness
-        # gate (spec: "Deadman reconciliation uses the same canonical states
-        # and the same live-resolution rule as fast evidence"). Fresh seq via
-        # seq_next (per-pane monotonic); screen hash synthesized from the
-        # tick time guarantees it differs from the prearm capture.
         seq=$(seq_next "$pane")
-        hash="degraded-$now"
         watch_feed_evidence --watch-id "$wid" --seq "$seq" \
-          --candidate-state "$observed" --screen-hash "$hash" \
+          --candidate-state "$observed" --transcript-cursor "$cursor" \
           --source reconcile >/dev/null || true
       fi
-    fi
-    # Only stamp last_reconcile_ms while the watch is still degraded. A
-    # `working` reconcile can return it to healthy and clear the degraded
-    # markers for the next silence window.
-    rec=$(watch_get "$wid")
-    state=$(printf '%s' "$rec" | jq -r .state)
-    if [[ "$state" == "armed" ]]; then
-      local degraded_now
-      degraded_now=$(printf '%s' "$rec" | jq -r '.degraded_since_ms // 0')
-      if (( degraded_now != 0 )); then
+      # Stamp reconcile bookkeeping. `last_reconcile_cursor` is the
+      # persistent "last observed transcript size" used by the freshness
+      # gate to detect frozen workers across reset-to-healthy cycles; it
+      # must be stamped on EVERY successful reconcile, not just while
+      # degraded, or a fresh working reconcile that clears
+      # degraded_since_ms would leave the next episode comparing against
+      # a stale 0 and the bug (steez-j815 case B) reappears.
+      # `last_reconcile_ms` keeps the pre-existing semantics: stamped only
+      # while the episode is still degraded, cleared on return to healthy.
+      rec=$(watch_get "$wid")
+      state=$(printf '%s' "$rec" | jq -r .state)
+      if [[ "$state" == "armed" ]]; then
         rec=$(printf '%s' "$rec" | jq -c \
-          --argjson t "$now" '.last_reconcile_ms = $t')
+          --argjson c "$cursor" '.last_reconcile_cursor = $c')
+        local degraded_now
+        degraded_now=$(printf '%s' "$rec" | jq -r '.degraded_since_ms // 0')
+        if (( degraded_now != 0 )); then
+          rec=$(printf '%s' "$rec" | jq -c \
+            --argjson t "$now" '.last_reconcile_ms = $t')
+        fi
         _eventsd_write_record "$wid" "$rec"
       fi
     fi
