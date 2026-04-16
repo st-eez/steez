@@ -9,6 +9,12 @@ Root specifications for steez subsystems. Each spec documents what IS — purpos
 | [spec](./spec.md) | `skills/spec/SKILL.md` | planning front door, design spec, software change planning, implementation slices, tdd handoff |
 | [tdd](./tdd.md) | `skills/tdd/SKILL.md` | one approved slice, red green refactor loop, verifier, browse, bead evidence |
 
+## Browser Specs
+
+| Spec | Path | Search Terms |
+|------|------|-------------|
+| [browse](./browse.md) | `skills/browse/SKILL.md` + `shared/steez/browse/` | browser qa, dogfood, screenshot, visible mode, handoff, resume |
+
 ## Installer Specs
 
 | Spec | Path | Search Terms |

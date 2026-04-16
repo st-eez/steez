@@ -124,30 +124,29 @@ $B diff https://staging.app.com https://prod.app.com
 ### 11. Show screenshots to the user
 After `$B screenshot`, `$B snapshot -a -o`, or `$B responsive`, always use the Read tool on the output PNG(s) so the user can see them. Without this, screenshots are invisible.
 
-## User Handoff
+## Visible Mode
 
-When you hit something you can't handle in headless mode (CAPTCHA, complex auth, multi-factor
-login), hand off to the user:
+When headless mode isn't the right fit, switch to visible mode. The AI keeps driving the browser; `handoff` just opens the current session in visible Chrome so the user can watch live or help with a human-only step.
 
 ```bash
-# 1. Open a visible Chrome at the current page
-$B handoff "Stuck on CAPTCHA at login page"
+# 1. Open visible Chrome at the current page
+$B handoff "Switching to visible mode for login flow"
 
-# 2. Tell the user what happened (via AskUserQuestion)
-#    "I've opened Chrome at the login page. Please solve the CAPTCHA
-#     and let me know when you're done."
+# 2. Keep driving in the visible browser
+#    Ask the user only if a human-only step appears
 
-# 3. When user says "done", re-snapshot and continue
+# 3. If the user steps in briefly, resume and keep going
 $B resume
 ```
 
-**When to use handoff:**
+**When to use visible mode:**
+- user wants to watch live
 - CAPTCHAs or bot detection
 - Multi-factor authentication (SMS, authenticator app)
 - OAuth flows that require user interaction
-- Complex interactions the AI can't handle after 3 attempts
+- Complex interactions where seeing the live browser helps debug faster
 
-The browser preserves all state (cookies, localStorage, tabs) across the handoff.
+The browser preserves all state (cookies, localStorage, tabs) across visible mode.
 After `resume`, you get a fresh snapshot of wherever the user left off.
 
 ## Snapshot Flags

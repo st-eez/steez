@@ -95,3 +95,27 @@ test("spec runtime spec exists", () => {
     /\[spec\]\(\.\/spec\.md\)/,
   ]);
 });
+
+test("browse visible mode contract", () => {
+  expectContract("skills/browse/SKILL.md", [
+    /^---\nname:\s*browse/m,
+    /## Visible Mode/,
+    /switch to visible mode/i,
+    /\$B handoff/,
+    /\$B resume/,
+    /user wants to watch live/i,
+  ]);
+
+  expectContract("specs/browse.md", [
+    /^# browse$/m,
+    /## Inputs/,
+    /## Outputs/,
+    /visible mode/i,
+    /handoff/i,
+    /resume/i,
+  ]);
+
+  expectContract("specs/README.md", [
+    /\[browse\]\(\.\/browse\.md\)/,
+  ]);
+});
