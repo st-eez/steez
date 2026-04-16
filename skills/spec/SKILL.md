@@ -57,16 +57,25 @@ Conditional sections:
 ## /tdd handoff
 
 Implementation slices are the contract `/tdd` executes.
+Bias toward independent, hermetic, repeatable tests.
+Use runtime smoke only for wiring, not state-machine coverage.
 
 Each slice must include:
 - Slice ID
 - Title
 - Goal
+- Behavior under test
+- Seam under test (public API/CLI first)
 - Boundary
 - Files likely touched
 - Red test name
+- Fixture / harness
+- Isolation rule
+- Determinism rule
+- Assertion contract
 - Green condition
 - Refactor target
+- Smoke budget (`none` or `single allowed smoke`)
 - Verification command
 
 `/tdd` takes one approved slice at a time.
@@ -84,6 +93,11 @@ Do not promote the design spec in place.
 Treat these as hard failures:
 - missing verification command
 - missing failing test for any slice
+- slice covers more than one behavior
+- missing seam, fixture / harness, isolation rule, determinism rule, assertion contract, or smoke budget
+- real network, clock, home-dir state, or shared machine state without explicit smoke exemption
+- implementation-detail assertions where user-visible behavior should be asserted
+- more than one live runtime smoke slice
 - unowned open question
 - missing boundary or interface contract
 - bloated spec
