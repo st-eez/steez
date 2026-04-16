@@ -1,12 +1,13 @@
 # steez — Claude Code Skill Installer
 
-## Conventions
+## Repo Conventions
 
-- When adding a new skill, also add its entry to `skills.json` (name, category, description max 80 chars)
-- When behavior changes, update the matching spec in `specs/` in the same commit. If no spec exists for the thing you are changing, create one — specs are the source of truth and cannot drift.
-- Use conventional commits: `feat:` | `fix:` | `refactor:` | `docs:` | `chore:`
-- Use absolute paths (`$HOME`, `__dirname`, `__file__`) — never relative
-- Never hardcode PII or env-specific values — resolve from config at runtime
+- Add new skills to `skills.json` with name, category, and a description under 80 chars.
+- When behavior changes, update the matching spec in `specs/` in the same commit. If none exists, create one.
+
+## Binary Rebuilds
+
+- If you change code that affects a binary, rebuild it before testing or calling the work done. Use `make install` for the Go CLI and `cd /Users/stevedimakos/Projects/Personal/steez/shared/steez/browse && bun run build` for the browse binary.
 
 ## Architecture
 
@@ -23,7 +24,7 @@
 
 ```bash
 # Browse binary
-cd shared/steez/browse
+cd /Users/stevedimakos/Projects/Personal/steez/shared/steez/browse
 bun install                # install dependencies (playwright, diff)
 bun run build              # compile browse binary + node server
 bun run test               # run all tests except e2e
@@ -161,7 +162,7 @@ These are gitignored but present on disk after `bun run build`.
 
 **Rebuild after changing browse source:**
 ```bash
-cd shared/steez/browse && bun run build
+cd /Users/stevedimakos/Projects/Personal/steez/shared/steez/browse && bun run build
 ```
 
 The binaries only work on macOS arm64. The `server-node.mjs` fallback
@@ -169,18 +170,7 @@ provides Windows/Node.js compatibility.
 
 ## Browser Interaction
 
-When you need to interact with a browser (QA, dogfooding, cookie setup), use
-the `/browse` skill or run the browse binary directly via `$B <command>`.
-
-Skills resolve `$B` with:
-```bash
-B=~/.steez/bin/browse
-```
-
-## Editing Skills
-
-Each bash code block in a SKILL.md runs in a separate shell — variables don't
-persist between blocks. Use prose to carry state, not shell variables.
+For browser QA, dogfooding, or cookie setup, use the `/browse` skill or `$HOME/.steez/bin/browse`.
 
 ## Helper Script Dependencies
 
@@ -212,14 +202,6 @@ infrastructure, or anything where the runtime/framework might have a built-in:
 Three layers of knowledge: tried-and-true (Layer 1), new-and-popular (Layer 2),
 first-principles (Layer 3). Prize Layer 3 above all. See ETHOS.md for the full
 builder philosophy.
-
-## Commit Style
-
-Use conventional commits: `feat:` | `fix:` | `refactor:` | `docs:` | `chore:`
-
-Prefer one commit per logical change. When you've made multiple changes
-(e.g., a bug fix + a branding removal + a new skill), split them into
-separate commits. Each commit should be independently understandable.
 
 ## Design References
 
