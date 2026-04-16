@@ -39,6 +39,7 @@ setup_runtime() {
   RUNTIME_TMP=$(mktemp -d)
   export HOME="$RUNTIME_TMP/home"
   export STEEZ_STATE_DIR="$RUNTIME_TMP/state"
+  eventsd_enable_explicit_service_mode
   mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.steez/bin" "$HOME/.steez/agent-state/claude" "$STEEZ_STATE_DIR/eventsd"
 
   # Real agent-eventsd, agent-state, agent-deliver, agent-send, agent-watch,
@@ -73,19 +74,20 @@ EOF
   # which flips to %1 after the first split — every subsequent send-keys
   # target would land in the fake instead of the test shell.
   PANE0=$("$REAL_TMUX" -L "$TMUX_SOCK" display-message -t test:0.0 -p '#{pane_id}')
+  start_runtime_eventsd_service || {
+    echo "  eventsd service failed to start"
+    exit 1
+  }
 }
 
 cleanup_runtime() {
-  # Kill the long-lived agent-eventsd service (if any) before the state
-  # dir is scrubbed so it cannot keep polling a disappearing tree.
-  local pidf="$STEEZ_STATE_DIR/eventsd/eventsd.pid"
-  if [[ -f "$pidf" ]]; then
-    local pid
-    pid=$(cat "$pidf" 2>/dev/null || true)
-    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
-  fi
+  eventsd_stop_service
   "$REAL_TMUX" -L "$TMUX_SOCK" kill-server 2>/dev/null || true
   rm -rf "$RUNTIME_TMP"
+}
+
+start_runtime_eventsd_service() {
+  PATH="$TEST_BIN:$PATH" eventsd_start_service "$BIN_DIR/agent-eventsd"
 }
 
 # Run spawn.sh inside pane 0 and capture TARGET=%N to $1.
@@ -170,6 +172,8 @@ test_watched_prompt_against_fake_claude_fires_exactly_one_attention_notification
   # the idle transition within the test timeout without touching the
   # production defaults.
   local send_rc=0 send_out
+  SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "hello" 2>&1) || send_rc=$?
@@ -269,6 +273,8 @@ run_watched_idle_turn_for_model() (
   }
 
   local send_rc=0 send_out
+  SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR"     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "hello-$model" 2>&1) || send_rc=$?
   [[ "$send_rc" -eq 0 ]] || {
     echo "    agent-send failed for $model (rc=$send_rc):"
@@ -355,6 +361,8 @@ test_no_watch_against_fake_claude_delivers_to_target_without_live_watch_or_spawn
   [[ -f "$spawner_transcript" ]] || { echo "    spawner transcript missing: $spawner_transcript"; exit 1; }
 
   local send_rc=0 send_out
+  SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --no-watch --spawner "$spawner" "$target" "hello-no-watch" 2>&1) || send_rc=$?
@@ -448,6 +456,8 @@ test_blocked_question_against_fake_claude_resolves_and_agent_history_returns_pro
 
   local send_rc=0 send_out question
   question="Which repo should I use?"
+  SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "help me choose" 2>&1) || send_rc=$?
@@ -537,6 +547,8 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
   spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
 
   local send_rc=0 send_out
+  SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "first-live" 2>&1) || send_rc=$?
@@ -580,6 +592,8 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
   }
 
   send_rc=0
+  SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     SILENCE_WINDOW_MS=0 RECONCILE_INTERVAL_MS=100 EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "second-wins" 2>&1) || send_rc=$?
@@ -679,6 +693,8 @@ test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked
   spawner_transcript=$(wait_pane_var "$spawner" @transcript_path 25) || { echo "    spawner @transcript_path never set"; exit 1; }
 
   local send_rc=0 send_out
+  SILENCE_WINDOW_MS=150 RECONCILE_INTERVAL_MS=100 INDETERMINATE_TIMEOUT_MS=350 EVENTSD_TICK_INTERVAL_SEC=0.05 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     SILENCE_WINDOW_MS=150 RECONCILE_INTERVAL_MS=100 INDETERMINATE_TIMEOUT_MS=350 EVENTSD_TICK_INTERVAL_SEC=0.05 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "degrade-me" 2>&1) || send_rc=$?
@@ -804,6 +820,8 @@ test_fake_claude_exit_while_watched_resolves_blocked_unknown_and_clears_live_wat
   [[ -f "$spawner_transcript" ]] || { echo "    spawner transcript missing: $spawner_transcript"; exit 1; }
 
   local send_rc=0 send_out
+  EVENTSD_TICK_INTERVAL_SEC=0.05 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     EVENTSD_TICK_INTERVAL_SEC=0.05 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "exit-mid-turn" 2>&1) || send_rc=$?
@@ -893,6 +911,8 @@ test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch
   # default SILENCE_WINDOW_MS (30s) keeps the degraded path from engaging
   # during the test — only the evidence CLI can resolve this watch.
   local wid
+  EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   wid=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-eventsd" prearm --pane "$target" --spawner "$spawner" \
@@ -1016,6 +1036,8 @@ test_claude_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
   # (5000). Degraded fallback cannot rescue this watch inside the 2s
   # budget — only the hook can.
   local send_rc=0 send_out
+  EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "hook-me" 2>&1) || send_rc=$?
@@ -1133,6 +1155,8 @@ test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
   # SILENCE_WINDOW_MS (30000) keeps degraded fallback out of the 2s
   # budget — only fast evidence from the Stop hook can resolve in time.
   local send_rc=0 send_out
+  EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
   send_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
     EVENTSD_TICK_INTERVAL_SEC=0.1 \
     "$BIN_DIR/agent-send" --spawner "$spawner" "$target" "stop-hook-evidence" 2>&1) || send_rc=$?

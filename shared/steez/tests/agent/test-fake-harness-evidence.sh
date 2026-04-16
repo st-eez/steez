@@ -38,6 +38,7 @@ setup_runtime() {
   RUNTIME_TMP=$(mktemp -d)
   export HOME="$RUNTIME_TMP/home"
   export STEEZ_STATE_DIR="$RUNTIME_TMP/state"
+  eventsd_enable_explicit_service_mode
   mkdir -p "$HOME/.claude" "$HOME/.steez/bin" "$HOME/.steez/agent-state/claude" "$STEEZ_STATE_DIR/eventsd"
 
   # Real agent-state, agent-deliver, agent-eventsd, agent-history — the
@@ -67,15 +68,14 @@ EOF
     "$REAL_TMUX" -L "$TMUX_SOCK" -f /dev/null \
     new-session -d -s test -x 200 -y 50
   PANE0=$("$REAL_TMUX" -L "$TMUX_SOCK" display-message -t test:0.0 -p '#{pane_id}')
+  PATH="$TEST_BIN:$PATH" eventsd_start_service "$BIN_DIR/agent-eventsd" || {
+    echo "  eventsd service failed to start"
+    exit 1
+  }
 }
 
 cleanup_runtime() {
-  local pidf="$STEEZ_STATE_DIR/eventsd/eventsd.pid"
-  if [[ -f "$pidf" ]]; then
-    local pid
-    pid=$(cat "$pidf" 2>/dev/null || true)
-    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
-  fi
+  eventsd_stop_service
   "$REAL_TMUX" -L "$TMUX_SOCK" kill-server 2>/dev/null || true
   rm -rf "$RUNTIME_TMP"
 }

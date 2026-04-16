@@ -43,6 +43,8 @@ The `agent-eventsd` executable has two roles:
 
 The first client invocation that finds no running service **must** start one and then issue its request against that service (auto-start). Subsequent invocations reuse it. Clients never fall back to running watch logic locally when the service is missing — they surface an error or trigger auto-start, they do not simulate the daemon.
 
+Test harnesses may disable detached auto-start with `EVENTSD_REQUIRE_EXPLICIT_SERVICE=1`. In that mode the harness must start `agent-eventsd serve` itself before the first client command, and client calls must not detach-spawn a daemon behind the harness's back.
+
 `agent-send`, `agent-watch`, and every other caller reach `agent-eventsd` only through these client commands. No caller sources the daemon file as a bash library on the primary path. No caller calls internal helpers (`watch_tick`, `watch_pending_timeout`, `watch_arm`, `watch_create_pending`, `_eventsd_*`) to drive behavior.
 
 A shape where `prearm` / `start` / `remove` / `list` / `status` each run standalone against on-disk state, with no long-lived process, does not satisfy this spec. Timer-driven transitions have no owner in that shape.
@@ -324,11 +326,12 @@ This spec is normative. Tests should prove the rules above. They should not repl
 ### Testing rules
 
 1. **Primary-path tests go through the service.** Tests that exercise watch lifecycle on the primary path must drive behavior through the client commands (`prearm`, `start`, `remove`, `list`, `status`) against a running `agent-eventsd` service. They must not call `watch_tick`, `watch_pending_timeout`, `watch_arm`, `watch_create_pending`, or any `_eventsd_*` helper directly. Those are internal to the daemon; driving them from tests bypasses the runtime under test.
-2. **Internal-function tests are kernel coverage, not runtime coverage.** Unit tests that exercise individual functions inside the daemon are useful for kernel correctness but do not prove the runtime works. A suite that passes entirely by calling internal helpers, with no end-to-end coverage against a live service, does not satisfy this spec.
-3. **Timers run in the service.** Tests that need to exercise `PREARM_TIMEOUT_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
-4. **Fake only the agent process.** End-to-end coverage runs against the zero-token fakes defined in `specs/fake-agent-harness.md`. The test seam is the `claude` / `codex` binary on `$PATH`; `spawn.sh`, `agent-send`, `agent-deliver`, `agent-eventsd`, `agent-watch`, `agent-history`, and `agent-state` stay real.
-5. **Assert through the public surface.** Primary-path tests must not prove behavior by reading files under `$STEEZ_STATE_DIR/eventsd/` directly. Use `agent-watch`, spawner-pane output, and other public runtime surfaces.
-6. **The primary path never spawns `agent-watch-daemon`.** End-to-end runtime coverage must prove that no primary-path scenario starts `agent-watch-daemon`.
+2. **Runtime harnesses own service lifetime in explicit-service mode.** When a harness sets `EVENTSD_REQUIRE_EXPLICIT_SERVICE=1`, it must start the service explicitly, stop it explicitly, and tear it down before deleting the temp state tree or tmux server.
+3. **Internal-function tests are kernel coverage, not runtime coverage.** Unit tests that exercise individual functions inside the daemon are useful for kernel correctness but do not prove the runtime works. A suite that passes entirely by calling internal helpers, with no end-to-end coverage against a live service, does not satisfy this spec.
+4. **Timers run in the service.** Tests that need to exercise `PREARM_TIMEOUT_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
+5. **Fake only the agent process.** End-to-end coverage runs against the zero-token fakes defined in `specs/fake-agent-harness.md`. The test seam is the `claude` / `codex` binary on `$PATH`; `spawn.sh`, `agent-send`, `agent-deliver`, `agent-eventsd`, `agent-watch`, `agent-history`, and `agent-state` stay real.
+6. **Assert through the public surface.** Primary-path tests must not prove behavior by reading files under `$STEEZ_STATE_DIR/eventsd/` directly. Use `agent-watch`, spawner-pane output, and other public runtime surfaces.
+7. **The primary path never spawns `agent-watch-daemon`.** End-to-end runtime coverage must prove that no primary-path scenario starts `agent-watch-daemon`.
 
 Keep the acceptance set short and derived from behavior:
 

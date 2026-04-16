@@ -22,6 +22,53 @@ fi
 # shellcheck disable=SC1090
 source "$EVENTSD"
 
+# ----- service lifecycle -----
+
+suite "service lifecycle"
+
+_eventsd_pidfile() {
+  printf '%s/eventsd/eventsd.pid' "$STEEZ_STATE_DIR"
+}
+
+_eventsd_reap_service() {
+  local pidf pid
+  pidf=$(_eventsd_pidfile)
+  [[ -f "$pidf" ]] || return 0
+  pid=$(cat "$pidf" 2>/dev/null || true)
+  if [[ -n "$pid" ]]; then
+    kill -KILL "$pid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 40); do
+      kill -0 "$pid" 2>/dev/null || break
+      /bin/sleep 0.05
+    done
+  fi
+  rm -f "$pidf"
+}
+
+test_explicit_service_mode_blocks_detached_autostart() {
+  local pidf rc=0 out spawned=0
+  pidf=$(_eventsd_pidfile)
+  _eventsd_reap_service
+  out=$(EVENTSD_REQUIRE_EXPLICIT_SERVICE=1 "$EVENTSD" prearm \
+    --pane "%1" \
+    --spawner "%0" \
+    --label "claude" \
+    --baseline-state "working" 2>&1) || rc=$?
+  [[ -f "$pidf" ]] && spawned=1
+  _eventsd_reap_service
+  [[ "$rc" -ne 0 ]] || {
+    echo "    prearm unexpectedly succeeded in explicit-service mode:"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    return 1
+  }
+  [[ "$spawned" -eq 0 ]] || {
+    echo "    explicit-service mode detached-spawned agent-eventsd"
+    return 1
+  }
+}
+run_test "explicit-service mode blocks detached autostart" test_explicit_service_mode_blocks_detached_autostart
+
 # ----- seq assigner -----
 
 suite "seq assigner"

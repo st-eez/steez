@@ -10,25 +10,8 @@ set -euo pipefail
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
-# Reap any agent-eventsd service auto-started by `agent-watch add` before
-# cleanup_test_env scrubs the state dir — otherwise the service survives
-# as a hot-spinner (mocked `sleep` starves bash's trap handling) and
-# keeps polling a deleted tree.
 _cleanup_agent_watch() {
-  # Kill the tracked singleton plus any orphaned serves. Orphans arise
-  # because tests that `rm -rf "$STEEZ_STATE_DIR/eventsd"` to reset state
-  # delete the pidfile without killing the running service, and the next
-  # auto-start then spawns a fresh service on top. Matching on $HOME
-  # scopes the pkill to this test file's isolated tree — `setup_test_env`
-  # routes HOME to a unique mktemp dir, so no other user or test run is
-  # affected.
-  local pidf="$STEEZ_STATE_DIR/eventsd/eventsd.pid"
-  if [[ -f "$pidf" ]]; then
-    local pid
-    pid=$(cat "$pidf" 2>/dev/null || true)
-    [[ -n "$pid" ]] && kill -KILL "$pid" 2>/dev/null || true
-  fi
-  pkill -KILL -f "$HOME/.steez/bin/agent-eventsd serve" 2>/dev/null || true
+  _stop_real_eventsd_service >/dev/null 2>&1 || true
   cleanup_test_env
 }
 trap _cleanup_agent_watch EXIT
@@ -49,6 +32,7 @@ _install_real_eventsd() {
   rm -f "$HOME/.steez/bin/agent-eventsd"
   cp "$BIN_DIR/agent-eventsd" "$HOME/.steez/bin/agent-eventsd"
   chmod +x "$HOME/.steez/bin/agent-eventsd"
+  eventsd_enable_explicit_service_mode
 }
 
 # Tripwire for bead 8 acceptance: agent-watch-daemon must be absent from
@@ -75,51 +59,15 @@ _live_file_for_pane() {
 # want a clean "no service running" baseline must kill any leftover
 # service spawned by a prior test's auto-start.
 _eventsd_service_pidfile() {
-  printf '%s/eventsd/eventsd.pid' "$STEEZ_STATE_DIR"
+  eventsd_service_pidfile
 }
 
 _stop_real_eventsd_service() {
-  local pidf pid
-  pidf=$(_eventsd_service_pidfile)
-  [[ -f "$pidf" ]] || return 0
-  pid=$(cat "$pidf" 2>/dev/null || true)
-  if [[ -n "$pid" ]]; then
-    # SIGTERM is unreliable here: setup_test_env mocks `sleep` to exit 0,
-    # so the serve loop hot-spins and bash's trap never fires between
-    # iterations. Removing the pidfile while the process survives causes
-    # the next auto-start to spawn a duplicate on top — leaking one
-    # hot-spinner per test. SIGKILL reaps the child deterministically;
-    # we explicitly remove the pidfile afterward because SIGKILL skips
-    # the EXIT trap that would have cleaned it up.
-    kill -KILL "$pid" 2>/dev/null || true
-    local i
-    for i in $(seq 1 40); do
-      kill -0 "$pid" 2>/dev/null || break
-      /bin/sleep 0.05
-    done
-    if kill -0 "$pid" 2>/dev/null; then
-      echo "    eventsd service pid=$pid survived SIGKILL" >&2
-      return 1
-    fi
-  fi
-  rm -f "$pidf"
+  eventsd_stop_service
 }
 
 _start_real_eventsd_service() {
-  _stop_real_eventsd_service
-  # setup_test_env's mocked `sleep` turns the tick loop into a hot spin,
-  # but the service writes its pidfile synchronously before the first
-  # tick, so readers see it the moment the child exec completes.
-  "$BIN_DIR/agent-eventsd" serve </dev/null >/dev/null 2>&1 &
-  local pidf
-  pidf=$(_eventsd_service_pidfile)
-  local i
-  for i in $(seq 1 60); do
-    [[ -f "$pidf" ]] && return 0
-    /bin/sleep 0.05
-  done
-  echo "    eventsd service pidfile never appeared at $pidf" >&2
-  return 1
+  eventsd_start_service "$BIN_DIR/agent-eventsd"
 }
 
 _watch_state() {
@@ -134,6 +82,7 @@ test_add_emits_prearm_and_start_immediately_and_leaves_watch_armed() {
   # same model, but watch.start follows turn.prearm immediately."
   _install_real_eventsd
   _install_daemon_tripwire
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   local out live_wid state
   out=$("$BIN_DIR/agent-watch" add %5 2>&1)
@@ -155,6 +104,7 @@ run_test "add_emits_prearm_and_start_immediately_and_leaves_watch_armed" test_ad
 
 test_add_records_label_spawner_and_baseline_flags() {
   _install_real_eventsd
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   "$BIN_DIR/agent-watch" add %5 --spawner %0 --label "my-agent" \
     --baseline "idle" >/dev/null 2>&1 || {
@@ -176,6 +126,7 @@ test_add_second_add_supersedes_prior_watch_on_same_pane() {
   # that pane." Manual add goes through prearm, so a second add on the
   # same pane closes the prior with close_reason=superseded.
   _install_real_eventsd
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   local wid1 wid2 rec1
   "$BIN_DIR/agent-watch" add %5 --label "first" >/dev/null 2>&1 || return 1
@@ -194,6 +145,7 @@ suite "agent-watch remove routes to agent-eventsd"
 test_remove_closes_live_watch_on_pane() {
   _install_real_eventsd
   _install_daemon_tripwire
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 || return 1
   local wid
@@ -219,6 +171,7 @@ test_remove_without_existing_watch_is_a_noop() {
   # Spec (agent-watch behavioral contract carried into bead 8):
   # "remove is safe to call on non-existent watches (no error)."
   _install_real_eventsd
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
   local rc=0
   "$BIN_DIR/agent-watch" remove %6 >/dev/null 2>&1 || rc=$?
   assert_exit_code "0" "$rc"
@@ -232,6 +185,7 @@ test_list_reflects_live_eventsd_watches() {
 
   # Empty state → informational message.
   rm -rf "$STEEZ_STATE_DIR/eventsd"
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
   local empty
   empty=$("$BIN_DIR/agent-watch" list 2>&1)
   assert_contains "$empty" "no active watches" || return 1
@@ -331,6 +285,7 @@ test_add_remove_list_status_never_spawn_agent_watch_daemon() {
   # the marker file was never created.
   _install_real_eventsd
   _install_daemon_tripwire
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 || return 1
   "$BIN_DIR/agent-watch" list >/dev/null 2>&1 || return 1
@@ -392,6 +347,7 @@ suite "agent-watch default baseline"
 # letting the daemon pick a different default).
 test_default_baseline_is_working() {
   _install_real_eventsd
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 \
     || { echo "add failed"; exit 1; }
@@ -416,6 +372,7 @@ test_inferred_label_matches_agent_type() {
   # the stand-in mock, which would skip the on-disk record we read below.
   setup_agent_mocks ren idle
   _install_real_eventsd
+  _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 \
     || { echo "add failed"; exit 1; }

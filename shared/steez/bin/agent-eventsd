@@ -1015,7 +1015,12 @@ _cmd_prearm() {
   # Auto-start the long-lived service if it isn't already running. The
   # first client invocation is responsible for standing it up; subsequent
   # ones reuse it (spec: Runtime shape).
-  _eventsd_auto_start_service || true
+  if ! _eventsd_auto_start_service; then
+    if _eventsd_requires_explicit_service; then
+      echo "agent-eventsd prearm: service unavailable in explicit-service mode" >&2
+      return 1
+    fi
+  fi
   local pane="" spawner="" label="" baseline=""
   local hash="" cursor="" prearm_seq=""
   while [[ $# -gt 0 ]]; do
@@ -1117,6 +1122,10 @@ _eventsd_service_alive() {
   kill -0 "$pid" 2>/dev/null
 }
 
+_eventsd_requires_explicit_service() {
+  [[ "${EVENTSD_REQUIRE_EXPLICIT_SERVICE:-0}" == "1" ]]
+}
+
 _eventsd_pane_has_live_agent() {
   local pane="$1"
   [[ -n "$pane" ]] || return 1
@@ -1128,6 +1137,7 @@ _eventsd_pane_has_live_agent() {
 
 _eventsd_auto_start_service() {
   _eventsd_service_alive && return 0
+  _eventsd_requires_explicit_service && return 1
   mkdir -p "$_EVENTSD_STATE_DIR"
   rm -f "$(_eventsd_service_pid_file)" 2>/dev/null || true
   # Launch a detached `agent-eventsd serve`. Env (STEEZ_STATE_DIR, PATH,
@@ -1264,7 +1274,12 @@ _cmd_timeout_pending() {
 _cmd_evidence() {
   # Auto-start the service (match _cmd_prearm): hook callers may fire
   # before any prearm has stood the daemon up.
-  _eventsd_auto_start_service || true
+  if ! _eventsd_auto_start_service; then
+    if _eventsd_requires_explicit_service; then
+      echo "agent-eventsd evidence: service unavailable in explicit-service mode" >&2
+      return 1
+    fi
+  fi
   local pane="" state="" cursor="" hash=""
   local has_cursor=0 has_hash=0
   while [[ $# -gt 0 ]]; do

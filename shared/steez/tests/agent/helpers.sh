@@ -45,6 +45,52 @@ cleanup_test_env() {
   [[ -n "${TEST_TMP:-}" ]] && rm -rf "$TEST_TMP"
 }
 
+eventsd_enable_explicit_service_mode() {
+  export EVENTSD_REQUIRE_EXPLICIT_SERVICE=1
+}
+
+eventsd_service_pidfile() {
+  printf '%s/eventsd/eventsd.pid' "${STEEZ_STATE_DIR:-$HOME/.steez/state}"
+}
+
+eventsd_stop_service() {
+  local pidf pid
+  pidf=$(eventsd_service_pidfile)
+  pid="${EVENTSD_SERVICE_PID:-}"
+  if [[ -z "$pid" && -f "$pidf" ]]; then
+    pid=$(cat "$pidf" 2>/dev/null || true)
+  fi
+  if [[ -n "$pid" ]]; then
+    kill -KILL "$pid" 2>/dev/null || true
+    local i
+    for i in $(seq 1 40); do
+      kill -0 "$pid" 2>/dev/null || break
+      /bin/sleep 0.05
+    done
+  fi
+  rm -f "$pidf"
+  unset EVENTSD_SERVICE_PID
+}
+
+eventsd_start_service() {
+  local eventsd_bin="$1" pidf pid i
+  eventsd_stop_service
+  "$eventsd_bin" serve </dev/null >/dev/null 2>&1 &
+  pidf=$(eventsd_service_pidfile)
+  for i in $(seq 1 60); do
+    if [[ -f "$pidf" ]]; then
+      pid=$(cat "$pidf" 2>/dev/null || true)
+      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        EVENTSD_SERVICE_PID="$pid"
+        return 0
+      fi
+    fi
+    /bin/sleep 0.05
+  done
+  echo "    eventsd service pidfile never appeared at $pidf" >&2
+  return 1
+}
+
 suite() {
   echo ""
   echo "${_DIM}--- $1 ---${_RESET}"
