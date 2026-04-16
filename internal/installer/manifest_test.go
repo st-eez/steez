@@ -124,6 +124,72 @@ func TestLoadManifest_SkillMissingDescription(t *testing.T) {
 	}
 }
 
+func assertWorkflowSkill(t *testing.T, manifest *Manifest, name string) {
+	t.Helper()
+
+	skill, ok := manifest.Skills[name]
+	if !ok {
+		t.Fatalf("manifest missing %s skill", name)
+	}
+	if strings.TrimSpace(skill.Description) == "" {
+		t.Fatalf("manifest %s skill missing description", name)
+	}
+
+	workflow, ok := manifest.Categories["workflow"]
+	if !ok {
+		t.Fatal("manifest missing workflow category")
+	}
+
+	for _, workflowSkill := range workflow.Skills {
+		if workflowSkill.Name == name {
+			return
+		}
+	}
+
+	t.Fatalf("workflow category missing %s skill", name)
+}
+
+func TestLoadManifestIncludesTddSkillAndWorkflowCategory(t *testing.T) {
+	t.Run("synthetic fixture resolves workflow skills", func(t *testing.T) {
+		path := writeManifest(t, `{
+			"version": "1.0.0",
+			"skills": {
+				"spec": {"description": "Plan software changes into an execution-ready design spec for /tdd"},
+				"tdd": {"description": "Execute one approved /spec slice through a strict red-green-refactor loop"}
+			},
+			"categories": {
+				"workflow": {
+					"label": "Workflow",
+					"description": "Sprint pipeline: Think → Plan → Build → QA",
+					"skills": ["spec", "tdd"]
+				}
+			},
+			"profiles": {},
+			"shared_infra": {"bin": [], "runtime_dir": "~/.steez", "browse_binary": ""}
+		}`)
+
+		manifest, err := LoadManifest(path)
+		if err != nil {
+			t.Fatalf("loading synthetic manifest: %v", err)
+		}
+
+		assertWorkflowSkill(t, manifest, "spec")
+		assertWorkflowSkill(t, manifest, "tdd")
+	})
+
+	t.Run("repo manifest exposes workflow skills", func(t *testing.T) {
+		repoPath := findRepoRoot(t)
+
+		manifest, err := LoadManifest(filepath.Join(repoPath, "skills.json"))
+		if err != nil {
+			t.Fatalf("loading manifest: %v", err)
+		}
+
+		assertWorkflowSkill(t, manifest, "spec")
+		assertWorkflowSkill(t, manifest, "tdd")
+	})
+}
+
 func TestResolveProfile_Starter(t *testing.T) {
 	path := writeManifest(t, validManifest)
 	m, _ := LoadManifest(path)

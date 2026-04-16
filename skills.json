@@ -4,6 +4,9 @@
     "spec": {
       "description": "Plan software changes into an execution-ready design spec for /tdd"
     },
+    "tdd": {
+      "description": "Execute one approved /spec slice with a strict red-green-refactor loop"
+    },
     "workshop": {
       "description": "Thinking partner for fuzzy ideas — five lenses, one bead per session"
     },
@@ -82,7 +85,7 @@
     "workflow": {
       "label": "Workflow",
       "description": "Sprint pipeline: Think → Plan → Build → QA",
-      "skills": ["spec", "agenda", "jira"]
+      "skills": ["spec", "tdd", "agenda", "jira"]
     },
     "qa": {
       "label": "QA & Testing",
@@ -108,7 +111,7 @@
   "profiles": {
     "starter": {
       "label": "Starter Kit (recommended)",
-      "description": "3 workflow skills — the active planning surface",
+      "description": "4 workflow skills — the active planning surface",
       "categories": ["workflow"]
     },
     "all": {
