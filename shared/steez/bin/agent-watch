@@ -9,10 +9,10 @@ Usage: agent-watch add <pane> [--spawner <pane>] [--label <str>] [--baseline <st
        agent-watch daemon-status
 
 Public CLI for the event-driven watch service. Every subcommand routes
-to agent-eventsd; agent-watch-daemon is no longer part of the primary
-path. Manual add emits turn.prearm followed by watch.start immediately
-(no prompt bytes in between). agent-send is the only two-step-turn
-caller that inserts prompt delivery between prearm and start.
+to agent-eventsd. Manual add emits turn.prearm followed by watch.start
+immediately (no prompt bytes in between). agent-send is the only
+two-step-turn caller that inserts prompt delivery between prearm and
+start.
 
 Notifications are delivered via agent-deliver (never agent-send) to
 prevent recursive notification loops.
@@ -145,7 +145,7 @@ cmd_list() {
 
 cmd_daemon_status() {
   # Bead 8 acceptance: "daemon-status reports agent-eventsd health." The
-  # primary path is agent-eventsd; agent-watch-daemon is not involved.
+  # primary path is agent-eventsd.
   local out rc=0
   out=$("$AGENT_EVENTSD" status 2>/dev/null) || rc=$?
   if [[ $rc -eq 0 ]]; then

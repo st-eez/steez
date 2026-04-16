@@ -4,8 +4,9 @@
 # Bead 8 rewires every subcommand (add, remove, list, daemon-status) to
 # the event-driven daemon. Manual add uses the same two-step turn as
 # agent-send but emits watch.start immediately after turn.prearm (no
-# prompt bytes in between). agent-watch-daemon is retired from the
-# primary path — these tests also assert its absence.
+# prompt bytes in between). These tests assert the primary path routes
+# through agent-eventsd — a live service pidfile, real watch records,
+# and daemon-status surfacing eventsd health.
 set -euo pipefail
 source "$(dirname "$0")/helpers.sh"
 
@@ -33,19 +34,6 @@ _install_real_eventsd() {
   cp "$BIN_DIR/agent-eventsd" "$HOME/.steez/bin/agent-eventsd"
   chmod +x "$HOME/.steez/bin/agent-eventsd"
   eventsd_enable_explicit_service_mode
-}
-
-# Tripwire for bead 8 acceptance: agent-watch-daemon must be absent from
-# the primary path. The mock at $HOME/.steez/bin/agent-watch-daemon writes
-# a marker file on invocation — tests assert the marker never appears.
-_install_daemon_tripwire() {
-  cat > "$HOME/.steez/bin/agent-watch-daemon" <<TRIP
-#!/usr/bin/env bash
-touch "$TEST_TMP/daemon-spawned"
-exit 0
-TRIP
-  chmod +x "$HOME/.steez/bin/agent-watch-daemon"
-  rm -f "$TEST_TMP/daemon-spawned"
 }
 
 _live_file_for_pane() {
@@ -81,7 +69,6 @@ test_add_emits_prearm_and_start_immediately_and_leaves_watch_armed() {
   # Spec (Watch lifecycle — armed): "Manual agent-watch add uses the
   # same model, but watch.start follows turn.prearm immediately."
   _install_real_eventsd
-  _install_daemon_tripwire
   _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   local out live_wid state
@@ -95,10 +82,6 @@ test_add_emits_prearm_and_start_immediately_and_leaves_watch_armed() {
   live_wid=$(cat "$live_file")
   state=$(_watch_state "$live_wid")
   assert_eq "armed" "$state" || return 1
-
-  # agent-watch-daemon was never spawned.
-  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
-    || { echo "    agent-watch-daemon spawned from primary path"; return 1; }
 }
 run_test "add_emits_prearm_and_start_immediately_and_leaves_watch_armed" test_add_emits_prearm_and_start_immediately_and_leaves_watch_armed
 
@@ -144,7 +127,6 @@ suite "agent-watch remove routes to agent-eventsd"
 
 test_remove_closes_live_watch_on_pane() {
   _install_real_eventsd
-  _install_daemon_tripwire
   _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 || return 1
@@ -161,9 +143,6 @@ test_remove_closes_live_watch_on_pane() {
   reason=$(jq -r .close_reason "$STEEZ_STATE_DIR/eventsd/watches/$wid.json")
   assert_eq "closed" "$state" || return 1
   assert_eq "removed" "$reason" || return 1
-  # Daemon still absent.
-  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
-    || { echo "    agent-watch-daemon spawned from remove"; return 1; }
 }
 run_test "remove_closes_live_watch_on_pane" test_remove_closes_live_watch_on_pane
 
@@ -207,7 +186,6 @@ test_daemon_status_reports_agent_eventsd_health() {
   # Bead 401 extension: health means the long-lived service is alive —
   # not just a writable state dir. Start a real serve process first.
   _install_real_eventsd
-  _install_daemon_tripwire
   _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   local out rc=0
@@ -215,14 +193,12 @@ test_daemon_status_reports_agent_eventsd_health() {
   _stop_real_eventsd_service
   assert_exit_code "0" "$rc"
   # Output must call out agent-eventsd explicitly — the label proves the
-  # cutover. "running pid=..." (the old daemon output) is forbidden.
+  # cutover. Any "running pid=..." phrasing from a legacy daemon is
+  # forbidden.
   assert_contains "$out" "agent-eventsd" || return 1
   assert_contains "$out" "ready" || return 1
   [[ "$out" != *"running pid="* ]] \
-    || { echo "    still reporting old agent-watch-daemon pid: $out"; return 1; }
-  # agent-watch-daemon must NOT be spawned by daemon-status.
-  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
-    || { echo "    daemon-status spawned agent-watch-daemon"; return 1; }
+    || { echo "    non-eventsd pid output: $out"; return 1; }
 }
 run_test "daemon_status_reports_agent_eventsd_health" test_daemon_status_reports_agent_eventsd_health
 
@@ -230,7 +206,6 @@ test_daemon_status_is_unavailable_when_service_state_dir_is_not_writable() {
   # Spec (agent-watch daemon-status): ready requires both a live
   # long-lived service and a writable eventsd state dir.
   _install_real_eventsd
-  _install_daemon_tripwire
   _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
   local eventsd_dir="$STEEZ_STATE_DIR/eventsd"
@@ -249,8 +224,6 @@ test_daemon_status_is_unavailable_when_service_state_dir_is_not_writable() {
   assert_exit_code "1" "$rc"
   assert_contains "$out" "agent-eventsd" || return 1
   assert_contains "$out" "unavailable" || return 1
-  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
-    || { echo "    daemon-status spawned agent-watch-daemon"; return 1; }
 }
 run_test "daemon_status_is_unavailable_when_service_state_dir_is_not_writable" \
   test_daemon_status_is_unavailable_when_service_state_dir_is_not_writable
@@ -261,7 +234,6 @@ test_daemon_status_is_unavailable_when_no_long_lived_service_running() {
   # must surface that as "unavailable" so operators aren't told the
   # primary path is healthy when it is silently dead.
   _install_real_eventsd
-  _install_daemon_tripwire
   _stop_real_eventsd_service
   [[ ! -f "$(_eventsd_service_pidfile)" ]] \
     || { echo "    pidfile still present after stop"; return 1; }
@@ -271,31 +243,52 @@ test_daemon_status_is_unavailable_when_no_long_lived_service_running() {
   assert_exit_code "1" "$rc"
   assert_contains "$out" "agent-eventsd" || return 1
   assert_contains "$out" "unavailable" || return 1
-  # No fallback to the retired daemon either.
-  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
-    || { echo "    daemon-status spawned agent-watch-daemon"; return 1; }
 }
 run_test "daemon_status_is_unavailable_when_no_long_lived_service_running" test_daemon_status_is_unavailable_when_no_long_lived_service_running
 
-suite "agent-watch-daemon absent from primary path"
+suite "agent-watch primary path routes through agent-eventsd"
 
-test_add_remove_list_status_never_spawn_agent_watch_daemon() {
-  # Bead 8 acceptance: "agent-watch-daemon absent from primary path."
-  # Drives every public subcommand through a tripwired mock and asserts
-  # the marker file was never created.
+test_add_remove_list_status_all_route_through_agent_eventsd() {
+  # Bead 8 acceptance as a positive: every public subcommand must drive
+  # the agent-eventsd service. Prove the cutover forward — the long-lived
+  # service is running, add creates a live watch record, list sees it,
+  # daemon-status reports eventsd health, and remove closes the live slot.
   _install_real_eventsd
-  _install_daemon_tripwire
   _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
-  "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 || return 1
-  "$BIN_DIR/agent-watch" list >/dev/null 2>&1 || return 1
-  "$BIN_DIR/agent-watch" daemon-status >/dev/null 2>&1 || return 1
-  "$BIN_DIR/agent-watch" remove %5 >/dev/null 2>&1 || return 1
+  local pidfile
+  pidfile=$(_eventsd_service_pidfile)
+  [[ -s "$pidfile" ]] \
+    || { echo "    no eventsd service pidfile after start"; return 1; }
 
-  [[ ! -f "$TEST_TMP/daemon-spawned" ]] \
-    || { echo "    agent-watch-daemon spawned by primary path"; return 1; }
+  "$BIN_DIR/agent-watch" add %5 >/dev/null 2>&1 || return 1
+  local live_file
+  live_file=$(_live_file_for_pane "%5")
+  [[ -s "$live_file" ]] \
+    || { echo "    add did not produce an eventsd live watch"; return 1; }
+  local wid
+  wid=$(cat "$live_file")
+  [[ -s "$STEEZ_STATE_DIR/eventsd/watches/$wid.json" ]] \
+    || { echo "    eventsd watch record missing for $wid"; return 1; }
+
+  local list_out status_out
+  list_out=$("$BIN_DIR/agent-watch" list 2>&1) || return 1
+  assert_contains "$list_out" "%5" || return 1
+
+  status_out=$("$BIN_DIR/agent-watch" daemon-status 2>&1) || return 1
+  assert_contains "$status_out" "agent-eventsd" || return 1
+  assert_contains "$status_out" "ready" || return 1
+
+  "$BIN_DIR/agent-watch" remove %5 >/dev/null 2>&1 || return 1
+  [[ ! -s "$live_file" ]] \
+    || { echo "    remove did not clear the eventsd live slot"; return 1; }
+
+  # Service pidfile survives the whole sequence — primary path never
+  # tore it down or started a stand-in.
+  [[ -s "$pidfile" ]] \
+    || { echo "    eventsd service pidfile lost during primary path"; return 1; }
 }
-run_test "add_remove_list_status_never_spawn_agent_watch_daemon" test_add_remove_list_status_never_spawn_agent_watch_daemon
+run_test "add_remove_list_status_all_route_through_agent_eventsd" test_add_remove_list_status_all_route_through_agent_eventsd
 
 suite "agent-watch errors"
 
@@ -361,11 +354,10 @@ run_test "add writes baseline_state=working when --baseline is omitted" \
 
 suite "agent-watch label inference"
 
-# Pre-cutover, infer_label lived in agent-watch-daemon. Bead 8 kept the
-# infer_label hook but moved the call site into agent-watch itself, so
-# the contract is the same from a caller's perspective: omit --label and
-# the agent-state agent type shows up on the record. Retargeted to read
-# `.label` off the eventsd watch record.
+# Bead 8 kept the infer_label hook and moved the call site into
+# agent-watch itself, so the contract from a caller's perspective is:
+# omit --label and the agent-state agent type shows up on the watch
+# record. Read `.label` off the eventsd watch record.
 test_inferred_label_matches_agent_type() {
   # Reconfigure agent-state FIRST, then reinstall the real eventsd on top
   # — setup_agent_mocks clobbers $HOME/.steez/bin/agent-eventsd back to
@@ -388,11 +380,11 @@ run_test "omitted --label falls back to agent-state agent type" \
 
 # Pre-cutover test "rolls back watchlist entry when daemon fails to start"
 # is dropped, not retargeted. The rollback it verified guarded a failure
-# mode — ensure_daemon fails to spawn agent-watch-daemon — that no longer
+# mode — ensure_daemon fails to spawn a local watcher — that no longer
 # exists in the primary path. agent-watch now routes every subcommand
 # through agent-eventsd (a long-running daemon launched out-of-band), so
 # agent-watch itself neither starts a daemon nor maintains a local
-# watchlist to roll back. The "daemon absent from primary path" test
-# upthread already pins that agent-watch-daemon is never spawned.
+# watchlist to roll back. The "primary path routes through agent-eventsd"
+# test upthread pins the live service coverage.
 
 report

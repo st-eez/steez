@@ -187,7 +187,6 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 
 ## Integration Points
 
-- **agent-watch-daemon** calls `agent-state <pane>` every poll cycle to detect state transitions.
 - **agent-deliver** calls `agent-state <pane>` to validate the target is a recognized agent before delivery.
 - **agent-send** inherits agent-deliver's validation.
 - **agent-history** calls `agent-state <pane> --detail` to resolve transcript paths.

@@ -2,7 +2,7 @@
 
 **Path:** `shared/steez/bin/agent-watch`
 
-Public CLI for the event-driven watch service (`agent-eventsd`). Registers, lists, and removes background watches on AI agent panes. Every subcommand routes to the running `agent-eventsd` service (spec: agent-events — Runtime shape); `agent-watch-daemon` is no longer part of the primary path.
+Public CLI for the event-driven watch service (`agent-eventsd`). Registers, lists, and removes background watches on AI agent panes. Every subcommand routes to the running `agent-eventsd` service (spec: agent-events — Runtime shape).
 
 The first `agent-watch` invocation that finds no running `agent-eventsd` service triggers auto-start through the client command it issues. `agent-watch` itself never runs watch logic in-process and never mutates state under `$STEEZ_STATE_DIR/eventsd/` directly.
 
@@ -115,7 +115,7 @@ All watch state lives under `$STEEZ_STATE_DIR/eventsd/` and is owned by `agent-e
 2. `add` requires either `$TMUX_PANE` or `--spawner`; errors out otherwise.
 3. `remove` is safe to call on non-existent watches (no error, exit 0).
 4. Pane IDs are resolved to canonical `%N` format before events are emitted.
-5. `agent-watch-daemon` is never spawned by any subcommand.
+5. Every subcommand routes through the running `agent-eventsd` service. `agent-watch` itself never runs watch logic in-process.
 
 ## Error Handling
 

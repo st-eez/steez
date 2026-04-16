@@ -162,7 +162,7 @@ Each `user_message` starts a turn; each `task_complete` ends it.
 
 ## Integration Points
 
-- **agent-watch-daemon** calls `agent-history <pane> --blocked` to extract detail for blocked notifications.
+- **agent-eventsd** calls `agent-history <pane> --blocked` to extract detail for blocked notifications.
 - **spawn-agent SKILL.md** documents all three modes as post-spawn output reading tools.
 
 ## Behavioral Contracts

@@ -7,7 +7,7 @@
 **Public Surface:** `shared/steez/bin/agent-watch` (unchanged CLI)
 
 Event-driven watch service for tmux-managed AI agent panes. Fast observers drive the healthy path. `agent-state` remains the bounded fallback when fast observers are missing, silent, or recovering.
-It replaces `agent-watch-daemon` as the primary watch engine. Any polling that remains lives inside `agent-eventsd` as degraded fallback via `agent-state`.
+`agent-eventsd` is the primary watch engine. Any polling that remains lives inside it as degraded fallback via `agent-state`.
 
 ## Normative scope
 
@@ -32,7 +32,7 @@ This spec does **not** define rollout gates, shadow-mode metrics, socket framing
 
 ## Runtime shape
 
-`agent-eventsd` is a long-lived per-user service process. It replaces `agent-watch-daemon` as the primary watch engine. It is **not** a bash library, **not** a one-shot CLI that exits after each request, and **not** a set of functions that callers source and drive in-process.
+`agent-eventsd` is a long-lived per-user service process and the primary watch engine. It is **not** a bash library, **not** a one-shot CLI that exits after each request, and **not** a set of functions that callers source and drive in-process.
 
 Exactly one `agent-eventsd` service instance runs per user at a time. That service owns all in-memory watch state, all timer-driven transitions (pending timeout, silence window, degraded reconciliation, indeterminate timeout, delivery retry), and all writes under `$STEEZ_STATE_DIR/eventsd/`. Clients never mutate that state directly.
 
@@ -333,7 +333,7 @@ This spec is normative. Tests should prove the rules above. They should not repl
 4. **Timers run in the service.** Tests that need to exercise `PREARM_TIMEOUT_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
 5. **Fake only the agent process.** End-to-end coverage runs against the zero-token fakes defined in `specs/fake-agent-harness.md`. The test seam is the `claude` / `codex` binary on `$PATH`; `spawn.sh`, `agent-send`, `agent-deliver`, `agent-eventsd`, `agent-watch`, `agent-history`, and `agent-state` stay real.
 6. **Assert through the public surface.** Primary-path tests must not prove behavior by reading files under `$STEEZ_STATE_DIR/eventsd/` directly. Use `agent-watch`, spawner-pane output, and other public runtime surfaces.
-7. **The primary path never spawns `agent-watch-daemon`.** End-to-end runtime coverage must prove that no primary-path scenario starts `agent-watch-daemon`.
+7. **The primary path routes through `agent-eventsd`.** End-to-end runtime coverage must prove that every primary-path scenario drives the live `agent-eventsd` service: the service pidfile is alive, lifecycle state lands in `$STEEZ_STATE_DIR/eventsd/`, and `agent-watch daemon-status` reports eventsd health.
 
 Keep the acceptance set short and derived from behavior:
 

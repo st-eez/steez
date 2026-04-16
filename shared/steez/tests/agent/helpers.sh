@@ -657,10 +657,6 @@ setup_agent_mocks() {
   create_mock_script "$HOME/.steez/bin/agent-watch" \
     'echo "mock-watch-ok"; exit 0'
 
-  # Mock agent-watch-daemon: writes PID and exits
-  create_mock_script "$HOME/.steez/bin/agent-watch-daemon" \
-    'echo $$ > "${STEEZ_STATE_DIR:-$HOME/.steez/state}/agent-watch-daemon.pid"; sleep 999 &'
-
   # Mock agent-history: returns empty JSON
   create_mock_script "$HOME/.steez/bin/agent-history" \
     'echo "{}"; exit 0'

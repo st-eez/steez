@@ -46,7 +46,7 @@ A trap removes the tmux buffer on exit: `tmux delete-buffer -b "$BUF"`.
 ## Integration Points
 
 - **agent-send** calls `agent-deliver` for all message delivery.
-- **agent-watch-daemon** calls `agent-deliver` directly for notifications (never `agent-send`, to prevent recursive loops).
+- **agent-eventsd** calls `agent-deliver` directly for notifications (never `agent-send`, to prevent recursive loops).
 
 ## Behavioral Contracts
 

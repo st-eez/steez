@@ -41,12 +41,6 @@ The agent subsystem manages AI coding agents (ren, ren-codex, claude, codex) acr
 |------|------|-------------|
 | [fake-agent-harness](./fake-agent-harness.md) | `shared/steez/test/fakes/bin/{claude,codex,ren,ren-codex}` | zero-token fakes, end-to-end runtime tests, fake claude, fake codex, PATH shadow, control fifo, seam, transcript fixture |
 
-## Deprecated Specs
-
-| Spec | Status |
-|------|--------|
-| [agent-watch-daemon](./agent-watch-daemon.md) | Superseded by `agent-eventsd`. Not on the primary path. |
-
 ## Data Flow
 
 ```

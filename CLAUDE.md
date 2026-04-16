@@ -48,7 +48,7 @@ steez-bd resume                  # session brief: current bead, suggested skill,
 steez-bd start <id> [skill]      # claim bead + optional skill tag
 steez-bd emit-finding <id> "t"   # create linked finding bead
 steez-bd handoff <id> "s" [--close]  # append note + optional close
-# Agent subsystem: agent-state, agent-send, agent-history, agent-watch, agent-watch-daemon, agent-deliver — see specs/README.md
+# Agent subsystem: agent-state, agent-send, agent-history, agent-watch, agent-eventsd, agent-deliver — see specs/README.md
 upstream-diff <skill>            # diff a steez skill against gstack upstream
 upstream-diff --all              # show divergence summary for all skills
 ```
@@ -113,7 +113,7 @@ steez/                                    # repo root
 │   ├── agent-send -> ~/.steez/repo/shared/steez/bin/agent-send
 │   ├── agent-deliver -> ~/.steez/repo/shared/steez/bin/agent-deliver
 │   ├── agent-watch -> ~/.steez/repo/shared/steez/bin/agent-watch
-│   ├── agent-watch-daemon -> ~/.steez/repo/shared/steez/bin/agent-watch-daemon
+│   ├── agent-eventsd -> ~/.steez/repo/shared/steez/bin/agent-eventsd
 │   ├── agent-history -> ~/.steez/repo/shared/steez/bin/agent-history
 │   └── browse -> ~/.steez/repo/shared/steez/browse/dist/browse
 ├── config                                # key-value config (proactive: true)
