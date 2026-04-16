@@ -9,7 +9,6 @@
 #   PermissionRequest (other tool)  -> evidence --state blocked:permission
 #   PreToolUse (AskUserQuestion)    -> evidence --state blocked:question
 #   PreToolUse (other tool)         -> no evidence call
-#   PostToolUse / UserPromptSubmit  -> no evidence call
 #   Stop without TMUX_PANE          -> no evidence call
 #
 # A recorder script at `$HOME/.steez/bin/agent-eventsd` (the absolute path
@@ -184,42 +183,6 @@ test_pre_tool_use_other_tool_does_not_dispatch_evidence() {
 }
 run_test "PreToolUse non-AskUserQuestion does not dispatch evidence" \
   test_pre_tool_use_other_tool_does_not_dispatch_evidence
-
-test_post_tool_use_does_not_dispatch_evidence() {
-  setup_hook_env
-  trap cleanup_hook_env EXIT
-
-  TMUX_PANE="%15" run_hook_with "$(build_payload PostToolUse Bash)"
-
-  wait_no_dispatch
-  local logged
-  logged=$(cat "$RECORDER_LOG")
-  [[ -z "$logged" ]] || {
-    echo "    PostToolUse should not dispatch evidence (sidecar-clear only), saw:"
-    printf '%s\n' "$logged" | sed 's/^/      /'
-    exit 1
-  }
-}
-run_test "PostToolUse does not dispatch evidence (sidecar-clear only)" \
-  test_post_tool_use_does_not_dispatch_evidence
-
-test_user_prompt_submit_does_not_dispatch_evidence() {
-  setup_hook_env
-  trap cleanup_hook_env EXIT
-
-  TMUX_PANE="%17" run_hook_with "$(build_payload UserPromptSubmit)"
-
-  wait_no_dispatch
-  local logged
-  logged=$(cat "$RECORDER_LOG")
-  [[ -z "$logged" ]] || {
-    echo "    UserPromptSubmit should not dispatch evidence, saw:"
-    printf '%s\n' "$logged" | sed 's/^/      /'
-    exit 1
-  }
-}
-run_test "UserPromptSubmit does not dispatch evidence" \
-  test_user_prompt_submit_does_not_dispatch_evidence
 
 test_stop_without_tmux_pane_does_not_dispatch_evidence() {
   setup_hook_env

@@ -185,39 +185,9 @@ func TestCheckHookRegistration_WarnsWhenAskUserQuestionHookMissing(t *testing.T)
         "hooks": [
           {"type": "command", "command": "$HOME/.claude/hooks/steez-skill-analytics.sh", "timeout": 5}
         ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
       }
     ],
     "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
-      }
-    ],
-    "SessionEnd": [
       {
         "matcher": "*",
         "hooks": [
@@ -246,9 +216,15 @@ func TestCheckHookRegistration_WarnsWhenAskUserQuestionHookMissing(t *testing.T)
 	if !strings.Contains(out, "AskUserQuestion") {
 		t.Fatalf("expected AskUserQuestion matcher guidance, got %q", out)
 	}
+	if !strings.Contains(out, "hooks.PermissionRequest and hooks.Stop") {
+		t.Fatalf("expected reduced hook guidance, got %q", out)
+	}
+	if strings.Contains(out, "PostToolUseFailure") || strings.Contains(out, "UserPromptSubmit") || strings.Contains(out, "SessionEnd") {
+		t.Fatalf("did not expect legacy clear-hook guidance, got %q", out)
+	}
 }
 
-func TestCheckHookRegistration_SilencesPermissionGuidanceWhenFullyWired(t *testing.T) {
+func TestCheckHookRegistration_SilencesPermissionGuidanceWhenMinimalStateHooksAreWired(t *testing.T) {
 	home := t.TempDir()
 	writeSettings(t, home, `{
   "hooks": {
@@ -274,39 +250,9 @@ func TestCheckHookRegistration_SilencesPermissionGuidanceWhenFullyWired(t *testi
         "hooks": [
           {"type": "command", "command": "$HOME/.claude/hooks/steez-skill-analytics.sh", "timeout": 5}
         ]
-      },
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
       }
     ],
     "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
-        ]
-      }
-    ],
-    "SessionEnd": [
       {
         "matcher": "*",
         "hooks": [

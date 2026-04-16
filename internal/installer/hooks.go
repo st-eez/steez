@@ -58,11 +58,7 @@ func CheckHookRegistration(home string) {
 
 	if !(hasHookRegistration(settings.Hooks["PreToolUse"], "AskUserQuestion", permissionHook) &&
 		hasHookRegistration(settings.Hooks["PermissionRequest"], "*", permissionHook) &&
-		hasHookRegistration(settings.Hooks["PostToolUse"], "*", permissionHook) &&
-		hasHookRegistration(settings.Hooks["PostToolUseFailure"], "*", permissionHook) &&
-		hasHookRegistration(settings.Hooks["UserPromptSubmit"], "*", permissionHook) &&
-		hasHookRegistration(settings.Hooks["Stop"], "*", permissionHook) &&
-		hasHookRegistration(settings.Hooks["SessionEnd"], "*", permissionHook)) {
+		hasHookRegistration(settings.Hooks["Stop"], "*", permissionHook)) {
 		printPermissionStateHookSnippet()
 	}
 
@@ -130,8 +126,7 @@ func printPermissionStateHookSnippet() {
 	fmt.Println()
 	fmt.Println("  Hook registration needed. Add steez-permission-state.sh to ~/.claude/settings.json")
 	fmt.Println("  under hooks.PreToolUse with matcher AskUserQuestion, then under")
-	fmt.Println("  hooks.PermissionRequest, hooks.PostToolUse, hooks.PostToolUseFailure,")
-	fmt.Println("  hooks.UserPromptSubmit, hooks.Stop, and hooks.SessionEnd with matcher *:")
+	fmt.Println("  hooks.PermissionRequest and hooks.Stop with matcher *:")
 	fmt.Println()
 	fmt.Println(`    {`)
 	fmt.Println(`      "matcher": "AskUserQuestion",`)
