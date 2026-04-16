@@ -20,6 +20,7 @@ func SharedBinSymlinks() []RuntimeSymlink {
 		{Name: "agent-deliver", RelPath: "shared/steez/bin/agent-deliver"},
 		{Name: "agent-watch", RelPath: "shared/steez/bin/agent-watch"},
 		{Name: "agent-watch-daemon", RelPath: "shared/steez/bin/agent-watch-daemon"},
+		{Name: "agent-eventsd", RelPath: "shared/steez/bin/agent-eventsd"},
 		{Name: "browse", RelPath: "shared/steez/browse/dist/browse"},
 	}
 }
