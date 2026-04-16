@@ -144,6 +144,11 @@ test_permission_request_with_other_tool_dispatches_blocked_permission() {
   logged=$(cat "$RECORDER_LOG")
   assert_contains "$logged" "--pane %9"
   assert_contains "$logged" "--state blocked:permission"
+
+  [[ ! -e "$HOME/.steez/agent-state/claude/test-session.json" ]] || {
+    echo "    hook should not write Claude sidecar state"
+    exit 1
+  }
 }
 run_test "PermissionRequest non-AskUserQuestion dispatches blocked:permission evidence" \
   test_permission_request_with_other_tool_dispatches_blocked_permission

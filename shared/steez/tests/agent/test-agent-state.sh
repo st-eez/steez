@@ -386,4 +386,36 @@ test_layout_renders() {
 }
 run_test "--layout renders pane id + agent" test_layout_renders
 
+# ----- agent-history blocked inspection -----
+#
+# Keep Claude blocked inspection transcript-driven. A stale sidecar file must
+# not hijack the answer.
+
+suite "agent-history --blocked"
+
+test_agent_history_blocked_uses_transcript_without_sidecar() {
+  local transcript_dir="$HOME/.claude/projects/-tmp-blocked-history"
+  local transcript="$transcript_dir/blocked-history.jsonl"
+  mkdir -p "$transcript_dir"
+  cat > "$transcript" <<'JSONL'
+{"type":"user","message":{"role":"user","content":"run it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"git push"}}]}}
+JSONL
+
+  local sid="blocked-history"
+  local sidecar_dir="$HOME/.steez/agent-state/claude"
+  mkdir -p "$sidecar_dir"
+  cat > "$sidecar_dir/${sid}.json" <<JSON
+{"blocked_state":"blocked:question","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"wrong question"}]},"transcript_path":"$transcript","requested_at":$(date +%s)9999999999}
+JSON
+
+  local out
+  out=$("$BIN_DIR/agent-history" "$transcript" --blocked)
+  assert_json_field "$out" ".agent" "claude"
+  assert_json_field "$out" ".tool" "Bash"
+  assert_json_field "$out" ".input.command" "git push"
+}
+run_test "agent-history --blocked ignores Claude sidecar files" \
+  test_agent_history_blocked_uses_transcript_without_sidecar
+
 report

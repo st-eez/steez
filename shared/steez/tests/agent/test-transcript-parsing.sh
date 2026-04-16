@@ -234,14 +234,14 @@ test_missing_transcript_fails() {
 }
 run_test "missing transcript exits 1" test_missing_transcript_fails
 
-test_sidecar_overrides_transcript() {
-  # Create a transcript that would return idle
+test_sidecar_does_not_override_transcript() {
+  # Create a transcript that should stay idle even if an old sidecar exists.
   local f="$TEST_TMP/sidecar_test.jsonl"
   cat > "$f" <<'JSONL'
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}
 JSONL
 
-  # Create a sidecar state file that says blocked:question
+  # Create a sidecar state file that claims blocked:question.
   local sid="test-session-id"
   local sidecar_dir="$HOME/.steez/agent-state/claude"
   mkdir -p "$sidecar_dir"
@@ -251,8 +251,8 @@ JSON
 
   local state
   state=$(artifact_state "claude" "$f" "$sid" 2>/dev/null)
-  assert_eq "blocked:question" "$state"
+  assert_eq "idle" "$state"
 }
-run_test "sidecar blocked state overrides transcript" test_sidecar_overrides_transcript
+run_test "sidecar state does not override transcript" test_sidecar_does_not_override_transcript
 
 report

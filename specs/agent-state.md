@@ -92,11 +92,7 @@ Recognized agents: `ren`, `ren-codex`, `claude`, `codex`. Anything else returns 
 
 `detect_state` determines the agent's current state using a layered strategy, from highest to lowest confidence:
 
-### Layer 1: Sidecar artifact (Claude/Ren only)
-
-Reads `~/.steez/agent-state/claude/{session_id}.json`, written by a PermissionRequest hook. Contains `blocked_state`, `tool_name`, `tool_input`, and `requested_at`. The sidecar is authoritative for `blocked:question` and `blocked:permission` because the hook fires at the exact moment the block occurs. Staleness guard: if the transcript's mtime is >0.5s after `requested_at`, the sidecar is ignored (the agent moved on).
-
-### Layer 2: Transcript parsing
+### Layer 1: Transcript parsing
 
 `artifact_state` reads the JSONL transcript and walks it backward:
 
@@ -116,7 +112,7 @@ Reads `~/.steez/agent-state/claude/{session_id}.json`, written by a PermissionRe
 
 Codex has an additional `codex_waiting_for_approval` heuristic that tail-reads `~/.codex/log/codex-tui.log` looking for `ToolCall:` entries for the same `thread_id` followed by a `client: close` event (close is the most recent entry), with a 3-second age gate.
 
-### Layer 3: Screen scraping
+### Layer 2: Screen scraping
 
 When the transcript is unavailable or returns `working`, the visible pane content (last 10 lines) is checked for UI-specific patterns:
 
@@ -124,17 +120,17 @@ When the transcript is unavailable or returns `working`, the visible pane conten
 - `"Enter to select"` + `"Chat about this"` -> `blocked:question`
 - `"Esc to cancel"` / `"esc to cancel"` -> `blocked:unknown`
 
-Screen-detected blocked states override transcript-reported `working` (the permission prompt hasn't been written to the transcript yet).
+Screen-detected blocked states override transcript-reported `working` when the UI is ahead of the transcript.
 
-### Layer 4: Title character heuristic
+### Layer 3: Title character heuristic
 
 The tmux pane title's first character is checked: Unicode Braille range (U+2800-U+28FF) indicates a spinner -> `working`.
 
-### Layer 5: Codex prompt detection
+### Layer 4: Codex prompt detection
 
 For Codex agents, a leading `›` (U+203A, single right-pointing angle quotation mark) character in the pane content indicates the idle prompt -> `idle`. Otherwise -> `working`.
 
-### Layer 6: Default
+### Layer 5: Default
 
 Claude/Ren default to `idle`. Codex/Ren-Codex default to `working`.
 
@@ -159,12 +155,6 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 - `lsof` (Codex transcript discovery)
 - `column` (table formatting)
 
-## State Files
-
-| Path | Purpose |
-|------|---------|
-| `~/.steez/agent-state/claude/{session_id}.json` | Sidecar state written by PermissionRequest hooks |
-
 ## Integration Points
 
 - **agent-watch-daemon** calls `agent-state <pane>` every poll cycle to detect state transitions.
@@ -180,9 +170,8 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 1. A single `ps` snapshot is taken per invocation and reused for all panes (`_init` / `_PS`). No TOCTOU between agent detection and state detection within a single call.
 2. `--all` excludes `unknown` agents — only recognized AI agents appear.
 3. `--layout` filters to windows containing at least one agent pane.
-4. Sidecar state is preferred over transcript state when both exist and the sidecar is fresh.
-5. Screen-detected blocked states override transcript-reported `working`, but never override sidecar or transcript-reported terminal states (`idle`, `blocked:*`).
-6. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
+4. Screen-detected blocked states override transcript-reported `working`, but never override transcript-reported terminal states (`idle`, `blocked:*`).
+5. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
 
 ## Error Handling
 

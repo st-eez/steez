@@ -100,10 +100,6 @@ This is O(2) formats rather than O(N) agent names (ren, ren-codex, etc. share th
 
 ## Claude Transcript Parsing
 
-### Sidecar fast path (`--blocked` only)
-
-Before parsing the full transcript, checks `~/.steez/agent-state/claude/{session_id}.json` for cached blocked state. If the sidecar reports `blocked:question` or `blocked:permission` and the transcript hasn't been modified after the sidecar was written (+0.5s tolerance), returns the sidecar's tool data immediately. Avoids parsing large transcripts.
-
 ### Tail strategy
 
 Reads the last 500 lines of the transcript. If no human prompt is found in that window, expands to 2000 lines.
@@ -174,7 +170,7 @@ Each `user_message` starts a turn; each `task_complete` ends it.
 1. Errors from pane/transcript resolution are returned as JSON: `{"error": "description"}` to stdout. Argument parsing errors (missing mode, bad flags, `--all` with target) go to stderr as plain text and exit 1.
 2. `--all` cannot be combined with a target argument.
 3. Format dispatch is path-based, not agent-name-based. A `ren` agent with a `.claude/` transcript uses the Claude parser.
-4. Sidecar fast path is Claude-only and `--blocked`-only. It short-circuits before any transcript parsing.
+4. `--blocked` for Claude is transcript-driven. Pending `tool_use` blocks are read from the JSONL transcript with no sidecar dependency.
 5. Tail strategy starts narrow (500 lines) and expands only if needed (2000 lines).
 6. `isMeta` and `isSidechain` messages are excluded from prompt extraction.
 
