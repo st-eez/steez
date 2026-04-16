@@ -84,8 +84,13 @@
   "categories": {
     "workflow": {
       "label": "Workflow",
-      "description": "Sprint pipeline: Think → Plan → Build → QA",
-      "skills": ["spec", "tdd", "agenda", "jira"]
+      "description": "Implementation contract: plan it, then build it slice by slice",
+      "skills": ["spec", "tdd"]
+    },
+    "operations": {
+      "label": "Operations",
+      "description": "Daily planning and ticket operations",
+      "skills": ["agenda", "jira"]
     },
     "qa": {
       "label": "QA & Testing",
@@ -111,7 +116,7 @@
   "profiles": {
     "starter": {
       "label": "Starter Kit (recommended)",
-      "description": "4 workflow skills — the active planning surface",
+      "description": "2 implementation workflow skills — /spec and /tdd",
       "categories": ["workflow"]
     },
     "all": {

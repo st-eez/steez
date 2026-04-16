@@ -45,7 +45,7 @@ func (p pickerModel) viewportHeight() int {
 // newPicker creates a picker from a manifest, pre-selecting skills by name.
 func newPicker(m *installer.Manifest, preselected map[string]bool, styles Styles, width int) pickerModel {
 	// Build items in category order.
-	categoryOrder := []string{"workflow", "qa", "infrastructure", "design", "meta"}
+	categoryOrder := []string{"workflow", "operations", "qa", "infrastructure", "design", "meta"}
 
 	var items []pickerItem
 	for _, catName := range categoryOrder {

@@ -149,6 +149,25 @@ func assertWorkflowSkill(t *testing.T, manifest *Manifest, name string) {
 	t.Fatalf("workflow category missing %s skill", name)
 }
 
+func assertCategorySkills(t *testing.T, manifest *Manifest, categoryName string, want []string) {
+	t.Helper()
+
+	category, ok := manifest.Categories[categoryName]
+	if !ok {
+		t.Fatalf("manifest missing %s category", categoryName)
+	}
+
+	if len(category.Skills) != len(want) {
+		t.Fatalf("%s category has %d skills, want %d", categoryName, len(category.Skills), len(want))
+	}
+
+	for i, skill := range category.Skills {
+		if skill.Name != want[i] {
+			t.Fatalf("%s category skill %d = %s, want %s", categoryName, i, skill.Name, want[i])
+		}
+	}
+}
+
 func TestLoadManifestIncludesTddSkillAndWorkflowCategory(t *testing.T) {
 	t.Run("synthetic fixture resolves workflow skills", func(t *testing.T) {
 		path := writeManifest(t, `{
@@ -187,6 +206,8 @@ func TestLoadManifestIncludesTddSkillAndWorkflowCategory(t *testing.T) {
 
 		assertWorkflowSkill(t, manifest, "spec")
 		assertWorkflowSkill(t, manifest, "tdd")
+		assertCategorySkills(t, manifest, "workflow", []string{"spec", "tdd"})
+		assertCategorySkills(t, manifest, "operations", []string{"agenda", "jira"})
 	})
 }
 

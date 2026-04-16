@@ -50,6 +50,7 @@ The old planning stack still ships in the repo for explicit install by name, but
 | Skill | Your specialist | What they do |
 |-------|----------------|--------------|
 | `/spec` | **Planner** | The front door for planned software changes. Pressure-tests the ask, writes a repo-local design spec, and stops when implementation can run slice by slice without reconstructing the conversation. |
+| `/tdd` | **Builder** | Takes one approved `/spec` slice and drives a strict red → green → refactor loop with verification evidence. |
 | `/agenda` | **Morning Planner** | Structured morning triage. Overdue tasks, inbox, daily slate — the ritual that turns a pile of open loops into a day's work. |
 | `/jira` | **Jira Operator** | Manage Jira tickets — search, create, update, transition, log time. |
 | `/browse` | **Browser Operator** | Headless browser (Playwright + Chromium). Real clicks, real screenshots, ~100ms per command. Persistent sessions — log in once, stay logged in. |
@@ -95,7 +96,7 @@ steez setup     # interactive TUI
 
 ```sh
 steez setup           # Interactive TUI — pick skills to install
-steez install starter # Install the starter kit (3 workflow skills)
+steez install starter # Install the starter kit (2 workflow skills)
 steez install all     # Install all active skills
 steez list            # Show installed skills
 steez doctor          # Validate install health
@@ -106,7 +107,8 @@ steez update          # Pull latest and re-link
 
 | Category | Skills | Description |
 |---|---|---|
-| **Workflow** | spec, agenda, jira | Active planning and daily workflow surface |
+| **Workflow** | spec, tdd | Implementation contract: plan it, then build it slice by slice |
+| **Operations** | agenda, jira | Daily planning and ticket operations |
 | **QA & Testing** | browse, steez-qa, steez-qa-only, design-review | Browser-based testing and visual QA |
 | **Infrastructure** | investigate, cso, spawn-agent, audit | Debugging, security, and orchestration |
 | **Design** | design-consultation | Design system creation |
@@ -114,7 +116,7 @@ steez update          # Pull latest and re-link
 
 ## Profiles
 
-- **Starter Kit** — 3 workflow skills on the active planning surface. Recommended for new users.
+- **Starter Kit** — 2 implementation workflow skills: spec and tdd. Recommended for new users.
 - **All** — All active skills.
 
 ## Development

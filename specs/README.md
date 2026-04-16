@@ -9,6 +9,12 @@ Root specifications for steez subsystems. Each spec documents what IS — purpos
 | [spec](./spec.md) | `skills/spec/SKILL.md` | planning front door, design spec, software change planning, implementation slices, tdd handoff |
 | [tdd](./tdd.md) | `skills/tdd/SKILL.md` | one approved slice, red green refactor loop, verifier, browse, bead evidence |
 
+## Installer Specs
+
+| Spec | Path | Search Terms |
+|------|------|-------------|
+| [installer-manifest](./installer-manifest.md) | `skills.json` + `internal/installer/manifest.go` | starter profile, workflow category, operations category, spec tdd only, agenda jira |
+
 ## Agent Subsystem
 
 The agent subsystem manages AI coding agents (ren, ren-codex, claude, codex) across tmux panes. A long-lived per-user service (`agent-eventsd`) owns watch state; surrounding scripts handle state detection, message delivery, transcript parsing, and orchestrated spawning.

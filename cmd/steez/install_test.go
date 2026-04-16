@@ -82,17 +82,17 @@ func TestInstallStarterExcludesDeprecatedPlanningSkills(t *testing.T) {
 		t.Fatalf("cmdInstall exit code = %d, want 0", code)
 	}
 
-	for _, name := range []string{"spec", "agenda", "jira"} {
+	for _, name := range []string{"spec", "tdd"} {
 		target := filepath.Join(home, ".claude", "skills", name)
 		if err := installer.ValidateSymlink(target); err != nil {
 			t.Fatalf("validate starter symlink %s: %v", target, err)
 		}
 	}
 
-	for _, name := range []string{"workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "autoplan"} {
+	for _, name := range []string{"agenda", "jira", "workshop", "office-hours", "plan-ceo-review", "plan-eng-review", "plan-design-review", "autoplan"} {
 		target := filepath.Join(home, ".claude", "skills", name)
 		if _, err := os.Lstat(target); !os.IsNotExist(err) {
-			t.Fatalf("deprecated planning skill still installed at %s", target)
+			t.Fatalf("non-starter skill still installed at %s", target)
 		}
 	}
 }
