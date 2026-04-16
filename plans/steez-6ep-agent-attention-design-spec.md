@@ -69,6 +69,7 @@ The change should simplify the orchestration contract without deleting lower-lev
 - **R13.** Every implementation slice shall define a deterministic test contract with `Test seam`, `Fixture source`, `Determinism rule`, and `Assertion contract`.
 - **R14.** At most one implementation slice shall rely on a live end-to-end runtime smoke test; all other slices shall use unit or fixture-driven tests.
 - **R15.** Notification delivery shall remain one-shot and watch self-clear behavior shall not regress.
+- **R16.** Live watch resolution shall not notify or self-clear from a fuzzy `blocked:unknown` sample while the pane is still making forward progress.
 
 ## Proposed design
 ### 1. Keep exact internal states. Simplify only the pager contract.
@@ -137,6 +138,17 @@ But it becomes an implementation detail for humans, not a required orchestration
 2. run `agent-state %pane --explain`
 3. decide whether to answer, approve, or ignore
 
+### 6. Keep fuzzy `blocked:unknown` out of live watch resolution
+`blocked:unknown` still has value as an inspector fallback in `agent-state --explain`, especially for humans looking at a pane that is visibly waiting in an unclassified prompt.
+
+But live watch resolution is stricter. A watched pane should resolve and self-clear only from:
+- `idle`
+- `blocked:question`
+- `blocked:permission`
+- explicit deadman outcomes such as timeout or pane-close fallback
+
+A transient or heuristic `blocked:unknown` read from reconcile or screen fallback must not fire an `attention` ping for a pane that is still working.
+
 ## Interface contracts
 ### Watch notification contract
 - Producer: `agent-eventsd`
@@ -191,6 +203,7 @@ Rejected. The better design is to make the existing state authority complete ins
 - **AC5.** Given Codex in its current configuration, when a watched child finishes, then `SessionStart`/`Stop` hooks still support the attention flow without adding new Codex hooks.
 - **AC6.** Given a human debugging manually, when they run `agent-history --blocked`, then the command still returns raw blocked-tool information without any sidecar dependency.
 - **AC7.** Given any implementation slice in this spec, when `/tdd` reads it, then it can name the exact behavior, seam, fixture, isolation rule, determinism rule, assertion contract, and smoke budget before writing production code.
+- **AC8.** Given a watched pane that is still working, when reconcile or screen fallback produces a transient `blocked:unknown` sample, then no `attention` ping is delivered and the live watch remains armed.
 
 ## Verification commands
 ```bash
@@ -272,7 +285,23 @@ go test /Users/stevedimakos/Projects/Personal/steez/internal/installer -run Hook
 - **Smoke budget:** `single allowed smoke`
 - **Verification command:** `bash /Users/stevedimakos/Projects/Personal/steez/shared/steez/tests/agent/test-agent-eventsd-runtime.sh`
 
-### S5 — Document the new orchestration contract
+### S5 — Suppress false-positive watch resolution from fuzzy `blocked:unknown`
+- **Goal:** Stop live watches from firing `attention` on heuristic `blocked:unknown` reads while the child is still working.
+- **Behavior under test:** transient `blocked:unknown` fallback does not resolve or self-clear a live watch.
+- **Seam under test:** `agent-eventsd` reconcile and degraded-resolution logic
+- **Boundary:** watch resolution rules and fixture-driven daemon tests only.
+- **Files likely touched:** `shared/steez/bin/agent-eventsd`, `shared/steez/tests/agent/test-agent-eventsd.sh`, `specs/agent-events.md`
+- **Red test name:** `fuzzy blocked unknown does not resolve a live watch`
+- **Fixture / harness:** persisted watch fixtures, synthetic reconcile output, and direct `agent-eventsd` command seams
+- **Isolation rule:** fixture-driven daemon state only; no live tmux, no real panes, no wall clock sleeps
+- **Determinism rule:** direct watch records and synthetic reconcile results only; no runtime smoke and no real screen scraping
+- **Assertion contract:** a transient `blocked:unknown` sample leaves the watch armed, emits no notification, and reserves `blocked:unknown` delivery for explicit timeout or pane-close fallback only
+- **Green condition:** Live watches ignore fuzzy `blocked:unknown` samples while the pane is still working, but explicit timeout or pane-close fallback still resolves cleanly when required.
+- **Refactor target:** Keep `blocked:unknown` available to `agent-state --explain` without letting it act as a one-shot pager trigger.
+- **Smoke budget:** `none`
+- **Verification command:** `bash /Users/stevedimakos/Projects/Personal/steez/shared/steez/tests/agent/test-agent-eventsd.sh`
+
+### S6 — Document the new orchestration contract
 - **Goal:** Make the reduced hook model and one-command follow-up discoverable.
 - **Behavior under test:** public docs and help teach the new `attention` → `agent-state --explain` flow.
 - **Seam under test:** `agent-state` help text and checked-in docs

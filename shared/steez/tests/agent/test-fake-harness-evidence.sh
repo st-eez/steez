@@ -233,10 +233,10 @@ test_fake_idle_fifo_transition_fires_fast_evidence_within_2s() {
     exit 1
   }
 
-  # Tie the delivery to the idle resolution so a stale write can't sneak
+  # Tie the delivery to generic attention so a stale write can't sneak
   # past the budget check.
-  grep -F 'working -> idle' "$spawner_transcript" >/dev/null 2>&1 || {
-    echo "    spawner delivery was not the idle resolution:"
+  grep -F "[agent-watch] $target (claude) attention" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner delivery was not generic attention:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }

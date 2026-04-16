@@ -9,6 +9,7 @@ source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
 trap cleanup_test_env EXIT
+create_mock_tmux
 
 EVENTSD="$BIN_DIR/agent-eventsd"
 if [[ ! -f "$EVENTSD" ]]; then
@@ -451,8 +452,8 @@ test_manual_add_on_already_idle_pane_does_not_resolve_without_fresh_post_prearm_
 run_test "manual_add_on_already_idle_pane_does_not_resolve_without_fresh_post_prearm_evidence" test_manual_add_on_already_idle_pane_does_not_resolve_without_fresh_post_prearm_evidence
 
 test_fresh_terminal_state_different_from_baseline_resolves_watch() {
-  # Spec (Canonical resolver rule 3): "The first fresh terminal state
-  # different from baseline_state resolves the watch."
+  # Spec (Canonical resolver rule 3): "The first fresh live-resolving
+  # terminal state different from baseline_state resolves the watch."
   _install_deliver_mock
   local wid rec
   wid=$(_mk_pending_baseline "%61" working) || return 1
@@ -1136,6 +1137,55 @@ test_second_degraded_episode_starts_a_new_indeterminate_timeout_window() {
 }
 run_test "second_degraded_episode_starts_a_new_indeterminate_timeout_window" test_second_degraded_episode_starts_a_new_indeterminate_timeout_window
 
+test_fuzzy_blocked_unknown_does_not_resolve_a_live_watch() {
+  # Spec (live watch resolution): a fuzzy blocked:unknown sample from
+  # degraded reconciliation must not resolve or self-clear a live watch.
+  # blocked:unknown is reserved for explicit timeout and pane-close
+  # fallback only.
+  _install_deliver_mock
+  export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
+  : > "$AGENT_STATE_LOG"
+  cat > "$MOCK_BIN/agent-state" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >> "${AGENT_STATE_LOG:-/dev/null}"
+echo '{"state":"blocked:unknown"}'
+MOCK
+  chmod +x "$MOCK_BIN/agent-state"
+  export AGENT_STATE_CMD="$MOCK_BIN/agent-state"
+
+  local pane="%93" wid rec t0=4000000 live
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # First degraded reconcile sees fuzzy blocked:unknown. The watch must
+  # stay armed and keep the live slot.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms $((t0 + 30000)) || return 1
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_eq 1 "$(_agent_state_call_count)" || return 1
+
+  # Later fuzzy samples are still non-resolving.
+  _set_now $((t0 + 35000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_eq 2 "$(_agent_state_call_count)" || return 1
+
+  # The explicit degraded timeout still resolves to blocked:unknown.
+  _set_now $((t0 + 30000 + 120000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+}
+run_test "fuzzy_blocked_unknown_does_not_resolve_a_live_watch" test_fuzzy_blocked_unknown_does_not_resolve_a_live_watch
+
 # ----- pane close and daemon restart recovery (bead 7) -----
 #
 # Acceptance #6 (spec: TDD relationship): "Restart recovery preserves the
@@ -1321,7 +1371,7 @@ test_restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state()
   # Spec (Pane close and restart): "armed gets one reconciliation pass
   # before fresh fast-path evidence is allowed to resolve it."
   # Spec (Degraded fallback): "Deadman reconciliation uses the same
-  # canonical states and the same terminal rule as fast evidence."
+  # canonical states and the same live-resolution rule as fast evidence."
   #
   # Two armed watches survive the crash. Reconciliation (via agent-state)
   # reports:
@@ -1358,6 +1408,25 @@ test_restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state()
   assert_eq 0 "${c:-0}" || return 1
 }
 run_test "restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state" test_restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state
+
+test_restart_armed_ignores_fuzzy_blocked_unknown_reconciliation() {
+  # Spec (live watch resolution): restart recovery gets one reconcile
+  # pass, but fuzzy blocked:unknown must not resolve or self-clear a
+  # live watch.
+  _install_bead7_deliver_mock
+  _install_reconcile_mock "%122:blocked:unknown"
+  local wid rec c
+  wid=$(_arm_on "%122") || return 1
+
+  daemon_recover_restart || return 1
+
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$(watch_get_live "%122")" .watch_id "$wid" || return 1
+  c=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 0 "${c:-0}" || return 1
+}
+run_test "restart_armed_ignores_fuzzy_blocked_unknown_reconciliation" test_restart_armed_ignores_fuzzy_blocked_unknown_reconciliation
 
 suite "pane close recovery"
 
@@ -1468,5 +1537,42 @@ test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spaw
   assert_eq "%0" "$last_target" || return 1
 }
 run_test "pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner" test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner
+
+# ----- recent attention evidence (S3) -----
+
+suite "recent attention evidence"
+
+test_resolve_persists_recent_attention_evidence() {
+  local pane="%160" transcript="$TEST_TMP/attention.jsonl"
+  mock_pane "$pane" "1601" "Attention test" "/tmp/attention"
+  set_mock_tmux_var "$pane" "@session_id" "sess-attn"
+  set_mock_tmux_var "$pane" "@transcript_path" "$transcript"
+  cat > "$transcript" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"git push"}}]}}
+JSONL
+
+  export EVENTSD_NOW_MS=4242
+  local wid rec attn
+  wid=$(_arm_on "$pane") || return 1
+  watch_feed_evidence \
+    --watch-id "$wid" \
+    --seq 8 \
+    --candidate-state "blocked:permission" \
+    --transcript-cursor 5000 \
+    --screen-hash "fresh-$pane" >/dev/null || return 1
+
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  attn=$(attention_get_recent "$pane") || return 1
+  assert_json_field "$attn" .pane_id "$pane" || return 1
+  assert_json_field "$attn" .state "blocked:permission" || return 1
+  assert_json_field "$attn" .summary "waiting for permission approval" || return 1
+  assert_json_field "$attn" .source "eventsd" || return 1
+  assert_json_field "$attn" .session_id "sess-attn" || return 1
+  assert_json_field "$attn" .transcript_path "$transcript" || return 1
+  assert_json_field "$attn" .transcript_cursor 5000 || return 1
+  assert_json_field "$attn" .observed_at_ms 4242 || return 1
+}
+run_test "resolve persists recent terminal reason for the pane" test_resolve_persists_recent_attention_evidence
 
 report

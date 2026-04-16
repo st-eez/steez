@@ -4,7 +4,7 @@
 #
 # This file drives the real watch service — no stubs, no in-process library
 # sourcing. A watched prompt from agent-send against a fake claude pane must
-# produce exactly one idle notification on the spawner pane and the watch
+# produce exactly one attention notification on the spawner pane and the watch
 # must self-clear through agent-watch list. Specs: agent-events,
 # fake-agent-harness, agent-watch, agent-send.
 set -uo pipefail
@@ -139,13 +139,14 @@ suite "agent-eventsd runtime: watched prompt end-to-end"
 
 # Acceptance #4 (fake-agent-harness spec): "In the idle scenario,
 # agent-send <pane> <msg> followed by a fifo transition causes exactly one
-# delivery against the spawner pane, and the watch self-clears. Tests
-# assert this through the public surface (agent-watch list, spawner-pane
-# output, or both), not by reading files under $STEEZ_STATE_DIR/eventsd/."
+# attention delivery against the spawner pane, and the watch self-clears.
+# Tests assert this through the public surface (agent-watch list,
+# spawner-pane output, or both), not by reading files under
+# $STEEZ_STATE_DIR/eventsd/."
 #
 # The fake claude's auto-reply path flips the transcript to idle on the
 # first line it reads, so no fifo is needed for this slice.
-test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_watch_self_clears() {
+test_watched_prompt_against_fake_claude_fires_exactly_one_attention_notification_and_watch_self_clears() {
   setup_runtime
   trap cleanup_runtime EXIT
 
@@ -205,7 +206,13 @@ test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_
   done
   sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
   [[ "${sp_lines:-0}" -ge 1 ]] || {
-    echo "    spawner never received a notification (grep user=$sp_lines):"
+    echo "    spawner never received an attention ping (grep user=$sp_lines):"
+    sed 's/^/      /' "$spawner_transcript"
+    exit 1
+  }
+
+  grep -F "[agent-watch] $target (claude) attention" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner notification was not generic attention:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
@@ -234,8 +241,8 @@ test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_
     exit 1
   }
 }
-run_test "watched prompt against fake claude fires exactly one idle notification and watch self-clears" \
-  test_watched_prompt_against_fake_claude_fires_exactly_one_idle_notification_and_watch_self_clears
+run_test "watched prompt against fake claude fires exactly one attention notification and watch self-clears" \
+  test_watched_prompt_against_fake_claude_fires_exactly_one_attention_notification_and_watch_self_clears
 
 run_watched_idle_turn_for_model() (
   local model="$1"
@@ -287,13 +294,13 @@ run_watched_idle_turn_for_model() (
   spawner_history=""
   for ((i=0; i<200; i++)); do
     spawner_history=$(run_bin agent-history "$spawner" --history 10 2>/dev/null || true)
-    if printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) >= 1 and (.pairs[-1].prompt | contains("[agent-watch]")) and (.pairs[-1].prompt | contains($target)) and .pairs[-1].response == "ok"' >/dev/null 2>&1; then
+    if printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) >= 1 and .pairs[-1].prompt == ("[agent-watch] " + $target + " (" + $agent + ") attention") and .pairs[-1].response == "ok"' >/dev/null 2>&1; then
       break
     fi
     sleep 0.1
   done
-  printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) >= 1 and (.pairs[-1].prompt | contains("[agent-watch]")) and (.pairs[-1].prompt | contains($target)) and .pairs[-1].response == "ok"' >/dev/null || {
-    echo "    spawner never received the watched idle notification for $model:"
+  printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) >= 1 and .pairs[-1].prompt == ("[agent-watch] " + $target + " (" + $agent + ") attention") and .pairs[-1].response == "ok"' >/dev/null || {
+    echo "    spawner never received the watched attention ping for $model:"
     printf '%s\n' "$spawner_history" | sed 's/^/      /'
     exit 1
   }
@@ -312,21 +319,21 @@ run_watched_idle_turn_for_model() (
 
   sleep 1
   spawner_history=$(run_bin agent-history "$spawner" --history 10 2>/dev/null || true)
-  printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) == 1 and (.pairs[0].prompt | contains("[agent-watch]")) and (.pairs[0].prompt | contains($target)) and .pairs[0].response == "ok"' >/dev/null || {
-    echo "    expected exactly one watched idle notification for $model:"
+  printf '%s' "$spawner_history" | jq -e --arg agent "$model" --arg target "$target" '.agent == $agent and (.pairs | length) == 1 and .pairs[0].prompt == ("[agent-watch] " + $target + " (" + $agent + ") attention") and .pairs[0].response == "ok"' >/dev/null || {
+    echo "    expected exactly one watched attention ping for $model:"
     printf '%s\n' "$spawner_history" | sed 's/^/      /'
     exit 1
   }
 )
 
-test_watched_prompt_against_fake_codex_and_ren_variants_fires_exactly_one_idle_notification_and_watch_self_clears() {
+test_watched_prompt_against_fake_codex_and_ren_variants_fires_exactly_one_attention_notification_and_watch_self_clears() {
   local model
   for model in codex ren-codex ren; do
     run_watched_idle_turn_for_model "$model" || exit 1
   done
 }
-run_test "watched prompt against fake codex, ren-codex, and ren fires exactly one idle notification and watch self-clears" \
-  test_watched_prompt_against_fake_codex_and_ren_variants_fires_exactly_one_idle_notification_and_watch_self_clears
+run_test "watched prompt against fake codex, ren-codex, and ren fires exactly one attention notification and watch self-clears" \
+  test_watched_prompt_against_fake_codex_and_ren_variants_fires_exactly_one_attention_notification_and_watch_self_clears
 
 # Acceptance #5 (fake-agent-harness spec): "In the no-watch scenario,
 # agent-send --no-watch delivers bytes to the fake, creates no watch
@@ -497,13 +504,13 @@ test_blocked_question_against_fake_claude_resolves_and_agent_history_returns_pro
   }
 
   for ((i=0; i<200; i++)); do
-    sp_lines=$({ grep -Ec 'blocked:question' "$spawner_transcript" 2>/dev/null; } || true)
+    sp_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
     [[ "${sp_lines:-0}" -ge 1 ]] && break
     sleep 0.1
   done
-  sp_lines=$({ grep -Ec 'blocked:question' "$spawner_transcript" 2>/dev/null; } || true)
+  sp_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
   [[ "${sp_lines:-0}" -eq 1 ]] || {
-    echo "    expected exactly one blocked:question notification, saw $sp_lines:"
+    echo "    expected exactly one attention ping, saw $sp_lines:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
@@ -639,16 +646,11 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
-  grep -F "[watch=$second_watch]" "$spawner_transcript" >/dev/null 2>&1 || {
-    echo "    spawner notification was not tied to the second watch:"
+  grep -F "[agent-watch] $target (claude) attention" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner notification was not generic attention:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
-  if grep -F "[watch=$first_watch]" "$spawner_transcript" >/dev/null 2>&1; then
-    echo "    superseded first watch still delivered to the spawner:"
-    sed 's/^/      /' "$spawner_transcript"
-    exit 1
-  fi
   [[ "$list" == "(no active watches)" ]] || {
     echo "    watch did not self-clear after the second prompt:"
     printf '%s\n' "$list" | sed 's/^/      /'
@@ -748,16 +750,16 @@ test_loss_of_fast_evidence_degrades_through_agent_state_and_times_out_to_blocked
   list=""
   blocked_lines=0
   for ((i=0; i<200; i++)); do
-    blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+    blocked_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
     list=$(run_bin agent-watch list 2>/dev/null || true)
     [[ "${blocked_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]] && break
     sleep 0.1
   done
 
   sleep 1
-  blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+  blocked_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
   [[ "${blocked_lines:-0}" -eq 1 ]] || {
-    echo "    expected exactly 1 blocked:unknown notification, saw $blocked_lines:"
+    echo "    expected exactly 1 attention ping, saw $blocked_lines:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
@@ -845,16 +847,16 @@ test_fake_claude_exit_while_watched_resolves_blocked_unknown_and_clears_live_wat
   list=""
   blocked_lines=0
   for ((i=0; i<200; i++)); do
-    blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+    blocked_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
     list=$(run_bin agent-watch list 2>/dev/null || true)
     [[ "${blocked_lines:-0}" -ge 1 && "$list" == "(no active watches)" ]] && break
     sleep 0.1
   done
 
   sleep 1
-  blocked_lines=$({ grep -Ec 'blocked:unknown' "$spawner_transcript" 2>/dev/null; } || true)
+  blocked_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(claude\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
   [[ "${blocked_lines:-0}" -eq 1 ]] || {
-    echo "    expected exactly 1 blocked:unknown pane-close notification, saw $blocked_lines:"
+    echo "    expected exactly 1 attention ping after pane close, saw $blocked_lines:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
@@ -960,7 +962,7 @@ test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch
   }
 
   # Settle and confirm no second tick or retry duplicated the delivery, and
-  # that the notification was tied to this watch and the idle resolution.
+  # that the notification stayed collapsed to generic attention.
   sleep 1
   sp_lines=$({ grep -Ec '"type":\s*"user"' "$spawner_transcript" 2>/dev/null; } || true)
   [[ "${sp_lines:-0}" -eq 1 ]] || {
@@ -968,13 +970,8 @@ test_evidence_cli_on_armed_watch_fires_delivery_on_spawner_and_clears_live_watch
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
-  grep -F "[watch=$wid]" "$spawner_transcript" >/dev/null 2>&1 || {
-    echo "    spawner notification was not tied to the evidence-resolved watch:"
-    sed 's/^/      /' "$spawner_transcript"
-    exit 1
-  }
-  grep -F 'working -> idle' "$spawner_transcript" >/dev/null 2>&1 || {
-    echo "    spawner notification was not the idle resolution:"
+  grep -F "[agent-watch] $target (test) attention" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner notification was not generic attention:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
@@ -1094,10 +1091,10 @@ test_claude_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
     exit 1
   }
 
-  # Tie the delivery to the idle resolution so a stale write can't sneak
+  # Tie the delivery to generic attention so a stale write can't sneak
   # past the budget check.
-  grep -F 'working -> idle' "$spawner_transcript" >/dev/null 2>&1 || {
-    echo "    spawner delivery was not the idle resolution:"
+  grep -F "[agent-watch] $target (claude) attention" "$spawner_transcript" >/dev/null 2>&1 || {
+    echo "    spawner delivery was not generic attention:"
     sed 's/^/      /' "$spawner_transcript"
     exit 1
   }
@@ -1193,7 +1190,7 @@ test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
       spawner_transcript=$("$REAL_TMUX" -L "$TMUX_SOCK" show-options -pv -t "$spawner" @transcript_path 2>/dev/null) || spawner_transcript=""
     fi
     if [[ -n "$spawner_transcript" && -f "$spawner_transcript" ]]; then
-      sp_lines=$({ grep -Ec 'working -> idle' "$spawner_transcript" 2>/dev/null; } || true)
+      sp_lines=$({ grep -Ec "\\[agent-watch\\] $target \\(codex\\) attention" "$spawner_transcript" 2>/dev/null; } || true)
       if [[ "${sp_lines:-0}" -ge 1 ]]; then
         t1=$(now_ms)
         break

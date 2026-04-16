@@ -119,17 +119,21 @@ Fire-and-forget. Auto-registers a completion watch. Do NOT also call `agent-watc
 ~/.steez/bin/agent-state --all --json     # all agents JSON
 ~/.steez/bin/agent-state --layout         # visual box diagram
 ~/.steez/bin/agent-state %5 --detail      # adds session_id, cwd, transcript_path
+~/.steez/bin/agent-state %5 --explain     # why the pane pinged for attention
 ```
 
 States: `working`, `idle`, `blocked:question`, `blocked:permission`, `blocked:unknown`.
 
 Do NOT use `pane_current_command` for state — it stays `claude`/`node` regardless.
 
+When a watch prints `[agent-watch] <pane> (<label>) attention`, inspect it with `agent-state <pane> --explain`.
+That's the orchestration contract. Do not branch through `agent-history --blocked` to decide what happened.
+
 ### Reading output
 
 ```bash
 ~/.steez/bin/agent-history %5 --last        # last prompt + response
-~/.steez/bin/agent-history %5 --blocked     # pending tool call needing input
+~/.steez/bin/agent-history %5 --blocked     # manual blocked-tool transcript inspection
 ~/.steez/bin/agent-history %5 --history 3   # last N prompt/response pairs
 ~/.steez/bin/agent-history --all --last     # scan all agent panes at once
 ```

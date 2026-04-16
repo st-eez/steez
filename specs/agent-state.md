@@ -7,7 +7,7 @@ Detects the type and current state of AI coding agents running in tmux panes. Th
 ## Interface
 
 ```
-agent-state <pane> [--read] [--detail]
+agent-state <pane> [--read] [--detail] [--explain]
 agent-state --all [--read] [--detail] [--json]
 agent-state --layout
 ```
@@ -27,6 +27,7 @@ agent-state --layout
 | `--layout` | Visual box diagram showing pane splits and agent states |
 | `--read` | Include full scrollback content in output (forces JSON with `--all`) |
 | `--detail` | Include session metadata: `session_id`, `cwd`, `transcript_path` (forces JSON with `--all`) |
+| `--explain` | Return `{pane, agent, state, summary, detail?, source}` for one pane |
 
 ### Exit Codes
 
@@ -63,6 +64,35 @@ With `--detail`, adds a `detail` object:
 ```
 
 With `--read`, adds `content` (full scrollback text).
+
+With `--explain`, single-pane mode returns:
+
+```json
+{
+  "pane": "%5",
+  "agent": "claude",
+  "state": "blocked:permission",
+  "summary": "waiting for permission approval",
+  "detail": "Bash: {\"command\":\"git push\"}",
+  "source": "eventsd"
+}
+```
+
+`--explain` is the post-attention inspection surface. It prefers fresh
+attention records written by `agent-eventsd`, then falls back to transcript
+artifacts, then to the existing screen/title/default heuristics. Fresh
+attention records are keyed by pane and accepted only when their
+session/transcript identity still matches the pane and the transcript cursor
+has not advanced past the recorded attention point.
+
+Post-attention flow is narrow on purpose:
+
+1. Receive `[agent-watch] <pane> (<label>) attention`.
+2. Run `agent-state <pane> --explain`.
+3. Use `agent-history` only for transcript context, not to branch between blocked parsers.
+
+Claude fast-path hooks are SessionStart, Stop, PermissionRequest, and PreToolUse(AskUserQuestion).
+SessionStart writes pane metadata. `steez-permission-state.sh` handles Stop, PermissionRequest, and PreToolUse(AskUserQuestion).
 
 ### `--all` table (default)
 
@@ -162,8 +192,9 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 - **agent-send** inherits agent-deliver's validation.
 - **agent-history** calls `agent-state <pane> --detail` to resolve transcript paths.
 - **agent-watch** calls `agent-state <pane>` to infer the label for new watch registrations.
+- **agent-eventsd** expects `agent-state <pane> --explain` to answer "what happened?" after an attention ping.
 - **spawn.sh** uses `agent-state` for post-boot state checks.
-- **spawn-agent SKILL.md** references all `agent-state` modes for post-spawn monitoring.
+- **spawn-agent SKILL.md** teaches spawners to follow an attention ping with `agent-state <pane> --explain`.
 
 ## Behavioral Contracts
 
@@ -172,6 +203,7 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 3. `--layout` filters to windows containing at least one agent pane.
 4. Screen-detected blocked states override transcript-reported `working`, but never override transcript-reported terminal states (`idle`, `blocked:*`).
 5. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
+6. `--explain` returns the pane's current best-known reason with a concise `summary`, optional `detail`, and a `source` of `eventsd`, `artifacts`, `screen`, `title`, or `default`.
 
 ## Error Handling
 

@@ -162,7 +162,7 @@ Manual `agent-watch add` uses the same model, but `watch.start` follows `turn.pr
 
 ### `resolved`
 
-A watch resolves when the canonical resolver proves the first terminal state for the turn and that state differs from `baseline_state`.
+A watch resolves when the canonical resolver proves the first live-resolving terminal state for the turn and that state differs from `baseline_state`.
 
 Once resolved, the watch is one-shot. Later evidence for that `watch_id` is ignored.
 
@@ -195,7 +195,7 @@ Those watches require fresh post-prearm evidence to resolve.
 
 ## Canonical resolver
 
-All evidence sources feed one resolver. There is no source-specific notification path and no source-specific terminal state machine.
+All evidence sources feed one resolver. There is no source-specific notification path and no source-specific live-resolution state machine.
 
 Fast-path evidence may come from transcript append, screen refresh, or both. Exact observer plumbing is an implementation detail.
 
@@ -203,8 +203,16 @@ The resolver rules are:
 
 1. Only fresh evidence can affect the active turn.
 2. `working` can keep the watch open, but it can never resolve it.
-3. The first fresh terminal state different from `baseline_state` resolves the watch.
+3. The first fresh live-resolving terminal state different from `baseline_state` resolves the watch.
 4. After resolution, later evidence is ignored.
+
+Live-resolving terminal states are:
+
+- `idle`
+- `blocked:question`
+- `blocked:permission`
+
+`blocked:unknown` is a fuzzy inspector state. It must not resolve or self-clear a live watch on its own.
 
 ## Degraded fallback
 
@@ -214,11 +222,11 @@ A watch becomes degraded when fast observers are unavailable, disconnected, or s
 
 In degraded mode the daemon must run `agent-state <pane>` every `RECONCILE_INTERVAL_MS`.
 
-Deadman reconciliation uses the same canonical states and the same terminal rule as fast evidence. It is not a second state machine.
+Deadman reconciliation uses the same canonical states and the same live-resolution rule as fast evidence. It is not a second state machine.
 
-If degraded reconciliation proves a terminal state, the watch resolves normally.
+If degraded reconciliation proves a live-resolving terminal state, the watch resolves normally.
 
-If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a terminal state, the watch must resolve to `blocked:unknown`.
+If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state, the watch must resolve to `blocked:unknown`.
 
 Returning to healthy clears the degraded timer. A later degraded episode starts a new timeout window.
 
@@ -237,6 +245,7 @@ On daemon restart, the daemon must restore enough watch state to preserve turn f
 
 - `pending` closes as `pending_timeout`
 - `armed` gets one reconciliation pass before fresh fast-path evidence is allowed to resolve it
+- a restart-time `blocked:unknown` reconcile sample leaves the watch armed
 - `resolved` is re-delivered with the same `watch_id`
 - `delivering` becomes `delivery_failed` and retries with the same `watch_id`
 - `delivery_failed` keeps its retry budget and retries with the same `watch_id`
@@ -250,6 +259,39 @@ One watch has exactly one logical notification. Multiple delivery attempts may e
 `agent-deliver` must be idempotent on `watch_id`. Duplicate user-visible delivery for the same `watch_id` is a bug.
 
 A watch may retry delivery only from `delivery_failed`, or from restart recovery of `resolved`, and only until `MAX_DELIVERY_ATTEMPTS` is exhausted.
+
+Delivered notification copy is a single-line pager ping:
+
+```text
+[agent-watch] <pane> (<label>) attention
+```
+
+The delivery body must not inline `working -> <state>` or blocked detail. Follow-up inspection belongs to `agent-state <pane> --explain`.
+Spawner follow-up is exactly two steps: receive `[agent-watch] <pane> (<label>) attention`, then run `agent-state <pane> --explain`.
+
+## Recent attention evidence
+
+When a watch resolves, `agent-eventsd` also persists a short-lived per-pane
+attention record under `$STEEZ_STATE_DIR/eventsd/attention/`. That record is
+for post-ping inspection, not delivery.
+
+The record carries the resolved terminal state plus the best available pane
+identity for freshness checks:
+
+- `pane_id`
+- `state`
+- `summary`
+- optional `detail`
+- `source`
+- optional `session_id`
+- optional `transcript_path`
+- optional `transcript_cursor`
+- `observed_at_ms`
+
+`agent-state <pane> --explain` is the reader for this record. A stored record
+may answer the pane only while it still matches the pane's current
+session/transcript identity and the transcript cursor has not advanced past
+the recorded attention point.
 
 ## Default timers
 
@@ -294,7 +336,7 @@ Keep the acceptance set short and derived from behavior:
 2. Evidence at or before the prearm baseline is stale. Manual add on an already-idle or already-blocked pane does not resolve without fresh evidence.
 3. A new `turn.prearm` supersedes an unresolved live watch without blocking the new turn.
 4. One `watch_id` produces one logical notification across duplicate evidence, retries, and restart recovery.
-5. Degraded watches reconcile through `agent-state` and end in either a terminal state or `blocked:unknown` by timeout.
+5. Degraded watches reconcile through `agent-state` and end in either a live-resolving terminal state or `blocked:unknown` by timeout.
 6. Restart recovery preserves the same `watch_id` and bounded delivery attempts.
 7. `agent-eventsd status` returns `ready` only when the service process is running and responsive; killing the service flips the result to `unavailable`.
 

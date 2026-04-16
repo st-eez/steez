@@ -94,6 +94,69 @@ _eventsd_buffer_file() {
   printf '%s/buffer/%s.jsonl' "$_EVENTSD_STATE_DIR" "$1"
 }
 
+_eventsd_attention_file() {
+  printf '%s/attention/%s.json' "$_EVENTSD_STATE_DIR" "$(_eventsd_pane_key "$1")"
+}
+
+_eventsd_attention_summary() {
+  case "$1" in
+    idle) printf '%s' "turn complete" ;;
+    blocked:question) printf '%s' "waiting for question answer" ;;
+    blocked:permission) printf '%s' "waiting for permission approval" ;;
+    blocked:unknown) printf '%s' "waiting at unknown prompt" ;;
+    *) printf '%s' "working" ;;
+  esac
+}
+
+_eventsd_live_resolving_state() {
+  case "$1" in
+    idle|blocked:question|blocked:permission) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+attention_get_recent() {
+  local file
+  file=$(_eventsd_attention_file "$1")
+  [[ -f "$file" ]] && cat "$file"
+}
+
+_eventsd_record_attention() {
+  local pane="$1" state="$2" source="${3:-eventsd}" transcript_cursor="${4:-}"
+  local summary="${5:-}" detail="${6:-}"
+  local session_id="" transcript_path=""
+  session_id=$(tmux show-options -pv -t "$pane" @session_id 2>/dev/null || true)
+  transcript_path=$(tmux show-options -pv -t "$pane" @transcript_path 2>/dev/null || true)
+  [[ -n "$summary" ]] || summary=$(_eventsd_attention_summary "$state")
+
+  local now file rec
+  now=$(_eventsd_now_ms)
+  file=$(_eventsd_attention_file "$pane")
+  mkdir -p "$(dirname "$file")"
+  rec=$(jq -nc \
+    --arg pane "$pane" \
+    --arg state "$state" \
+    --arg summary "$summary" \
+    --arg source "$source" \
+    --arg session_id "$session_id" \
+    --arg transcript_path "$transcript_path" \
+    --arg transcript_cursor "$transcript_cursor" \
+    --arg detail "$detail" \
+    --argjson observed_at_ms "$now" \
+    '{
+       pane_id: $pane,
+       state: $state,
+       summary: $summary,
+       source: $source,
+       observed_at_ms: $observed_at_ms
+     }
+     + (if $session_id != "" then {session_id: $session_id} else {} end)
+     + (if $transcript_path != "" then {transcript_path: $transcript_path} else {} end)
+     + (if $transcript_cursor != "" then {transcript_cursor: ($transcript_cursor | tonumber)} else {} end)
+     + (if $detail != "" then {detail: $detail} else {} end)')
+  printf '%s\n' "$rec" > "$file"
+}
+
 _eventsd_buffer_evidence() {
   local wid="$1" seq="$2" state="$3"
   local has_cursor="$4" cursor="$5" has_hash="$6" hash="$7"
@@ -485,6 +548,7 @@ watch_resolve() {
   pane=$(printf '%s' "$cur" | jq -r .pane_id)
   _eventsd_clear_live "$pane"
   _eventsd_add_draining "$pane" "$wid"
+  _eventsd_record_attention "$pane" "$terminal"
 }
 
 # watch_deliver_attempt <watch_id>
@@ -672,11 +736,18 @@ watch_feed_evidence() {
 
   # `working` can keep the watch open but never resolves (spec rule 2).
   [[ "$state" == "working" ]] && return 0
-  # Baseline is never evidence: a terminal state matching baseline does not
+  # `blocked:unknown` is fuzzy runtime evidence. Keep it available for
+  # explain surfaces, but reserve live-watch resolution for explicit
+  # timeout and pane-close fallback only.
+  _eventsd_live_resolving_state "$state" || return 0
+  # Baseline is never evidence: a live-resolving terminal state matching baseline does not
   # resolve the watch (spec: Baseline rules).
   [[ "$state" == "$baseline" ]] && return 0
-  # First fresh terminal state different from baseline_state resolves.
+  # First fresh live-resolving terminal state different from baseline_state resolves.
+  local pane
+  pane=$(printf '%s' "$cur" | jq -r .pane_id)
   watch_resolve "$wid" "$state"
+  _eventsd_record_attention "$pane" "$state" "eventsd" "${cursor:-}"
 }
 
 # _eventsd_reconcile <pane>
@@ -727,14 +798,17 @@ daemon_recover_restart() {
       armed)
         # Spec: "armed gets one reconciliation pass before fresh
         # fast-path evidence is allowed to resolve it." Reconcile via
-        # agent-state once. If it proves a terminal state != baseline,
-        # resolve and deliver. Otherwise leave the watch armed — the
+        # agent-state once. If it proves a live-resolving terminal state
+        # != baseline, resolve and deliver. Fuzzy blocked:unknown is not
+        # enough here — otherwise a still-working pane would self-clear.
+        # When reconcile stays non-resolving, leave the watch armed; the
         # pass has been made, so later fast-path evidence is unblocked.
         local pane rec_state baseline
         pane=$(jq -r .pane_id "$file")
         baseline=$(jq -r .baseline_state "$file")
         rec_state=$(_eventsd_reconcile "$pane") || rec_state=""
-        if [[ -n "$rec_state" && "$rec_state" != "working" && "$rec_state" != "$baseline" ]]; then
+        if [[ -n "$rec_state" && "$rec_state" != "$baseline" ]] \
+          && _eventsd_live_resolving_state "$rec_state"; then
           watch_resolve "$wid" "$rec_state" || true
           watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
         fi
@@ -768,7 +842,7 @@ daemon_recover_restart() {
 #     its result is fed through the canonical resolver (no second state
 #     machine);
 #   - a degraded episode lasting INDETERMINATE_TIMEOUT_MS without a
-#     terminal state resolves the watch to blocked:unknown.
+#     live-resolving terminal state resolves the watch to blocked:unknown.
 #
 # Non-armed watches are a no-op — the degraded machinery is irrelevant
 # for pending/draining/terminal states.
@@ -824,7 +898,7 @@ watch_tick() {
       if [[ -n "$observed" ]]; then
         # Reconcile evidence must pass the canonical resolver's freshness
         # gate (spec: "Deadman reconciliation uses the same canonical states
-        # and the same terminal rule as fast evidence"). Fresh seq via
+        # and the same live-resolution rule as fast evidence"). Fresh seq via
         # seq_next (per-pane monotonic); screen hash synthesized from the
         # tick time guarantees it differs from the prearm capture.
         seq=$(seq_next "$pane")
@@ -1079,19 +1153,14 @@ _eventsd_auto_start_service() {
 
 # Build the spawner-facing notification message from a watch record.
 # Stays single-line so the fake agents (and any other downstream pane)
-# treat it as a single prompt. Includes the watch_id so tests can still
-# correlate deliveries with their originating watch.
+# treat it as a single prompt. Delivery copy stays collapsed to
+# `attention`; callers inspect with agent-state --explain.
 _eventsd_build_notification_body() {
   local rec="$1"
-  local pane label resolved_state baseline
+  local pane label
   pane=$(printf '%s' "$rec" | jq -r '.pane_id // ""')
   label=$(printf '%s' "$rec" | jq -r '.label // "agent"')
-  resolved_state=$(printf '%s' "$rec" | jq -r '.resolved_state // "idle"')
-  baseline=$(printf '%s' "$rec" | jq -r '.baseline_state // "working"')
-  local wid
-  wid=$(printf '%s' "$rec" | jq -r .watch_id)
-  printf '[agent-watch] %s (%s) %s -> %s [watch=%s]' \
-    "$pane" "$label" "$baseline" "$resolved_state" "$wid"
+  printf '[agent-watch] %s (%s) attention' "$pane" "$label"
 }
 
 # One pass over the persisted watch store. Armed watches get a tick

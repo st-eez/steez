@@ -386,6 +386,87 @@ test_layout_renders() {
 }
 run_test "--layout renders pane id + agent" test_layout_renders
 
+# ----- agent-state --explain (S3) -----
+
+suite "agent-state --explain"
+
+export MOCK_PS_OUTPUT="  PID  PPID COMMAND
+1001 1000 /usr/local/bin/claude --flag
+1010 1000 /usr/local/bin/claude --flag
+1011 1000 /usr/local/bin/claude --flag
+1012 1000 /usr/local/bin/claude --flag"
+
+_EXPLAIN_EVENTSD_TRANSCRIPT="$TEST_TMP/explain-eventsd.jsonl"
+cat > "$_EXPLAIN_EVENTSD_TRANSCRIPT" <<'JSONL'
+{"type":"user","message":{"role":"user","content":"run it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"git push"}}]}}
+JSONL
+_EXPLAIN_EVENTSD_CURSOR=$(wc -c < "$_EXPLAIN_EVENTSD_TRANSCRIPT" | tr -d ' ')
+mock_pane "%10" "1010" "Explain evidence" "/tmp/explain-evidence"
+set_mock_tmux_capture "%10" ""
+set_mock_tmux_var "%10" "@session_id" "sess-explain-evidence"
+set_mock_tmux_var "%10" "@transcript_path" "$_EXPLAIN_EVENTSD_TRANSCRIPT"
+mkdir -p "$STEEZ_STATE_DIR/eventsd/attention"
+cat > "$STEEZ_STATE_DIR/eventsd/attention/_10.json" <<JSON
+{"pane_id":"%10","state":"blocked:permission","summary":"waiting for permission approval","detail":"Bash: {\"command\":\"git push\"}","source":"eventsd","session_id":"sess-explain-evidence","transcript_path":"$_EXPLAIN_EVENTSD_TRANSCRIPT","transcript_cursor":$_EXPLAIN_EVENTSD_CURSOR,"observed_at_ms":4242}
+JSON
+
+_EXPLAIN_FALLBACK_TRANSCRIPT="$TEST_TMP/explain-fallback.jsonl"
+cat > "$_EXPLAIN_FALLBACK_TRANSCRIPT" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_2","name":"AskUserQuestion","input":{"questions":[{"question":"Which environment should I use?"}]}}]}}
+JSONL
+mock_pane "%11" "1011" "Explain fallback" "/tmp/explain-fallback"
+set_mock_tmux_capture "%11" ""
+set_mock_tmux_var "%11" "@session_id" "sess-explain-fallback"
+set_mock_tmux_var "%11" "@transcript_path" "$_EXPLAIN_FALLBACK_TRANSCRIPT"
+
+_EXPLAIN_STALE_TRANSCRIPT="$TEST_TMP/explain-stale.jsonl"
+cat > "$_EXPLAIN_STALE_TRANSCRIPT" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}
+JSONL
+mock_pane "%12" "1012" "Explain stale" "/tmp/explain-stale"
+set_mock_tmux_capture "%12" ""
+set_mock_tmux_var "%12" "@session_id" "sess-explain-stale"
+set_mock_tmux_var "%12" "@transcript_path" "$_EXPLAIN_STALE_TRANSCRIPT"
+cat > "$STEEZ_STATE_DIR/eventsd/attention/_12.json" <<JSON
+{"pane_id":"%12","state":"blocked:permission","summary":"waiting for permission approval","detail":"Bash: {\"command\":\"git push\"}","source":"eventsd","session_id":"sess-explain-stale","transcript_path":"$_EXPLAIN_STALE_TRANSCRIPT","transcript_cursor":1,"observed_at_ms":1111}
+JSON
+
+test_explain_uses_recent_eventsd_evidence() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%10" --explain)
+  assert_json_field "$out" ".pane" "%10"
+  assert_json_field "$out" ".agent" "claude"
+  assert_json_field "$out" ".state" "blocked:permission"
+  assert_json_field "$out" ".summary" "waiting for permission approval"
+  assert_json_field "$out" ".detail" "Bash: {\"command\":\"git push\"}"
+  assert_json_field "$out" ".source" "eventsd"
+}
+run_test "agent-state --explain returns recent terminal reason for the pane" test_explain_uses_recent_eventsd_evidence
+
+test_explain_falls_back_to_artifacts_when_recent_evidence_is_absent() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%11" --explain)
+  assert_json_field "$out" ".pane" "%11"
+  assert_json_field "$out" ".agent" "claude"
+  assert_json_field "$out" ".state" "blocked:question"
+  assert_json_field "$out" ".summary" "waiting for question answer"
+  assert_json_field "$out" ".detail" "Which environment should I use?"
+  assert_json_field "$out" ".source" "artifacts"
+}
+run_test "agent-state --explain falls back cleanly when recent evidence is absent" test_explain_falls_back_to_artifacts_when_recent_evidence_is_absent
+
+test_explain_ignores_stale_recent_evidence() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%12" --explain)
+  assert_json_field "$out" ".pane" "%12"
+  assert_json_field "$out" ".agent" "claude"
+  assert_json_field "$out" ".state" "idle"
+  assert_json_field "$out" ".summary" "turn complete"
+  assert_json_field "$out" ".source" "artifacts"
+}
+run_test "agent-state --explain ignores stale recent evidence" test_explain_ignores_stale_recent_evidence
+
 # ----- agent-history blocked inspection -----
 #
 # Keep Claude blocked inspection transcript-driven. A stale sidecar file must

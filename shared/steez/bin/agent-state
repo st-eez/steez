@@ -10,7 +10,7 @@ _init() {
 
 usage() {
   cat <<'EOF'
-Usage: agent-state <pane> [--read] [--detail]
+Usage: agent-state <pane> [--read] [--detail] [--explain]
        agent-state --all [--read] [--detail] [--json]
        agent-state --layout
 
@@ -29,7 +29,12 @@ Options:
   --layout   Visual box layout showing pane splits and agent states (implies --all)
   --read     Include visible pane content in output (forces JSON with --all)
   --detail   Include session metadata (forces JSON with --all)
+  --explain  Explain the pane's current reason after an attention ping
   -h         Show this help
+
+Attention follow-up:
+  After `[agent-watch] <pane> (<label>) attention`, run `agent-state <pane> --explain`.
+  Do not branch through `agent-history --blocked` or other parser-specific paths.
 
 Setup (--detail):
   Both agents use a SessionStart hook that writes @session_id and
@@ -40,10 +45,10 @@ Setup (--detail):
 
   Claude Code — add a SessionStart hook in ~/.claude/settings.json:
     {"type":"command","command":"$HOME/.claude/hooks/steez-session-start.sh"}
-  The hook reads session JSON from stdin and writes pane variables.
-  For blocked detection, also register
-  ~/.claude/hooks/steez-permission-state.sh for PermissionRequest
-  and PreToolUse (AskUserQuestion).
+  The reduced Claude fast-path hook set is SessionStart, Stop, PermissionRequest, and
+  PreToolUse (AskUserQuestion).
+  SessionStart uses steez-session-start.sh. Stop, PermissionRequest, and
+  PreToolUse (AskUserQuestion) all use ~/.claude/hooks/steez-permission-state.sh.
 
   Codex CLI — enable hooks in ~/.codex/config.toml:
     [features]
@@ -404,15 +409,7 @@ detect_state() {
   fi
 
   local state blocked_from_screen=""
-  if [[ "$agent" == "claude" || "$agent" == "ren" ]]; then
-    if [[ "$tail_text" == *"Tab to amend"* ]] || [[ "$tail_text" == *"Do you want to proceed?"* ]] || [[ "$tail_text" == *"Do you want to overwrite"* ]]; then
-      blocked_from_screen="blocked:permission"
-    elif [[ "$tail_text" == *"Enter to select"* ]] && [[ "$tail_text" == *"Chat about this"* ]]; then
-      blocked_from_screen="blocked:question"
-    elif [[ "$tail_text" == *"Esc to cancel"* ]] || [[ "$tail_text" == *"esc to cancel"* ]]; then
-      blocked_from_screen="blocked:unknown"
-    fi
-  fi
+  blocked_from_screen=$(screen_blocked_state "$agent" "$tail_text")
 
   if state_from_artifacts=$(artifact_state "$agent" "$transcript" "$session_id" 2>/dev/null); then
     # Screen-detected blocked states refine transcript "working" because
@@ -435,6 +432,430 @@ detect_state() {
   fi
 
   echo "$state|$name"
+}
+
+pane_key() {
+  printf '%s' "${1//[^a-zA-Z0-9]/_}"
+}
+
+attention_file() {
+  local state_dir="${STEEZ_STATE_DIR:-$HOME/.steez/state}/eventsd"
+  printf '%s/attention/%s.json' "$state_dir" "$(pane_key "$1")"
+}
+
+state_summary() {
+  case "$1" in
+    idle) printf '%s' "turn complete" ;;
+    blocked:question) printf '%s' "waiting for question answer" ;;
+    blocked:permission) printf '%s' "waiting for permission approval" ;;
+    blocked:unknown) printf '%s' "waiting at unknown prompt" ;;
+    *) printf '%s' "working" ;;
+  esac
+}
+
+screen_blocked_state() {
+  local agent="$1" tail_text="$2"
+  if [[ "$agent" == "claude" || "$agent" == "ren" ]]; then
+    if [[ "$tail_text" == *"Tab to amend"* ]] || [[ "$tail_text" == *"Do you want to proceed?"* ]] || [[ "$tail_text" == *"Do you want to overwrite"* ]]; then
+      printf '%s' "blocked:permission"
+    elif [[ "$tail_text" == *"Enter to select"* ]] && [[ "$tail_text" == *"Chat about this"* ]]; then
+      printf '%s' "blocked:question"
+    elif [[ "$tail_text" == *"Esc to cancel"* ]] || [[ "$tail_text" == *"esc to cancel"* ]]; then
+      printf '%s' "blocked:unknown"
+    fi
+  fi
+}
+
+build_explanation_json() {
+  local state="$1" summary="$2" detail="${3:-}" source="$4"
+  if [[ -n "$detail" ]]; then
+    jq -nc \
+      --arg state "$state" \
+      --arg summary "$summary" \
+      --arg detail "$detail" \
+      --arg source "$source" \
+      '{state: $state, summary: $summary, detail: $detail, source: $source}'
+  else
+    jq -nc \
+      --arg state "$state" \
+      --arg summary "$summary" \
+      --arg source "$source" \
+      '{state: $state, summary: $summary, source: $source}'
+  fi
+}
+
+artifact_explanation() {
+  local agent="$1" transcript="$2" session_id="${3:-}"
+
+  python3 - "$agent" "$transcript" "$session_id" "$HOME/.codex/log/codex-tui.log" <<'PYEOF'
+import datetime as dt
+import json
+import os
+import re
+import sys
+
+agent, transcript, session_id, codex_log = sys.argv[1:]
+
+def load_jsonl(path):
+    out = []
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                continue
+    return out
+
+def derive_session_id(path, value):
+    if value:
+        return value
+    if not path:
+        return ""
+    base = os.path.basename(path)
+    if base.endswith(".jsonl"):
+        base = base[:-6]
+    match = re.match(r"^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-(.+)$", base)
+    return match.group(1) if match else base
+
+def parse_codex_arguments(raw):
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+def codex_waiting_for_approval(thread_id, log_path):
+    if not thread_id or not os.path.exists(log_path):
+        return False
+
+    pattern = f"thread_id={thread_id}"
+    block_size = 65536
+    max_bytes = 8 * 1024 * 1024
+    matched = []
+
+    with open(log_path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        pos = fh.tell()
+        carry = b""
+        consumed = 0
+
+        while pos > 0 and consumed < max_bytes and len(matched) < 6:
+            read_size = min(block_size, pos)
+            pos -= read_size
+            consumed += read_size
+            fh.seek(pos)
+            chunk = fh.read(read_size)
+            carry = chunk + carry
+            lines = carry.splitlines()
+
+            if pos > 0:
+                carry = lines[0] if lines else b""
+                lines = lines[1:]
+            else:
+                carry = b""
+
+            for raw in reversed(lines):
+                try:
+                    line = raw.decode("utf-8", "ignore")
+                except Exception:
+                    continue
+                if pattern in line:
+                    matched.append(line)
+                    if len(matched) >= 6:
+                        break
+
+    if len(matched) < 2:
+        return False
+
+    latest = matched[0]
+    if "client: close" not in latest:
+        return False
+
+    if not any("ToolCall:" in line for line in matched[1:]):
+        return False
+
+    timestamp = latest.split(" ", 1)[0]
+    try:
+        last_at = dt.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except Exception:
+        return False
+
+    age = (dt.datetime.now(dt.timezone.utc) - last_at).total_seconds()
+    return age >= 3.0
+
+def summary_for(state):
+    return {
+        "idle": "turn complete",
+        "blocked:question": "waiting for question answer",
+        "blocked:permission": "waiting for permission approval",
+        "blocked:unknown": "waiting at unknown prompt",
+    }.get(state, "working")
+
+def compact(value):
+    return json.dumps(value, separators=(",", ":"))
+
+def question_detail(tool_input):
+    if isinstance(tool_input, dict):
+        questions = tool_input.get("questions")
+        if isinstance(questions, list) and questions:
+            first = questions[0]
+            if isinstance(first, dict):
+                question = first.get("question")
+                if isinstance(question, str) and question:
+                    return question
+        direct = tool_input.get("question")
+        if isinstance(direct, str) and direct:
+            return direct
+    return ""
+
+def permission_detail(name, tool_input):
+    if not name:
+        return ""
+    if isinstance(tool_input, (dict, list)) and tool_input:
+        return f"{name}: {compact(tool_input)}"
+    if isinstance(tool_input, str) and tool_input:
+        return f"{name}: {tool_input}"
+    return name
+
+def emit(state, detail=""):
+    out = {
+        "state": state,
+        "summary": summary_for(state),
+        "source": "artifacts",
+    }
+    if detail:
+        out["detail"] = detail
+    print(json.dumps(out))
+    raise SystemExit(0)
+
+if not transcript or not os.path.exists(transcript):
+    raise SystemExit(1)
+
+lines = load_jsonl(transcript)
+if not lines:
+    raise SystemExit(1)
+
+if agent in {"claude", "ren"}:
+    resolved = set()
+    for obj in lines:
+        if obj.get("type") != "user":
+            continue
+        content = obj.get("message", {}).get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tid = block.get("tool_use_id")
+                    if tid:
+                        resolved.add(tid)
+
+    for obj in reversed(lines):
+        obj_type = obj.get("type", "")
+
+        if obj_type == "system":
+            subtype = obj.get("subtype", "")
+            if subtype in ("turn_duration", "stop_hook_summary"):
+                emit("idle")
+            continue
+
+        if obj_type in ("attachment", "file-history-snapshot", "permission-mode", "queue-operation"):
+            continue
+
+        if obj_type == "user":
+            if obj.get("isMeta") or obj.get("isSidechain"):
+                continue
+            emit("working")
+
+        if obj_type != "assistant" or obj.get("isSidechain"):
+            continue
+
+        msg = obj.get("message", {})
+        if msg.get("stop_reason") == "end_turn":
+            emit("idle")
+
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            continue
+
+        for block in reversed(content):
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tid = block.get("id")
+            if tid and tid in resolved:
+                continue
+            if block.get("name") == "AskUserQuestion":
+                emit("blocked:question", question_detail(block.get("input", {})))
+            emit("working")
+
+    raise SystemExit(1)
+
+if agent in {"codex", "ren-codex"}:
+    thread_id = derive_session_id(transcript, session_id)
+    resolved = set()
+    for obj in lines:
+        if obj.get("type") == "response_item" and obj.get("payload", {}).get("type") == "function_call_output":
+            call_id = obj.get("payload", {}).get("call_id")
+            if call_id:
+                resolved.add(call_id)
+
+    for obj in reversed(lines):
+        if obj.get("type") == "event_msg":
+            payload_type = obj.get("payload", {}).get("type")
+            if payload_type == "task_complete":
+                emit("idle")
+            if payload_type == "user_message":
+                emit("working")
+            continue
+
+        if obj.get("type") != "response_item":
+            continue
+
+        payload = obj.get("payload", {})
+        payload_type = payload.get("type")
+
+        if payload_type == "function_call":
+            call_id = payload.get("call_id")
+            if call_id and call_id in resolved:
+                continue
+            name = payload.get("name", "")
+            arguments = parse_codex_arguments(payload.get("arguments"))
+            if name == "request_user_input":
+                emit("blocked:question", question_detail(arguments))
+            if arguments.get("sandbox_permissions") == "require_escalated":
+                emit("blocked:permission", permission_detail(name, arguments))
+            emit("working")
+
+        if payload_type == "custom_tool_call":
+            if codex_waiting_for_approval(thread_id, codex_log):
+                emit("blocked:permission", permission_detail(payload.get("name", ""), payload.get("input", "")))
+            emit("working")
+
+    raise SystemExit(1)
+
+raise SystemExit(1)
+PYEOF
+}
+
+fallback_explanation() {
+  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}" session_id="${5:-}"
+  local blocked_from_screen=""
+  blocked_from_screen=$(screen_blocked_state "$agent" "$tail_text")
+
+  local artifact=""
+  if artifact=$(artifact_explanation "$agent" "$transcript" "$session_id" 2>/dev/null); then
+    local state
+    state=$(printf '%s' "$artifact" | jq -r '.state')
+    if [[ "$state" == "working" && -n "$blocked_from_screen" ]]; then
+      build_explanation_json "$blocked_from_screen" "$(state_summary "$blocked_from_screen")" "" "screen"
+    else
+      printf '%s' "$artifact"
+    fi
+    return
+  fi
+
+  if [[ -n "$blocked_from_screen" ]]; then
+    build_explanation_json "$blocked_from_screen" "$(state_summary "$blocked_from_screen")" "" "screen"
+    return
+  fi
+
+  local prefix=0
+  if [[ "$title" == *" "* ]]; then
+    prefix=$(printf '%d' "'${title:0:1}" 2>/dev/null) || prefix=0
+  fi
+
+  if (( prefix >= 0x2800 && prefix <= 0x28FF )); then
+    build_explanation_json "working" "$(state_summary "working")" "" "title"
+  elif [[ "$agent" == "codex" || "$agent" == "ren-codex" ]] && [[ "$tail_text" == ›* || "$tail_text" == *$'\n›'* ]]; then
+    build_explanation_json "idle" "$(state_summary "idle")" "" "screen"
+  elif [[ "$agent" == "codex" || "$agent" == "ren-codex" ]]; then
+    build_explanation_json "working" "$(state_summary "working")" "" "default"
+  else
+    build_explanation_json "idle" "$(state_summary "idle")" "" "default"
+  fi
+}
+
+read_attention_record() {
+  local file
+  file=$(attention_file "$1")
+  [[ -f "$file" ]] && cat "$file"
+}
+
+attention_record_is_fresh() {
+  local attention="$1" session_id="$2" transcript="$3"
+
+  local att_session att_transcript att_cursor
+  att_session=$(printf '%s' "$attention" | jq -r '.session_id // ""')
+  att_transcript=$(printf '%s' "$attention" | jq -r '.transcript_path // ""')
+  att_cursor=$(printf '%s' "$attention" | jq -r '.transcript_cursor // ""')
+
+  if [[ -n "$att_session" && -n "$session_id" && "$att_session" != "$session_id" ]]; then
+    return 1
+  fi
+  if [[ -n "$att_transcript" && -n "$transcript" && "$att_transcript" != "$transcript" ]]; then
+    return 1
+  fi
+  if [[ -n "$att_cursor" && -n "$transcript" && -f "$transcript" ]]; then
+    local current_cursor
+    current_cursor=$(wc -c < "$transcript" 2>/dev/null | tr -d ' ')
+    [[ -n "$current_cursor" && "$current_cursor" == "$att_cursor" ]] || return 1
+  fi
+  return 0
+}
+
+merge_attention_and_fallback() {
+  local attention="$1" fallback="$2"
+  local att_state fallback_state fallback_detail att_detail
+  att_state=$(printf '%s' "$attention" | jq -r '.state')
+  fallback_state=$(printf '%s' "$fallback" | jq -r '.state')
+  fallback_detail=$(printf '%s' "$fallback" | jq -r '.detail // ""')
+  att_detail=$(printf '%s' "$attention" | jq -r '.detail // ""')
+
+  if [[ "$fallback_state" != "working" && "$fallback_state" != "$att_state" ]]; then
+    printf '%s' "$fallback"
+    return
+  fi
+
+  if [[ -z "$att_detail" && -n "$fallback_detail" && "$fallback_state" == "$att_state" ]]; then
+    printf '%s' "$attention" | jq -c --arg detail "$fallback_detail" '.detail = $detail'
+    return
+  fi
+
+  printf '%s' "$attention"
+}
+
+emit_explain_json() {
+  local pane="$1" agent="$2" explanation="$3"
+  printf '%s' "$explanation" | jq -c --arg pane "$pane" --arg agent "$agent" '. + {pane: $pane, agent: $agent}'
+}
+
+explain_pane() {
+  local pane_id="$1" pane_pid="$2" pane_title="$3" pane_cwd="$4" agent="$5"
+
+  local tail_text transcript session_id
+  tail_text=$(tmux capture-pane -t "$pane_id" -p | tail -10)
+  transcript=$(find_transcript "$agent" "$pane_id" "$pane_pid" "$pane_cwd" 2>/dev/null) || true
+  session_id=$(tmux show-options -pv -t "$pane_id" @session_id 2>/dev/null) || true
+  if [[ -z "$session_id" && -n "$transcript" ]]; then
+    session_id=$(transcript_session_id "$transcript" 2>/dev/null) || true
+  fi
+
+  local fallback attention explanation
+  fallback=$(fallback_explanation "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id")
+  attention=$(read_attention_record "$pane_id") || true
+
+  if [[ -n "$attention" ]] && attention_record_is_fresh "$attention" "$session_id" "$transcript"; then
+    explanation=$(merge_attention_and_fallback "$attention" "$fallback")
+  else
+    explanation="$fallback"
+  fi
+
+  emit_explain_json "$pane_id" "$agent" "$explanation"
 }
 
 find_transcript() {
@@ -750,6 +1171,7 @@ main() {
   local detail=false
   local layout=false
   local json_out=false
+  local explain=false
   local pane=""
 
   while [[ $# -gt 0 ]]; do
@@ -757,6 +1179,7 @@ main() {
       --all) all=true; shift ;;
       --read) read_content=true; shift ;;
       --detail) detail=true; shift ;;
+      --explain) explain=true; shift ;;
       --layout) layout=true; shift ;;
       --json) json_out=true; shift ;;
       -h|--help) usage ;;
@@ -767,6 +1190,10 @@ main() {
 
   if [[ "$layout" == "false" && "$all" == "false" && -z "$pane" ]]; then
     echo "error: specify a pane target or use --all" >&2
+    exit 1
+  fi
+  if [[ "$explain" == "true" && ( "$all" == "true" || "$layout" == "true" ) ]]; then
+    echo "error: --explain requires a pane target" >&2
     exit 1
   fi
 
@@ -843,7 +1270,11 @@ main() {
       exit 1
     fi
 
-    check_pane "$pane_id" "$pane_pid" "$pane_title" "$pane_cwd" "$agent" "$read_content" "$detail"
+    if [[ "$explain" == "true" ]]; then
+      explain_pane "$pane_id" "$pane_pid" "$pane_title" "$pane_cwd" "$agent"
+    else
+      check_pane "$pane_id" "$pane_pid" "$pane_title" "$pane_cwd" "$agent" "$read_content" "$detail"
+    fi
     printf '\n'
   fi
 }
