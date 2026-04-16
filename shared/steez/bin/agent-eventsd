@@ -1142,7 +1142,10 @@ _eventsd_auto_start_service() {
   _eventsd_service_alive && return 0
   _eventsd_requires_explicit_service && return 1
   mkdir -p "$_EVENTSD_STATE_DIR"
-  rm -f "$(_eventsd_service_pid_file)" 2>/dev/null || true
+  # No pre-spawn rm of the pidfile. The kernel flock in _cmd_serve is the
+  # singleton; a racing second spawn silently exits 0 when it cannot
+  # acquire the lock. The pidfile is overwritten by the winner inside
+  # _cmd_serve_locked whether the prior contents were live or stale.
   # Launch a detached `agent-eventsd serve`. Env (STEEZ_STATE_DIR, PATH,
   # HOME, tunables) is inherited. The new process sets its own pgid via
   # setsid so pane-close SIGHUPs against the client do not take it down.
@@ -1213,6 +1216,60 @@ _eventsd_service_iterate() {
 
 _cmd_serve() {
   mkdir -p "$_EVENTSD_STATE_DIR"
+  # Kernel-held singleton. A cooperative pidfile check cannot be made
+  # race-free in bash: two concurrent `agent-eventsd serve` callers can
+  # both pass the liveness probe and both enter the tick loop (see bead
+  # steez-lmqx). flock(2) is the only robust fix.
+  #
+  # The lock is acquired with LOCK_EX|LOCK_NB on a dedicated lock file.
+  # Losers exit 0 silently. The winner forks inside perl: the perl
+  # *parent* holds the lock fd and does nothing but waitpid, while the
+  # perl child execs into `env EVENTSD_LOCK_HELD=1 bash ... _serve_locked`
+  # to run the service.
+  #
+  # The fork-then-exec model is load-bearing. If the bash service
+  # inherited the lock fd directly, every external command it forks
+  # (sleep, jq, agent-state, agent-deliver) would inherit it too —
+  # flock(2) locks live on the open file description, so any descendant
+  # with the fd still open keeps the lock alive. SIGKILLing the bash
+  # service then leaves the lock pinned by whichever child happened to
+  # be alive at the moment, blocking the next legitimate serve
+  # indefinitely. Keeping the lock in perl-parent works because fd >= 3
+  # is FD_CLOEXEC by perl's default $^F=2, so execve closes the fd in
+  # every descendant of the child and the kernel releases the lock the
+  # instant perl exits. Perl forwards TERM/INT/HUP to the service so
+  # signalling the flock owner tears everything down cleanly.
+  # $STEEZ_STATE_DIR must live on a local filesystem — NFS `flock`
+  # semantics are historically flaky (see specs/agent-events.md).
+  local lock="$_EVENTSD_STATE_DIR/eventsd.lock"
+  exec perl -MFcntl=:flock -e '
+    open(my $f, ">", $ARGV[0]) or die "open $ARGV[0]: $!";
+    flock($f, LOCK_EX | LOCK_NB) or exit 0;
+    my $pid = fork();
+    die "fork: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec { "env" } "env", "EVENTSD_LOCK_HELD=1", @ARGV[1..$#ARGV];
+      die "exec: $!";
+    }
+    for my $s (qw(TERM INT HUP)) {
+      $SIG{$s} = sub { kill($s, $pid); };
+    }
+    my $got;
+    do { $got = waitpid($pid, 0); } while ($got == -1 && $!{EINTR});
+    exit($got == -1 ? 1 : ($? >> 8));
+  ' "$lock" bash "${BASH_SOURCE[0]}" _serve_locked
+}
+
+# Internal subcommand. Only reachable via _cmd_serve, which acquires the
+# flock and re-execs into this path with EVENTSD_LOCK_HELD=1 set by env(1).
+# Humans invoking `_serve_locked` directly would bypass the kernel lock;
+# the guard below catches that and exits 2. Not listed in _cmd_usage.
+_cmd_serve_locked() {
+  [[ "${EVENTSD_LOCK_HELD:-0}" == "1" ]] || {
+    echo "agent-eventsd: _serve_locked is an internal subcommand; use 'serve'" >&2
+    exit 2
+  }
+  mkdir -p "$_EVENTSD_STATE_DIR"
   # Optional on-disk log for debugging the service tick loop. Off by
   # default; enable by setting EVENTSD_SERVICE_LOG=<path> before the
   # first client command (so auto-start picks up the env).
@@ -1221,15 +1278,9 @@ _cmd_serve() {
   fi
   local pidf
   pidf=$(_eventsd_service_pid_file)
-  if [[ -f "$pidf" ]]; then
-    local running
-    running=$(cat "$pidf" 2>/dev/null || true)
-    if [[ -n "$running" ]] && kill -0 "$running" 2>/dev/null; then
-      # Another service is already live. The spec is exactly-one-per-user.
-      return 0
-    fi
-    rm -f "$pidf"
-  fi
+  # Pidfile is observability-only under the flock scheme. Overwrite
+  # unconditionally — the kernel lock is the mutex, and whatever stale
+  # pid the previous holder left behind (if any) is irrelevant.
   echo $$ > "$pidf"
   trap 'rm -f "'"$pidf"'"' EXIT INT TERM
 
@@ -1343,6 +1394,7 @@ _eventsd_main() {
     list)            _cmd_list "$@" ;;
     status)          _cmd_status "$@" ;;
     serve)           _cmd_serve "$@" ;;
+    _serve_locked)   _cmd_serve_locked "$@" ;;
     timeout-pending) _cmd_timeout_pending "$@" ;;
     evidence)        _cmd_evidence "$@" ;;
     -h|--help|"")    _cmd_usage ;;

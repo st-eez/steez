@@ -36,6 +36,8 @@ This spec does **not** define rollout gates, shadow-mode metrics, socket framing
 
 Exactly one `agent-eventsd` service instance runs per user at a time. That service owns all in-memory watch state, all timer-driven transitions (pending timeout, silence window, degraded reconciliation, indeterminate timeout, delivery retry), and all writes under `$STEEZ_STATE_DIR/eventsd/`. Clients never mutate that state directly.
 
+Singleton enforcement is kernel-held. `agent-eventsd serve` acquires an advisory `flock(2)` with `LOCK_EX | LOCK_NB` on `$STEEZ_STATE_DIR/eventsd/eventsd.lock`, carries the lock across `execve` (by clearing `FD_CLOEXEC`), and only then enters the service loop. Callers that lose the race exit 0 silently. A cooperative pidfile check is not sufficient — two racing callers can both pass a liveness probe before either writes the pidfile, producing orphan daemons. `eventsd.pid` is retained for observability only (`agent-eventsd status`, `agent-watch daemon-status`). The kernel releases the lock on process exit, so SIGKILL of the holder leaves no stale state and the next caller acquires cleanly. `$STEEZ_STATE_DIR` must live on a local filesystem; NFS `flock` semantics are historically unreliable and the singleton guarantee does not hold over NFS.
+
 The `agent-eventsd` executable has two roles:
 
 1. **Service mode.** Runs the long-lived daemon in the foreground (`agent-eventsd serve`, or the equivalent default when launched by the auto-start path). One per user.

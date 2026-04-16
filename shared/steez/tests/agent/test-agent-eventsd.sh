@@ -69,6 +69,136 @@ test_explicit_service_mode_blocks_detached_autostart() {
 }
 run_test "explicit-service mode blocks detached autostart" test_explicit_service_mode_blocks_detached_autostart
 
+# ----- singleton kernel lock (steez-lmqx) -----
+#
+# The service singleton must be held by a kernel flock(2), not by
+# cooperative pidfile checks. The cooperative check in `_cmd_serve`
+# has two TOCTOU windows (rm -f before spawn in _eventsd_auto_start_service;
+# check-then-write in _cmd_serve itself) and the user observed 200+
+# concurrent agent-eventsd daemons in production because of it.
+#
+# Count orphans by live PIDs tracked at spawn time, NOT via the pidfile —
+# the pidfile only ever holds the last winner and so would hide every
+# orphan this test exists to surface.
+#
+# Red-test reliability harness (manual reviewer check). On the pre-fix
+# tree this suite must exit non-zero in at least 8 of 10 consecutive
+# runs. On the post-fix tree it must pass 10 of 10:
+#
+#   for i in 1 2 3 4 5 6 7 8 9 10; do
+#     bash shared/steez/tests/agent/test-agent-eventsd.sh \
+#       >/tmp/eventsd-lock-run-$i.log 2>&1 \
+#       && echo "run $i: PASS" || echo "run $i: FAIL"
+#   done
+
+suite "singleton kernel lock"
+
+# `$!` is the perl-parent wrapper that holds the lock; it waitpid()s on
+# the bash service child. `kill -0 $!` faithfully tracks whether this
+# serve pipeline is still alive. Teardown uses SIGTERM so perl's signal
+# handler propagates to the bash child and both exit cleanly — SIGKILL
+# on perl would orphan the bash child, which would keep spinning its
+# tick loop and corrupt later tests that share $STEEZ_STATE_DIR.
+test_concurrent_serve_spawns_exactly_one_live_process() {
+  _eventsd_reap_service
+  local pids=() p i alive=0 first second
+  for i in $(seq 1 20); do
+    "$EVENTSD" serve </dev/null >/dev/null 2>&1 &
+    pids+=($!)
+  done
+  /bin/sleep 0.5
+  for p in "${pids[@]}"; do
+    if kill -0 "$p" 2>/dev/null; then alive=$((alive + 1)); fi
+  done
+  first="$alive"
+  /bin/sleep 0.5
+  alive=0
+  for p in "${pids[@]}"; do
+    if kill -0 "$p" 2>/dev/null; then alive=$((alive + 1)); fi
+  done
+  second="$alive"
+  for p in "${pids[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
+  for p in "${pids[@]}"; do
+    for i in $(seq 1 60); do
+      kill -0 "$p" 2>/dev/null || break
+      /bin/sleep 0.05
+    done
+    kill -KILL "$p" 2>/dev/null || true
+  done
+  _eventsd_reap_service
+  # Belt-and-suspenders. If any orphan bash service slipped through,
+  # pkill it by the internal _serve_locked subcommand so it cannot
+  # pollute later tests that share $STEEZ_STATE_DIR.
+  pkill -KILL -f 'agent-eventsd _serve_locked' 2>/dev/null || true
+  assert_eq 1 "$first" || return 1
+  assert_eq 1 "$second" || return 1
+}
+run_test "concurrent serve spawns exactly one live process" test_concurrent_serve_spawns_exactly_one_live_process
+
+# `$!` is perl-parent; the bash service child is what writes the
+# pidfile. SIGTERM to perl-parent propagates; SIGKILL the bash service
+# directly through the pidfile simulates a crash. Either way, the lock
+# must release so a fresh serve can start.
+test_lock_holder_death_releases_lock() {
+  _eventsd_reap_service
+  local pidf perl_a perl_b bash_a bash_b i
+  pidf=$(_eventsd_pidfile)
+  "$EVENTSD" serve </dev/null >/dev/null 2>&1 &
+  perl_a=$!
+  bash_a=""
+  for i in $(seq 1 60); do
+    if [[ -f "$pidf" ]]; then
+      bash_a=$(cat "$pidf" 2>/dev/null || true)
+      [[ -n "$bash_a" ]] && kill -0 "$bash_a" 2>/dev/null && break
+    fi
+    /bin/sleep 0.05
+  done
+  [[ -n "$bash_a" ]] && kill -0 "$bash_a" 2>/dev/null || {
+    echo "    serve A never wrote a live pidfile"
+    kill -KILL "$perl_a" 2>/dev/null || true
+    pkill -KILL -f 'agent-eventsd _serve_locked' 2>/dev/null || true
+    return 1
+  }
+  kill -KILL "$bash_a" 2>/dev/null || true
+  for i in $(seq 1 60); do
+    kill -0 "$perl_a" 2>/dev/null || break
+    /bin/sleep 0.05
+  done
+  kill -KILL "$perl_a" 2>/dev/null || true
+  rm -f "$pidf"
+  "$EVENTSD" serve </dev/null >/dev/null 2>&1 &
+  perl_b=$!
+  bash_b=""
+  for i in $(seq 1 60); do
+    if [[ -f "$pidf" ]]; then
+      bash_b=$(cat "$pidf" 2>/dev/null || true)
+      [[ -n "$bash_b" && "$bash_b" != "$bash_a" ]] && kill -0 "$bash_b" 2>/dev/null && break
+    fi
+    /bin/sleep 0.05
+  done
+  kill -TERM "$perl_b" 2>/dev/null || true
+  for i in $(seq 1 60); do
+    kill -0 "$perl_b" 2>/dev/null || break
+    /bin/sleep 0.05
+  done
+  kill -KILL "$perl_b" 2>/dev/null || true
+  _eventsd_reap_service
+  pkill -KILL -f 'agent-eventsd _serve_locked' 2>/dev/null || true
+  [[ -n "$bash_b" && "$bash_b" != "$bash_a" ]] || {
+    echo "    serve B never acquired lock after A's bash was SIGKILL'd (bash_a=$bash_a bash_b=$bash_b)"
+    return 1
+  }
+}
+run_test "lock holder death releases lock" test_lock_holder_death_releases_lock
+
+test_serve_locked_refuses_without_lock_guard() {
+  local out rc=0
+  out=$("$EVENTSD" _serve_locked 2>&1) || rc=$?
+  assert_exit_code 2 "$rc" || return 1
+  assert_contains "$out" "internal subcommand" || return 1
+}
+run_test "_serve_locked refuses without lock guard" test_serve_locked_refuses_without_lock_guard
+
 # ----- seq assigner -----
 
 suite "seq assigner"
