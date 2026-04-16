@@ -7,6 +7,7 @@ Root specifications for steez subsystems. Each spec documents what IS — purpos
 | Spec | Path | Search Terms |
 |------|------|-------------|
 | [spec](./spec.md) | `skills/spec/SKILL.md` | planning front door, design spec, software change planning, implementation slices, tdd handoff |
+| [tdd](./tdd.md) | `skills/tdd/SKILL.md` | one approved slice, red green refactor loop, verifier, browse, bead evidence |
 
 ## Agent Subsystem
 

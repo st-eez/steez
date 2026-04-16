@@ -37,6 +37,40 @@ test("spec skill skeleton-first loop", () => {
   ]);
 });
 
+test("tdd skill contract", () => {
+  expectContract("skills/tdd/SKILL.md", [
+    /^---\nname:\s*tdd/m,
+    /slice-contract precheck/i,
+    /red\s*→\s*green\s*→\s*refactor/i,
+    /Red test name/,
+    /hand back to \/spec/i,
+    /hard-failure lint/i,
+  ]);
+});
+
+test("tdd skill finalization contract", () => {
+  expectContract("skills/tdd/SKILL.md", [
+    /one approved slice/i,
+    /drift/i,
+    /verifier/i,
+    /browse/i,
+    /bd update --append-notes/,
+  ]);
+
+  expectContract("specs/tdd.md", [
+    /^# tdd$/m,
+    /one approved slice/i,
+    /\/tdd does not edit the design spec/i,
+    /verifier/i,
+    /browse/i,
+    /bd update --append-notes/,
+  ]);
+
+  expectContract("specs/README.md", [
+    /\[tdd\]\(\.\/tdd\.md\)/,
+  ]);
+});
+
 test("spec to tdd handoff contract", () => {
   expectContract("skills/spec/SKILL.md", [
     /\/tdd/,
