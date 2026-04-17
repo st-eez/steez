@@ -35,6 +35,91 @@ cp "$FAKES_SRC_DIR/ren"            "$FAKES_BUILD/ren"
 cp "$FAKES_SRC_DIR/ren-codex"      "$FAKES_BUILD/ren-codex"
 chmod +x "$FAKES_BUILD/claude" "$FAKES_BUILD/codex" "$FAKES_BUILD/impl.sh" "$FAKES_BUILD/ren" "$FAKES_BUILD/ren-codex"
 
+# Parallel test runner. Tests are isolated per-subshell: setup_runtime mints
+# a fresh $RUNTIME_TMP, $HOME, $STEEZ_STATE_DIR, tmux socket, bin dir, and
+# eventsd pidfile, so running them concurrently is safe. run_test enqueues;
+# drain_tests executes the queue (parallel by default, serial if
+# EVENTSD_TEST_PARALLEL=1) and replays per-test output in declaration order
+# so the report stays deterministic regardless of finish order.
+: "${EVENTSD_TEST_PARALLEL:=4}"
+_TEST_QUEUE=()
+
+run_test() {
+  _TEST_QUEUE+=("$1"$'\t'"$2")
+}
+
+_run_one_test() {
+  local idx="$1" entry="$2"
+  local func="${entry#*$'\t'}"
+  local work_dir="$HARNESS_TMP/work"
+  local out rc=0
+  out=$("$func" 2>&1) || rc=$?
+  printf '%s' "$out" > "$work_dir/$idx.out"
+  printf '%s' "$rc"  > "$work_dir/$idx.rc"
+}
+
+drain_tests() {
+  local parallel="${EVENTSD_TEST_PARALLEL:-4}"
+  local work_dir="$HARNESS_TMP/work"
+  mkdir -p "$work_dir"
+  local total=${#_TEST_QUEUE[@]}
+  local i
+
+  if (( parallel <= 1 )); then
+    for ((i=0; i<total; i++)); do
+      _run_one_test "$i" "${_TEST_QUEUE[$i]}"
+    done
+  else
+    # Bounded worker pool. `wait -n` is bash 4.3+ — unavailable on stock
+    # macOS /bin/bash 3.2 — so poll `kill -0` on tracked PIDs. 50ms ticks,
+    # cheap next to the per-test seconds-scale work.
+    local pids=()
+    local running=0
+    for ((i=0; i<total; i++)); do
+      _run_one_test "$i" "${_TEST_QUEUE[$i]}" &
+      pids+=($!)
+      running=$((running + 1))
+      while (( running >= parallel )); do
+        local new_pids=()
+        local p
+        running=0
+        for p in "${pids[@]}"; do
+          if kill -0 "$p" 2>/dev/null; then
+            new_pids+=("$p")
+            running=$((running + 1))
+          else
+            wait "$p" 2>/dev/null || true
+          fi
+        done
+        pids=( ${new_pids[@]+"${new_pids[@]}"} )
+        (( running >= parallel )) && sleep 0.05
+      done
+    done
+    local p
+    for p in ${pids[@]+"${pids[@]}"}; do
+      wait "$p" 2>/dev/null || true
+    done
+  fi
+
+  # Replay in declaration order so output is deterministic.
+  for ((i=0; i<total; i++)); do
+    local entry="${_TEST_QUEUE[$i]}"
+    local name="${entry%%$'\t'*}"
+    local rc=0
+    local out=""
+    [[ -f "$work_dir/$i.rc" ]] && rc=$(cat "$work_dir/$i.rc")
+    [[ -f "$work_dir/$i.out" ]] && out=$(cat "$work_dir/$i.out")
+    if [[ "$rc" -eq 0 ]]; then
+      _PASS=$((_PASS + 1))
+      printf '  %s✓%s %s\n' "$_GREEN" "$_RESET" "$name"
+    else
+      _FAIL=$((_FAIL + 1))
+      printf '  %s✗%s %s\n' "$_RED" "$_RESET" "$name"
+      [[ -n "$out" ]] && printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+  done
+}
+
 setup_runtime() {
   RUNTIME_TMP=$(mktemp -d)
   export HOME="$RUNTIME_TMP/home"
@@ -1234,4 +1319,5 @@ test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
 run_test "codex Stop hook fires agent-eventsd evidence and notification arrives within 2s" \
   test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s
 
+drain_tests
 report

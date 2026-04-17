@@ -336,6 +336,7 @@ This spec is normative. Tests should prove the rules above. They should not repl
 5. **Fake only the agent process.** End-to-end coverage runs against the zero-token fakes defined in `specs/fake-agent-harness.md`. The test seam is the `claude` / `codex` binary on `$PATH`; `spawn.sh`, `agent-send`, `agent-deliver`, `agent-eventsd`, `agent-watch`, `agent-history`, and `agent-state` stay real.
 6. **Assert through the public surface.** Primary-path tests must not prove behavior by reading files under `$STEEZ_STATE_DIR/eventsd/` directly. Use `agent-watch`, spawner-pane output, and other public runtime surfaces.
 7. **The primary path routes through `agent-eventsd`.** End-to-end runtime coverage must prove that every primary-path scenario drives the live `agent-eventsd` service: the service pidfile is alive, lifecycle state lands in `$STEEZ_STATE_DIR/eventsd/`, and `agent-watch daemon-status` reports eventsd health.
+8. **Runtime tests stay parallel-safe.** Every runtime-suite test must mint its own `$HOME`, `$STEEZ_STATE_DIR`, tmux socket (`tmux -L <unique>`), per-test bin dir on `$PATH`, and per-test eventsd pidfile inside `$STEEZ_STATE_DIR/eventsd/`. No file-scope mutable state may be read or written after the test body starts. `test-agent-eventsd-runtime.sh` drains its queue through a bounded worker pool (default 4, `EVENTSD_TEST_PARALLEL=1` restores serial) and replays results in declaration order; new tests must preserve these isolation properties so the pool stays correct.
 
 Keep the acceptance set short and derived from behavior:
 
