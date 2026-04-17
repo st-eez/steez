@@ -38,6 +38,17 @@ AGENT_STATE="$HOME/.steez/bin/agent-state"
 
 [[ -n "$MSG" ]] || { echo "error: message body is empty" >&2; exit 1; }
 
+transcript_path_for_pane() {
+  tmux show-options -pv -t "$1" @transcript_path 2>/dev/null || true
+}
+
+transcript_cursor() {
+  local path="$1" size
+  [[ -n "$path" && -f "$path" ]] || { printf '0\n'; return 0; }
+  size=$(wc -c < "$path" 2>/dev/null | tr -d '[:space:]') || size=0
+  printf '%s\n' "${size:-0}"
+}
+
 # Validate the pane is running a recognized AI agent (ren, ren-codex, claude, or codex)
 "$AGENT_STATE" "$PANE" >/dev/null 2>&1 || {
   echo "error: pane '$PANE' is not a recognized AI agent (ren, ren-codex, claude, or codex)" >&2
@@ -47,6 +58,9 @@ AGENT_STATE="$HOME/.steez/bin/agent-state"
 # Resolve to canonical pane id (stable across subsequent tmux calls)
 PANE_ID=$(tmux display-message -t "$PANE" -p '#{pane_id}') || {
   echo "error: pane '$PANE' not found" >&2; exit 1; }
+
+BEFORE_TRANSCRIPT_PATH=$(transcript_path_for_pane "$PANE_ID")
+BEFORE_TRANSCRIPT_CURSOR=$(transcript_cursor "$BEFORE_TRANSCRIPT_PATH")
 
 # Send via tmux buffer for escape-safe paste (verbatim bytes, no shell parsing)
 BUF="agent-deliver-$$"
@@ -60,12 +74,37 @@ tmux paste-buffer -b "$BUF" -t "$PANE_ID" -d
 sleep 0.3
 tmux send-keys -t "$PANE_ID" Enter
 
-# Composer-clear retry: if the agent is still idle, the Enter didn't take
-# effect and the message is sitting in the composer. Send Enter again.
-# Belt-and-suspenders: pressing Enter on an empty composer is a no-op in
-# both Claude Code and Codex, so the retry is safe even if the first Enter
-# actually worked and the agent already finished responding.
-sleep 0.2
+# Deadline-polled retry window. The fixed sleep this replaces was the race —
+# a fast turn could accept the Enter, respond, and return to idle inside the
+# window, leaving the retry to fire on the now-pre-armed next composer and
+# resubmit the prompt. Poll every 25ms up to 20 ticks (500ms total) and exit
+# early on either signal that the first Enter landed: transcript growth at
+# the same path, or pane state leaving idle.
+for ((i=0; i<20; i++)); do
+  sleep 0.025
+  POLL_TRANSCRIPT_PATH=$(transcript_path_for_pane "$PANE_ID")
+  POLL_TRANSCRIPT_CURSOR=$(transcript_cursor "$POLL_TRANSCRIPT_PATH")
+  if [[ -n "$POLL_TRANSCRIPT_PATH" \
+     && "$POLL_TRANSCRIPT_PATH" == "$BEFORE_TRANSCRIPT_PATH" \
+     && "$POLL_TRANSCRIPT_CURSOR" -gt "$BEFORE_TRANSCRIPT_CURSOR" ]]; then
+    break
+  fi
+  "$AGENT_STATE" "$PANE_ID" 2>/dev/null | grep -q '"state":"idle"' || break
+done
+
+# Composer-clear retry: if the pane is still idle and we have no proof the
+# first Enter landed, the message is sitting in the composer. Send Enter
+# again. The guard skips the retry only when AFTER and BEFORE share a
+# transcript path AND the cursor advanced — any missing baseline (BEFORE or
+# AFTER unset, or a path swap mid-delivery) means we cannot prove growth and
+# must retry rather than silently drop the message.
 if "$AGENT_STATE" "$PANE_ID" 2>/dev/null | grep -q '"state":"idle"'; then
-  tmux send-keys -t "$PANE_ID" Enter
+  AFTER_TRANSCRIPT_PATH=$(transcript_path_for_pane "$PANE_ID")
+  AFTER_TRANSCRIPT_CURSOR=$(transcript_cursor "$AFTER_TRANSCRIPT_PATH")
+  if [[ -z "$AFTER_TRANSCRIPT_PATH" \
+     || -z "$BEFORE_TRANSCRIPT_PATH" \
+     || ( "$AFTER_TRANSCRIPT_PATH" == "$BEFORE_TRANSCRIPT_PATH" \
+          && "$AFTER_TRANSCRIPT_CURSOR" -le "$BEFORE_TRANSCRIPT_CURSOR" ) ]]; then
+    tmux send-keys -t "$PANE_ID" Enter
+  fi
 fi

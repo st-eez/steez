@@ -32,7 +32,7 @@ agent-deliver <pane> "message"
 3. **Buffer load:** Creates a named tmux buffer (`agent-deliver-$$`), loads the message via `tmux load-buffer -b <buf> -` from stdin. This is verbatim byte delivery — backticks, dollar signs, quotes survive unmangled (no shell parsing).
 4. **Paste:** `tmux paste-buffer -b <buf> -t <pane> -d` (-d deletes the buffer after paste).
 5. **Delayed Enter:** `sleep 0.3`, then `tmux send-keys -t <pane> Enter`. The delay is critical — the agent's composer needs Enter as a separate keystroke after the paste; bundling them causes the message to sit unsubmitted.
-6. **Retry Enter:** `sleep 0.2`, check if `agent-state` still reports `idle`. If so, send Enter again. This belt-and-suspenders retry is safe because pressing Enter on an empty composer is a no-op in both Claude Code and Codex.
+6. **Retry Enter:** Open a deadline-polled retry window — 25ms ticks for up to 20 iterations (500ms total). Each tick re-reads `@transcript_path` and `agent-state`; the loop exits early on the first signal the Enter landed (transcript cursor advanced at the same path) or that the agent is processing (state left `idle`). After the loop, send a second `Enter` only when the pane is still `idle` AND we cannot prove growth — `@transcript_path` was unset before delivery, is unset after delivery, or matches BEFORE with no cursor advance. A fixed sleep here was the original race: fast turns could round-trip to `idle` inside the window and the retry would resubmit the same prompt to a pre-armed composer.
 
 ## Cleanup
 
@@ -54,7 +54,7 @@ A trap removes the tmux buffer on exit: `tmux delete-buffer -b "$BUF"`.
 2. Agent validation gate: rejects non-agent panes before touching tmux buffers.
 3. Escape-safe: message bytes are never interpreted by a shell. The load-buffer/paste-buffer path is fully binary-safe.
 4. Delayed Enter is mandatory. The 300ms gap between paste and Enter is the core reason this script exists.
-5. Retry Enter is safe for both Claude Code and Codex (empty-composer Enter is a no-op).
+5. Retry Enter is guarded by transcript growth. Idle alone is not enough to prove the first Enter failed.
 
 ## Error Handling
 
