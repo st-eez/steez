@@ -11,6 +11,15 @@ setup_test_env
 trap cleanup_test_env EXIT
 create_mock_tmux
 
+# Permanent no-op sketchybar. The U2 attention-sink publication fires
+# `sketchybar --trigger agent_attention_changed` best-effort from every
+# attention set/clear; without a mock on $PATH, a developer machine with
+# real sketchybar installed would receive real triggers during tests.
+# U2 tests that assert on the trigger argv override this with a logging
+# mock locally.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/sketchybar"
+chmod +x "$MOCK_BIN/sketchybar"
+
 EVENTSD="$BIN_DIR/agent-eventsd"
 if [[ ! -f "$EVENTSD" ]]; then
   echo "agent-eventsd not found at $EVENTSD"
@@ -2100,5 +2109,167 @@ test_append_callsites_still_append() {
   assert_eq 2 "$lines" || return 1
 }
 run_test "append callsites still append (buffer, draining)" test_append_callsites_still_append
+
+# ----- explicit attention semantics and inline sink publication (U2) -----
+#
+# watch_resolve is a pure state transition. Attention writes belong to
+# the canonical producer — the fast-evidence terminal branch — and carry
+# a transcript_cursor for freshness inspection. Attention records are
+# one-shot: turn.prearm, pane-close, and working evidence all unlink the
+# per-pane attention file. Every set/clear also publishes to two inline
+# sinks so downstream consumers stay event-driven:
+#   - tmux window option @agent_monitor_attention (set to state, -u to clear)
+#   - sketchybar --trigger agent_attention_changed
+# Both sinks are best-effort; missing tools must not block the producer.
+
+suite "explicit attention semantics (U2)"
+
+# Swap the no-op sketchybar for a logging one and expose a fresh tmux log.
+# Each test that asserts on the wire re-calls this to clear prior entries.
+_u2_install_sink_mocks() {
+  export MOCK_TMUX_LOG="$TEST_TMP/u2-tmux.log"
+  : > "$MOCK_TMUX_LOG"
+  export SKETCHYBAR_LOG="$TEST_TMP/u2-sketchybar.log"
+  : > "$SKETCHYBAR_LOG"
+  cat > "$MOCK_BIN/sketchybar" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SKETCHYBAR_LOG:-/dev/null}"
+exit 0
+MOCK
+  chmod +x "$MOCK_BIN/sketchybar"
+}
+
+test_watch_resolve_does_not_write_attention_implicitly() {
+  # watch_resolve is a state transition. The attention record is owned
+  # by the canonical fast-evidence terminal branch (the caller that knows
+  # the transcript cursor). A direct watch_resolve with no surrounding
+  # evidence must leave the attention file absent.
+  _install_deliver_mock
+  local pane="%210" wid file
+  wid=$(_arm_on "$pane") || return 1
+  file=$(_eventsd_attention_file "$pane")
+  rm -f "$file"
+  watch_resolve "$wid" idle || return 1
+  if [[ -e "$file" ]]; then
+    echo "    watch_resolve wrote attention implicitly: $file"
+    return 1
+  fi
+}
+run_test "watch_resolve does not write attention implicitly" test_watch_resolve_does_not_write_attention_implicitly
+
+test_prearm_clears_stale_attention_via_unlink() {
+  # A new turn.prearm is a turn boundary: the prior terminal state no
+  # longer applies to the new turn, so the stale record is cleared.
+  # Clearing must unlink — a zero-byte file would still be read as
+  # "needs attention" by attention_get_recent's `[[ -f ... ]]` guard.
+  _install_deliver_mock
+  local pane="%211" file
+  file=$(_eventsd_attention_file "$pane")
+  mkdir -p "$(dirname "$file")"
+  _eventsd_record_attention "$pane" "blocked:permission" >/dev/null
+  [[ -e "$file" ]] || { echo "    stale attention seed failed"; return 1; }
+  watch_create_pending \
+    --pane "$pane" --spawner "%0" --label "codex" \
+    --baseline-state working \
+    --prearm-screen-hash "hash-$pane" \
+    --prearm-transcript-cursor 4096 \
+    --prearm-seq 7 >/dev/null || return 1
+  if [[ -e "$file" ]]; then
+    echo "    prearm did not unlink stale attention: $file"
+    return 1
+  fi
+}
+run_test "prearm clears stale attention via unlink" test_prearm_clears_stale_attention_via_unlink
+
+test_pane_close_clears_attention_unconditionally() {
+  # A closed pane cannot "need attention" — its inspector record would
+  # resolve against a pane that no longer exists. Pane-close must unlink
+  # attention regardless of whether the final reconciliation proved a
+  # terminal state or fell back to blocked:unknown.
+  _install_bead7_deliver_mock
+  RECONCILE_TPATH="" _install_reconcile_mock "%212:working"
+  local pane="%212" wid file
+  wid=$(_arm_on "$pane") || return 1
+  _eventsd_record_attention "$pane" "blocked:permission" >/dev/null
+  file=$(_eventsd_attention_file "$pane")
+  [[ -e "$file" ]] || { echo "    pre-close attention seed failed"; return 1; }
+  export "$(_exit_var_name "$wid")=0"
+  watch_pane_close "$pane" || return 1
+  if [[ -e "$file" ]]; then
+    echo "    pane-close did not unlink attention: $file"
+    return 1
+  fi
+}
+run_test "pane-close clears attention unconditionally" test_pane_close_clears_attention_unconditionally
+
+test_working_evidence_does_not_create_attention_file() {
+  # Fresh fast evidence with state=working keeps the watch armed (working
+  # can never resolve) and must not materialize an attention record: the
+  # turn has not reached a terminal state yet, so the inspector must not
+  # surface a "needs attention" signal.
+  _install_deliver_mock
+  local pane="%213" wid file
+  wid=$(_arm_on "$pane") || return 1
+  file=$(_eventsd_attention_file "$pane")
+  rm -f "$file"
+  watch_feed_evidence --watch-id "$wid" --seq 100 --candidate-state working \
+    --transcript-cursor 5000 --screen-hash "fresh-$pane" >/dev/null || return 1
+  if [[ -e "$file" ]]; then
+    echo "    working evidence materialized attention file: $file"
+    return 1
+  fi
+}
+run_test "working evidence does not create attention file" test_working_evidence_does_not_create_attention_file
+
+test_record_attention_publishes_to_tmux_and_triggers_sketchybar() {
+  # The canonical producer path publishes inline to two sinks:
+  # (1) tmux window option @agent_monitor_attention carries the state so
+  #     the status-bar dot renders event-driven off the pane table.
+  # (2) sketchybar --trigger agent_attention_changed so the macOS bar
+  #     item refreshes immediately instead of waiting for its slow poll.
+  _u2_install_sink_mocks
+  local pane="%214"
+  _eventsd_record_attention "$pane" "blocked:question" >/dev/null || return 1
+  grep -Fq "set-option -w -t $pane @agent_monitor_attention blocked:question" \
+    "$MOCK_TMUX_LOG" || {
+    echo "    tmux set-option missing from publish call:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+  grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
+    echo "    sketchybar trigger missing:"
+    sed 's/^/      /' "$SKETCHYBAR_LOG"
+    return 1
+  }
+}
+run_test "record_attention publishes to tmux and triggers sketchybar" test_record_attention_publishes_to_tmux_and_triggers_sketchybar
+
+test_clear_attention_unsets_tmux_option_and_triggers_sketchybar() {
+  # The clear path must pass -u to tmux (unset the window option) and
+  # still fire the sketchybar trigger so consumers learn the pane no
+  # longer needs attention.
+  _u2_install_sink_mocks
+  declare -F _eventsd_clear_attention >/dev/null \
+    || { echo "    missing: _eventsd_clear_attention"; return 1; }
+  local pane="%215" file
+  file=$(_eventsd_attention_file "$pane")
+  mkdir -p "$(dirname "$file")"
+  _eventsd_record_attention "$pane" "blocked:permission" >/dev/null
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  _eventsd_clear_attention "$pane" || return 1
+  [[ -e "$file" ]] && { echo "    clear did not unlink file"; return 1; }
+  grep -Fq "set-option -w -u -t $pane @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    tmux -u unset missing from clear call:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+  grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
+    echo "    sketchybar trigger missing on clear:"
+    sed 's/^/      /' "$SKETCHYBAR_LOG"
+    return 1
+  }
+}
+run_test "clear_attention unsets tmux option and triggers sketchybar" test_clear_attention_unsets_tmux_option_and_triggers_sketchybar
 
 report

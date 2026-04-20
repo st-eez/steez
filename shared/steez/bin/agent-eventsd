@@ -177,6 +177,49 @@ _eventsd_record_attention() {
      + (if $transcript_cursor != "" then {transcript_cursor: ($transcript_cursor | tonumber)} else {} end)
      + (if $detail != "" then {detail: $detail} else {} end)')
   _eventsd_atomic_write "$file" "${rec}"$'\n'
+  _eventsd_publish_attention_to_tmux "$pane" "$state"
+  _eventsd_trigger_sketchybar_attention_changed
+}
+
+# _eventsd_clear_attention <pane>
+# Unlink the pane's attention record and publish the cleared state to the
+# inline sinks. Called on turn.prearm, pane-close, and fresh `working`
+# evidence — the three turn-boundary events that invalidate the prior
+# terminal record. Idempotent: absent file is a no-op on unlink, and both
+# sink publications are best-effort.
+_eventsd_clear_attention() {
+  local pane="$1" file
+  file=$(_eventsd_attention_file "$pane")
+  rm -f "$file"
+  _eventsd_publish_attention_to_tmux "$pane" ""
+  _eventsd_trigger_sketchybar_attention_changed
+}
+
+# _eventsd_publish_attention_to_tmux <pane> <state|empty>
+# Publish attention to the tmux sink by writing the @agent_monitor_attention
+# window option (state set) or unsetting it (-u when state is empty). The
+# tmux status-bar dot renders off this option so consumers stay
+# event-driven. Best-effort: missing tmux, dead pane, or unsupported option
+# all exit silently.
+_eventsd_publish_attention_to_tmux() {
+  local pane="$1" state="$2"
+  command -v tmux >/dev/null 2>&1 || return 0
+  if [[ -z "$state" ]]; then
+    tmux set-option -w -u -t "$pane" @agent_monitor_attention \
+      >/dev/null 2>&1 || true
+  else
+    tmux set-option -w -t "$pane" @agent_monitor_attention "$state" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+# _eventsd_trigger_sketchybar_attention_changed
+# Fire the SketchyBar agent_attention_changed trigger so the macOS bar
+# item refreshes immediately instead of waiting for its slow fallback
+# poll. Best-effort: missing sketchybar is not an error.
+_eventsd_trigger_sketchybar_attention_changed() {
+  command -v sketchybar >/dev/null 2>&1 || return 0
+  sketchybar --trigger agent_attention_changed >/dev/null 2>&1 || true
 }
 
 _eventsd_buffer_evidence() {
@@ -327,6 +370,11 @@ watch_create_pending() {
     prior_wid=$(cat "$live_file")
     _eventsd_close "$prior_wid" "$pane" "superseded"
   fi
+
+  # Turn boundary: any attention record from a prior turn is stale now.
+  # Unlink so inspectors do not surface a prior terminal state against
+  # the new turn, and propagate the clear to the inline sinks.
+  _eventsd_clear_attention "$pane"
 
   [[ -n "$watch_id" ]] || watch_id=$(_eventsd_gen_id)
   [[ -n "$turn_id" ]] || turn_id=$(_eventsd_gen_id)
@@ -567,10 +615,14 @@ watch_resolve() {
   # Resolved watches are draining (spec: Live and draining watches). Free
   # the pane's live slot and move the watch to the draining ledger so a
   # later turn.prearm does not block on it.
+  #
+  # Attention publication is not our job — watch_resolve is a state
+  # transition. The canonical producer (fast-evidence terminal branch in
+  # watch_feed_evidence) owns writing the attention record with the
+  # transcript cursor that came in on the evidence event.
   pane=$(printf '%s' "$cur" | jq -r .pane_id)
   _eventsd_clear_live "$pane"
   _eventsd_add_draining "$pane" "$wid"
-  _eventsd_record_attention "$pane" "$terminal"
 }
 
 # watch_deliver_attempt <watch_id>
@@ -950,6 +1002,11 @@ watch_tick() {
 watch_pane_close() {
   local pane="$1"
   [[ -n "$pane" ]] || { echo "watch_pane_close: missing pane" >&2; return 2; }
+  # A closed pane cannot "need attention" — its inspector record would
+  # resolve against a pane that no longer exists. Unlink unconditionally
+  # (ahead of the live-watch branch) so the clear lands even when the
+  # close path has no live watch to drive.
+  _eventsd_clear_attention "$pane"
   local live state wid
   live=$(watch_get_live "$pane")
   [[ -n "$live" ]] || return 0
