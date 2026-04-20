@@ -157,6 +157,11 @@ When the transcript is unavailable or returns `working`, the visible pane conten
 
 Screen-detected blocked states override transcript-reported `working` when the UI is ahead of the transcript.
 
+For `codex` / `ren-codex`, a braille-spinner pane title also overrides
+artifact `idle`. This covers the live-render gap where the transcript still
+ends on the prior turn's `task_complete` while the next turn is already
+rendering and the title spinner has flipped live.
+
 ### Layer 3: Title character heuristic
 
 The tmux pane title's first character is checked: Unicode Braille range (U+2800-U+28FF) indicates a spinner -> `working`.
@@ -205,7 +210,7 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 1. A single `ps` snapshot is taken per invocation and reused for all panes (`_init` / `_PS`). No TOCTOU between agent detection and state detection within a single call.
 2. `--all` excludes `unknown` agents — only recognized AI agents appear.
 3. `--layout` filters to windows containing at least one agent pane.
-4. Screen-detected blocked states override transcript-reported `working`, but never override transcript-reported terminal states (`idle`, `blocked:*`).
+4. Screen-detected blocked states override transcript-reported `working`, but never override transcript-reported terminal states (`idle`, `blocked:*`) except for the Codex-family spinner gap above (`idle` + live braille title -> `working`).
 5. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
 6. `--explain` returns the pane's current best-known reason with a concise `summary`, optional `detail`, and a `source` of `eventsd`, `artifacts`, `screen`, `title`, or `default`.
 

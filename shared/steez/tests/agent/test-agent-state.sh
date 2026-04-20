@@ -184,6 +184,21 @@ JSONL
 }
 run_test "screen blocked overrides artifact working" test_artifact_working_screen_blocked
 
+test_codex_artifact_idle_title_spinner_overrides_to_working() {
+  # Real-world bug: Codex can leave the transcript on the prior turn's
+  # task_complete while the next turn is already rendering and the pane title
+  # spinner is live. SketchyBar should show working, not stale idle.
+  local f="$TEST_TMP/codex-idle-spinner.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_complete"}}
+JSONL
+  local result
+  result=$(detect_state $'\xe2\xa0\xb8 steez' "" "codex" "$f" "")
+  assert_eq "working" "${result%%|*}"
+}
+run_test "codex title spinner overrides stale artifact idle" \
+  test_codex_artifact_idle_title_spinner_overrides_to_working
+
 # ----- codex live-state classification (steez-80p4.1) -----
 #
 # Codex writes `event_msg.task_started` when a new turn begins, then

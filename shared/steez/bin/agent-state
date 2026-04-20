@@ -413,9 +413,16 @@ detect_state() {
 
   if state_from_artifacts=$(artifact_state "$agent" "$transcript" "$session_id" 2>/dev/null); then
     # Screen-detected blocked states refine transcript "working" because
-    # permission prompts aren't recorded in the transcript
+    # permission prompts aren't recorded in the transcript. For Codex-family
+    # panes, a live braille spinner in the title also refines stale artifact
+    # idle: the transcript can still end on task_complete while the next turn
+    # is already rendering.
     if [[ "$state_from_artifacts" == "working" && -n "$blocked_from_screen" ]]; then
       state="$blocked_from_screen"
+    elif [[ "$state_from_artifacts" == "idle" ]] \
+      && [[ "$agent" == "codex" || "$agent" == "ren-codex" ]] \
+      && (( prefix >= 0x2800 && prefix <= 0x28FF )); then
+      state="working"
     else
       state="$state_from_artifacts"
     fi
