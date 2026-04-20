@@ -2181,27 +2181,6 @@ test_prearm_clears_stale_attention_via_unlink() {
 }
 run_test "prearm clears stale attention via unlink" test_prearm_clears_stale_attention_via_unlink
 
-test_pane_close_clears_attention_unconditionally() {
-  # A closed pane cannot "need attention" — its inspector record would
-  # resolve against a pane that no longer exists. Pane-close must unlink
-  # attention regardless of whether the final reconciliation proved a
-  # terminal state or fell back to blocked:unknown.
-  _install_bead7_deliver_mock
-  RECONCILE_TPATH="" _install_reconcile_mock "%212:working"
-  local pane="%212" wid file
-  wid=$(_arm_on "$pane") || return 1
-  _eventsd_record_attention "$pane" "blocked:permission" >/dev/null
-  file=$(_eventsd_attention_file "$pane")
-  [[ -e "$file" ]] || { echo "    pre-close attention seed failed"; return 1; }
-  export "$(_exit_var_name "$wid")=0"
-  watch_pane_close "$pane" || return 1
-  if [[ -e "$file" ]]; then
-    echo "    pane-close did not unlink attention: $file"
-    return 1
-  fi
-}
-run_test "pane-close clears attention unconditionally" test_pane_close_clears_attention_unconditionally
-
 test_working_evidence_does_not_create_attention_file() {
   # Fresh fast evidence with state=working keeps the watch armed (working
   # can never resolve) and must not materialize an attention record: the
@@ -2221,55 +2200,250 @@ test_working_evidence_does_not_create_attention_file() {
 }
 run_test "working evidence does not create attention file" test_working_evidence_does_not_create_attention_file
 
-test_record_attention_publishes_to_tmux_and_triggers_sketchybar() {
-  # The canonical producer path publishes inline to two sinks:
-  # (1) tmux window option @agent_monitor_attention carries the state so
-  #     the status-bar dot renders event-driven off the pane table.
-  # (2) sketchybar --trigger agent_attention_changed so the macOS bar
-  #     item refreshes immediately instead of waiting for its slow poll.
-  _u2_install_sink_mocks
-  local pane="%214"
-  _eventsd_record_attention "$pane" "blocked:question" >/dev/null || return 1
-  grep -Fq "set-option -w -t $pane @agent_monitor_attention blocked:question" \
-    "$MOCK_TMUX_LOG" || {
-    echo "    tmux set-option missing from publish call:"
+# ----- sticky + spawner-visible attention (U3) -----
+#
+# The tmux attention dot represents "unread watched-turn attention" on
+# the spawner's window. It survives worker-pane closure (sticky) and is
+# an aggregate across every attention record that shares the same
+# spawner_pane, so a spawner with multiple workers keeps the dot until
+# every worker's record has been retired by a new turn.prearm.
+#
+# Per-pane attention records remain worker-keyed on disk — `agent-state
+# <pane> --explain` still answers per-pane while the pane lives — but
+# the tmux sink is spawner-scoped. Pane-close writes the record (does
+# NOT unlink it) so the spawner-side signal persists after the worker
+# pane goes away.
+
+suite "sticky + spawner-visible attention (U3)"
+
+_u3_install_sink_mocks() {
+  export MOCK_TMUX_LOG="$TEST_TMP/u3-tmux.log"
+  : > "$MOCK_TMUX_LOG"
+  export SKETCHYBAR_LOG="$TEST_TMP/u3-sketchybar.log"
+  : > "$SKETCHYBAR_LOG"
+  cat > "$MOCK_BIN/sketchybar" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SKETCHYBAR_LOG:-/dev/null}"
+exit 0
+MOCK
+  chmod +x "$MOCK_BIN/sketchybar"
+}
+
+# Clear any attention records seeded by earlier tests so the U3 aggregate
+# scan starts from a known-empty state. Worker-pane keys in other suites
+# (%214, %215, etc.) with empty spawner_pane fields would otherwise leak
+# into the spawner-scoped aggregate below.
+_u3_reset_attention_dir() {
+  rm -rf "$_EVENTSD_STATE_DIR/attention"
+}
+
+test_record_attention_publishes_to_spawner_window_not_worker() {
+  # Attention is for the spawner, not the worker. The tmux window option
+  # must land on the spawner's window — the side that spawned the watch
+  # and needs the visible signal — not the worker's window (where the
+  # user may never look, or where the pane may have already closed).
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local worker="%320" spawner="%321"
+  _eventsd_record_attention "$worker" "blocked:question" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  grep -Fq "set-option -w -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    spawner set-option missing:"
     sed 's/^/      /' "$MOCK_TMUX_LOG"
     return 1
   }
+  if grep -Fq "set-option -w -t $worker @agent_monitor_attention" "$MOCK_TMUX_LOG"; then
+    echo "    tmux option was set on worker window (should be spawner-scoped):"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  fi
   grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
-    echo "    sketchybar trigger missing:"
+    echo "    sketchybar trigger missing on record:"
     sed 's/^/      /' "$SKETCHYBAR_LOG"
     return 1
   }
 }
-run_test "record_attention publishes to tmux and triggers sketchybar" test_record_attention_publishes_to_tmux_and_triggers_sketchybar
+run_test "record_attention publishes to spawner window not worker" \
+  test_record_attention_publishes_to_spawner_window_not_worker
 
-test_clear_attention_unsets_tmux_option_and_triggers_sketchybar() {
-  # The clear path must pass -u to tmux (unset the window option) and
-  # still fire the sketchybar trigger so consumers learn the pane no
-  # longer needs attention.
-  _u2_install_sink_mocks
-  declare -F _eventsd_clear_attention >/dev/null \
-    || { echo "    missing: _eventsd_clear_attention"; return 1; }
-  local pane="%215" file
+test_attention_record_persists_spawner_pane() {
+  # The JSON record persists spawner_pane so downstream refresh passes
+  # and clear paths can recover the target sink without re-reading the
+  # (possibly drained) watch record.
+  _u3_reset_attention_dir
+  local worker="%322" spawner="%323" rec sp
+  _eventsd_record_attention "$worker" "blocked:permission" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  rec=$(attention_get_recent "$worker") || return 1
+  sp=$(printf '%s' "$rec" | jq -r '.spawner_pane // empty')
+  [[ "$sp" == "$spawner" ]] || {
+    echo "    spawner_pane missing or wrong: got '$sp', want '$spawner'"
+    printf '    rec=%s\n' "$rec"
+    return 1
+  }
+}
+run_test "attention record persists spawner_pane" \
+  test_attention_record_persists_spawner_pane
+
+test_pane_close_preserves_attention_record() {
+  # Sticky attention: pane-close must NOT unlink the attention record.
+  # The spawner still needs the signal even after the worker pane dies;
+  # unlinking it here would make the dot vanish the instant the worker
+  # exits — exactly the bug steez-80p4.2 exists to fix.
+  _u3_reset_attention_dir
+  _install_bead7_deliver_mock
+  RECONCILE_TPATH="" _install_reconcile_mock "%324:working"
+  local pane="%324" wid file
+  wid=$(_arm_on "$pane") || return 1
   file=$(_eventsd_attention_file "$pane")
-  mkdir -p "$(dirname "$file")"
-  _eventsd_record_attention "$pane" "blocked:permission" >/dev/null
+  rm -f "$file"
+  export "$(_exit_var_name "$wid")=0"
+  watch_pane_close "$pane" || return 1
+  [[ -e "$file" ]] || {
+    echo "    pane-close did not leave a sticky attention record: $file"
+    return 1
+  }
+}
+run_test "pane-close preserves attention record (sticky)" \
+  test_pane_close_preserves_attention_record
+
+test_pane_close_publishes_attention_on_spawner_window() {
+  # Pane-close writes a sticky record AND drives the spawner sink.
+  # Worker %326 is gone by the time the dot fires; the set-option must
+  # target the spawner's window so the badge is visible on the side
+  # the user is actually looking at.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  _install_bead7_deliver_mock
+  RECONCILE_TPATH="" _install_reconcile_mock "%326:blocked:question"
+  local worker="%326" spawner="%327" wid
+  wid=$(watch_create_pending \
+    --pane "$worker" --spawner "$spawner" --label "codex" \
+    --baseline-state working \
+    --prearm-screen-hash "hash-$worker" \
+    --prearm-transcript-cursor 0 \
+    --prearm-seq 100) || return 1
+  watch_arm --pane "$worker" --watch-id "$wid" --start-seq 101 >/dev/null || return 1
+  export "$(_exit_var_name "$wid")=0"
   : > "$MOCK_TMUX_LOG"
   : > "$SKETCHYBAR_LOG"
-  _eventsd_clear_attention "$pane" || return 1
-  [[ -e "$file" ]] && { echo "    clear did not unlink file"; return 1; }
-  grep -Fq "set-option -w -u -t $pane @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
-    echo "    tmux -u unset missing from clear call:"
+  watch_pane_close "$worker" || return 1
+  grep -Fq "set-option -w -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    spawner set-option missing after pane-close:"
     sed 's/^/      /' "$MOCK_TMUX_LOG"
     return 1
   }
+  if grep -Fq "set-option -w -t $worker @agent_monitor_attention" "$MOCK_TMUX_LOG"; then
+    echo "    tmux option landed on the (closed) worker window:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  fi
+  grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
+    echo "    sketchybar trigger missing after pane-close:"
+    sed 's/^/      /' "$SKETCHYBAR_LOG"
+    return 1
+  }
+}
+run_test "pane-close publishes attention on spawner window" \
+  test_pane_close_publishes_attention_on_spawner_window
+
+test_clear_attention_targets_spawner_window_from_stored_record() {
+  # Clearing reads the spawner from the stored record, so the unset
+  # lands on the spawner's window even if the caller has no live watch
+  # context to re-derive it (e.g., explicit removal after the worker
+  # pane has already been reaped).
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local worker="%328" spawner="%329" file
+  file=$(_eventsd_attention_file "$worker")
+  mkdir -p "$(dirname "$file")"
+  _eventsd_record_attention "$worker" "blocked:question" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  _eventsd_clear_attention "$worker" || return 1
+  [[ -e "$file" ]] && { echo "    clear did not unlink file"; return 1; }
+  grep -Fq "set-option -w -u -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    spawner unset missing from clear call:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+  if grep -Fq "set-option -w -u -t $worker @agent_monitor_attention" "$MOCK_TMUX_LOG"; then
+    echo "    clear unset on worker window (should be spawner-scoped):"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  fi
   grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
     echo "    sketchybar trigger missing on clear:"
     sed 's/^/      /' "$SKETCHYBAR_LOG"
     return 1
   }
 }
-run_test "clear_attention unsets tmux option and triggers sketchybar" test_clear_attention_unsets_tmux_option_and_triggers_sketchybar
+run_test "clear_attention targets spawner window from stored record" \
+  test_clear_attention_targets_spawner_window_from_stored_record
+
+test_prearm_refreshes_spawner_sink_keeping_sibling_attention() {
+  # Two workers share a spawner. Worker A has a terminal attention
+  # record; worker B does too. A new turn.prearm on worker A clears
+  # A's record but must NOT wipe B's — the spawner still has unread
+  # attention, so the dot stays set. Only when no worker for that
+  # spawner has a record does the sink clear.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local wa="%330" wb="%331" spawner="%332" fa fb
+  fa=$(_eventsd_attention_file "$wa")
+  fb=$(_eventsd_attention_file "$wb")
+  mkdir -p "$(dirname "$fa")"
+  _eventsd_record_attention "$wa" "blocked:question" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  _eventsd_record_attention "$wb" "idle"             "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  watch_create_pending \
+    --pane "$wa" --spawner "$spawner" --label codex \
+    --baseline-state working \
+    --prearm-screen-hash "hash" \
+    --prearm-transcript-cursor 1000 \
+    --prearm-seq 50 >/dev/null || return 1
+  [[ -e "$fa" ]] && { echo "    prearm did not unlink worker A's attention: $fa"; return 1; }
+  [[ -e "$fb" ]] || { echo "    prearm wrongly unlinked worker B's attention: $fb"; return 1; }
+  # Spawner still has an unread worker (B) — the sink must be SET,
+  # not UNSET. An unset line here would be the bug this test catches.
+  if grep -Fq "set-option -w -u -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG"; then
+    echo "    prearm wiped the spawner sink while worker B still has attention:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  fi
+  grep -Fq "set-option -w -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    prearm did not refresh the spawner sink after clearing worker A:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+}
+run_test "prearm refreshes spawner sink keeping sibling attention" \
+  test_prearm_refreshes_spawner_sink_keeping_sibling_attention
+
+test_spawner_sink_unsets_when_last_attention_record_cleared() {
+  # Single worker per spawner. Clearing the only attention record must
+  # unset the spawner sink — otherwise the dot never retires.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local worker="%333" spawner="%334" file
+  file=$(_eventsd_attention_file "$worker")
+  mkdir -p "$(dirname "$file")"
+  _eventsd_record_attention "$worker" "blocked:question" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  _eventsd_clear_attention "$worker" || return 1
+  grep -Fq "set-option -w -u -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    spawner sink did not unset after last attention cleared:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+}
+run_test "spawner sink unsets when last attention record cleared" \
+  test_spawner_sink_unsets_when_last_attention_record_cleared
 
 report

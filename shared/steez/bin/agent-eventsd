@@ -145,7 +145,7 @@ attention_get_recent() {
 
 _eventsd_record_attention() {
   local pane="$1" state="$2" source="${3:-eventsd}" transcript_cursor="${4:-}"
-  local summary="${5:-}" detail="${6:-}"
+  local summary="${5:-}" detail="${6:-}" spawner_pane="${7:-}"
   local session_id="" transcript_path=""
   session_id=$(tmux show-options -pv -t "$pane" @session_id 2>/dev/null || true)
   transcript_path=$(tmux show-options -pv -t "$pane" @transcript_path 2>/dev/null || true)
@@ -164,6 +164,7 @@ _eventsd_record_attention() {
     --arg transcript_path "$transcript_path" \
     --arg transcript_cursor "$transcript_cursor" \
     --arg detail "$detail" \
+    --arg spawner_pane "$spawner_pane" \
     --argjson observed_at_ms "$now" \
     '{
        pane_id: $pane,
@@ -175,42 +176,79 @@ _eventsd_record_attention() {
      + (if $session_id != "" then {session_id: $session_id} else {} end)
      + (if $transcript_path != "" then {transcript_path: $transcript_path} else {} end)
      + (if $transcript_cursor != "" then {transcript_cursor: ($transcript_cursor | tonumber)} else {} end)
-     + (if $detail != "" then {detail: $detail} else {} end)')
+     + (if $detail != "" then {detail: $detail} else {} end)
+     + (if $spawner_pane != "" then {spawner_pane: $spawner_pane} else {} end)')
   _eventsd_atomic_write "$file" "${rec}"$'\n'
-  _eventsd_publish_attention_to_tmux "$pane" "$state"
-  _eventsd_trigger_sketchybar_attention_changed
+  _eventsd_refresh_spawner_sink "$spawner_pane"
 }
 
 # _eventsd_clear_attention <pane>
-# Unlink the pane's attention record and publish the cleared state to the
-# inline sinks. Called on turn.prearm, pane-close, and fresh `working`
-# evidence — the three turn-boundary events that invalidate the prior
-# terminal record. Idempotent: absent file is a no-op on unlink, and both
-# sink publications are best-effort.
+# Unlink the pane's attention record, then refresh the spawner-scoped
+# tmux sink so the dot reflects whatever attention records still exist
+# for that spawner. Called on turn.prearm — the turn-boundary event that
+# invalidates the prior terminal record for the same worker. Pane-close
+# intentionally does NOT call this: attention must survive worker death
+# (sticky) until a new turn.prearm retires the record.
+#
+# Reads the spawner from the stored record before unlinking so the
+# refresh pass lands on the correct window even when the caller has no
+# live watch context. Idempotent: absent file skips the unlink and the
+# refresh pass still runs against any spawner value we could recover.
 _eventsd_clear_attention() {
-  local pane="$1" file
+  local pane="$1" file spawner=""
   file=$(_eventsd_attention_file "$pane")
+  if [[ -f "$file" ]]; then
+    spawner=$(jq -r '.spawner_pane // empty' "$file" 2>/dev/null || true)
+  fi
   rm -f "$file"
-  _eventsd_publish_attention_to_tmux "$pane" ""
-  _eventsd_trigger_sketchybar_attention_changed
+  _eventsd_refresh_spawner_sink "$spawner"
 }
 
-# _eventsd_publish_attention_to_tmux <pane> <state|empty>
-# Publish attention to the tmux sink by writing the @agent_monitor_attention
-# window option (state set) or unsetting it (-u when state is empty). The
-# tmux status-bar dot renders off this option so consumers stay
-# event-driven. Best-effort: missing tmux, dead pane, or unsupported option
-# all exit silently.
-_eventsd_publish_attention_to_tmux() {
-  local pane="$1" state="$2"
-  command -v tmux >/dev/null 2>&1 || return 0
+# _eventsd_refresh_spawner_sink <spawner_pane>
+# Drive the spawner-scoped tmux window option off the on-disk attention
+# aggregate. The dot represents "any watched worker spawned from this
+# window has unread attention." Per-worker attention records stay
+# worker-keyed on disk for `agent-state <pane> --explain`; this helper
+# collapses them into a single presence bit on the spawner's window.
+#
+# If any attention record carries `.spawner_pane == <spawner>`, the
+# window option is set to the first such record's state (the exact
+# value doesn't matter to the tmux format, which only checks presence —
+# #{?@agent_monitor_attention, ●,}). With no records, the option is
+# unset so the dot clears. SketchyBar is triggered either way so
+# macOS-bar consumers refresh on every attention change.
+#
+# Empty spawner_pane still triggers SketchyBar but skips the tmux call —
+# we have no window to target. tmux/jq absence is best-effort.
+_eventsd_refresh_spawner_sink() {
+  local spawner="$1"
+  if [[ -z "$spawner" ]]; then
+    _eventsd_trigger_sketchybar_attention_changed
+    return 0
+  fi
+  command -v tmux >/dev/null 2>&1 || { _eventsd_trigger_sketchybar_attention_changed; return 0; }
+  local dir="$_EVENTSD_STATE_DIR/attention"
+  local state="" f s
+  if [[ -d "$dir" ]]; then
+    for f in "$dir"/*.json; do
+      [[ -f "$f" ]] || continue
+      s=$(jq -r --arg sp "$spawner" \
+            'select((.spawner_pane // "") == $sp) | .state // empty' \
+            "$f" 2>/dev/null) || continue
+      if [[ -n "$s" ]]; then
+        state="$s"
+        break
+      fi
+    done
+  fi
   if [[ -z "$state" ]]; then
-    tmux set-option -w -u -t "$pane" @agent_monitor_attention \
+    tmux set-option -w -u -t "$spawner" @agent_monitor_attention \
       >/dev/null 2>&1 || true
   else
-    tmux set-option -w -t "$pane" @agent_monitor_attention "$state" \
+    tmux set-option -w -t "$spawner" @agent_monitor_attention "$state" \
       >/dev/null 2>&1 || true
   fi
+  _eventsd_trigger_sketchybar_attention_changed
 }
 
 # _eventsd_trigger_sketchybar_attention_changed
@@ -834,10 +872,11 @@ watch_feed_evidence() {
   # resolve the watch (spec: Baseline rules).
   [[ "$state" == "$baseline" ]] && return 0
   # First fresh live-resolving terminal state different from baseline_state resolves.
-  local pane
+  local pane spawner
   pane=$(printf '%s' "$cur" | jq -r .pane_id)
+  spawner=$(printf '%s' "$cur" | jq -r '.spawner_pane // empty')
   watch_resolve "$wid" "$state"
-  _eventsd_record_attention "$pane" "$state" "eventsd" "${cursor:-}"
+  _eventsd_record_attention "$pane" "$state" "eventsd" "${cursor:-}" "" "" "$spawner"
 }
 
 # _eventsd_reconcile <pane>
@@ -1002,11 +1041,12 @@ watch_tick() {
 watch_pane_close() {
   local pane="$1"
   [[ -n "$pane" ]] || { echo "watch_pane_close: missing pane" >&2; return 2; }
-  # A closed pane cannot "need attention" — its inspector record would
-  # resolve against a pane that no longer exists. Unlink unconditionally
-  # (ahead of the live-watch branch) so the clear lands even when the
-  # close path has no live watch to drive.
-  _eventsd_clear_attention "$pane"
+  # Sticky attention (steez-80p4.2): worker-pane death must NOT retire
+  # the attention record. The spawner still needs the signal — pane
+  # closure is exactly the moment a fast-path resolve would be missed
+  # if the dot got cleared. The turn-boundary events (new turn.prearm
+  # on the pane, explicit remove) own the clear path; pane-close owns
+  # writing a final sticky record through the armed branch below.
   local live state wid
   live=$(watch_get_live "$pane")
   [[ -n "$live" ]] || return 0
@@ -1029,8 +1069,9 @@ watch_pane_close() {
       # has not advanced past prearm_cursor is pre-turn evidence — it
       # cannot resolve the current watch. Fall back to blocked:unknown
       # instead of carrying the stale state into resolution.
-      local baseline rec_state resolved prearm_cursor cursor
+      local baseline rec_state resolved prearm_cursor cursor spawner
       baseline=$(printf '%s' "$live" | jq -r .baseline_state)
+      spawner=$(printf '%s' "$live" | jq -r '.spawner_pane // empty')
       prearm_cursor=$(printf '%s' "$live" | jq -r '.prearm_transcript_cursor // 0')
       cursor=$(_eventsd_capture_transcript_cursor "$pane")
       rec_state=$(_eventsd_reconcile "$pane") || rec_state=""
@@ -1042,6 +1083,13 @@ watch_pane_close() {
         resolved="blocked:unknown"
       fi
       watch_resolve "$wid" "$resolved" || return 1
+      # Sticky attention (steez-80p4.2). Mirror the fast-path resolve's
+      # attention write so the spawner window keeps its dot even after
+      # the worker pane is gone. Pane-close resolves are frequently the
+      # cases the user most needs to see (tool crash, explicit kill mid-
+      # turn), so silently eating the signal here was the worst default.
+      _eventsd_record_attention "$pane" "$resolved" "pane_close" \
+        "${cursor:-0}" "" "" "$spawner"
       watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
       ;;
   esac

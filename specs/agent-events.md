@@ -245,6 +245,7 @@ On pane close:
 - a `pending` watch closes without delivery
 - an `armed` watch gets one final reconciliation from transcript data still newer than the prearm cursor
 - if that final reconciliation does not prove a terminal state, the watch resolves to `blocked:unknown`
+- the armed-branch resolve writes a sticky attention record so the spawner-scoped tmux sink retains its badge after the worker pane disappears (see Recent attention evidence). Pane-close is not a turn boundary and must not unlink attention.
 - draining delivery continues against the spawner pane
 
 On daemon restart, the daemon must restore enough watch state to preserve turn freshness and delivery idempotency. At minimum:
@@ -292,12 +293,44 @@ identity for freshness checks:
 - optional `session_id`
 - optional `transcript_path`
 - optional `transcript_cursor`
+- `spawner_pane`
 - `observed_at_ms`
 
 `agent-state <pane> --explain` is the reader for this record. A stored record
 may answer the pane only while it still matches the pane's current
 session/transcript identity and the transcript cursor has not advanced past
 the recorded attention point.
+
+Attention records are sticky across worker-pane death. Pane close resolves
+the live watch and writes the record; only a new `turn.prearm` on the same
+worker pane (or an explicit remove) retires it. This is load-bearing for
+the spawner-side TMUX sink below — a watched completion that arrives as
+part of pane teardown still has to badge the spawner window.
+
+### TMUX attention sink
+
+The tmux status-bar dot renders off a window-scoped option
+`@agent_monitor_attention`. `agent-eventsd` maintains this option as an
+aggregate presence bit keyed by **spawner pane**, not by worker pane. The
+dot answers "does any watched worker spawned from this window have
+unread attention?" — one bit per spawner window.
+
+The aggregate rules are:
+
+- On every attention write or clear, the daemon scans the on-disk
+  attention records for entries whose `spawner_pane` matches the affected
+  spawner and refreshes that spawner's window option.
+- If at least one matching record exists, the window option is set.
+  The exact value is a state string; the tmux format only checks for
+  presence.
+- If no matching record exists, the window option is unset (`-u`).
+- `sketchybar --trigger agent_attention_changed` fires on every refresh
+  so downstream macOS-bar consumers stay event-driven.
+
+Clearing always runs through the stored record: `_eventsd_clear_attention`
+reads `spawner_pane` from disk before unlinking so the refresh pass can
+target the correct window even when the caller has no live watch context
+(explicit remove, pane already reaped, daemon restart recovery).
 
 ## Default timers
 
