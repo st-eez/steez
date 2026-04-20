@@ -1531,21 +1531,24 @@ test_idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown
 }
 run_test "idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown" test_idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown
 
-# ----- pane close and daemon restart recovery (bead 7) -----
+# ----- pane close and restart recovery via service iterate (steez-si3.1) -----
 #
 # Acceptance #6 (spec: TDD relationship): "Restart recovery preserves the
-# same watch_id and bounded delivery attempts." The spec's "Pane close and
-# restart" section pins the per-state transitions these tests exercise.
-# The first red test targets the restart matrix for watches that already
-# had a delivery attempt inflight (resolved, delivering, delivery_failed).
-# Pane-close matrix tests and remaining restart states follow.
+# same watch_id and bounded delivery attempts." The on-disk store is the
+# source of truth across crashes, and the daemon's ongoing tick loop
+# (`_eventsd_service_iterate`) is also the restart-recovery path: on the
+# first iteration after the daemon comes back up, any persisted draining
+# record (resolved / delivering / delivery_failed) gets its scheduled
+# transition and one delivery attempt on the same watch_id.
+#
+# Pending-on-restart and armed-one-pass recovery are out of scope here —
+# they are covered by separate mechanisms (explicit `timeout-pending` for
+# pending; degraded reconciliation in `watch_tick` for armed).
 
-suite "restart recovery"
-
-# Bead 7 deliver mock: exit code is keyed on watch_id via EXIT_<key>
-# env vars so the test does not depend on the order daemon_recover_restart
-# walks the on-disk store. One log line per invocation lets the test
-# count total attempts.
+# Shared deliver mock: exit code is keyed on watch_id via EXIT_<key> env
+# vars so tests do not depend on the order the iterator walks the
+# on-disk store. One log line per invocation lets tests count attempts
+# per watch.
 _install_bead7_deliver_mock() {
   export DELIVER_LOG="$TEST_TMP/deliver.log"
   : > "$DELIVER_LOG"
@@ -1597,7 +1600,43 @@ _exit_var_name() {
   printf 'EXIT_%s' "$key"
 }
 
-test_restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_delivery_failed_preserving_retry_budget() {
+# _install_reconcile_mock "<pane>:<state>" ... installs an agent-state
+# mock on PATH that returns the given state for each listed pane and
+# exits 1 for every other pane. Used by pane-close tests that need to
+# drive reconciliation to a chosen outcome without touching real
+# tmux/transcript plumbing.
+#
+# When the env var RECONCILE_TPATH is set at call time, the mock emits
+# `detail.transcript_path` alongside the state so pane-close freshness
+# checks (real-cursor > prearm_cursor) can pass. Without the var, the
+# mock only emits state — suitable for tests that want to exercise the
+# stale-transcript fallback path.
+_install_reconcile_mock() {
+  local file="$MOCK_BIN/agent-state"
+  local tpath="${RECONCILE_TPATH:-}"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'pane="$1"\n'
+    printf 'case "$pane" in\n'
+    local arg p s body
+    for arg in "$@"; do
+      p="${arg%%:*}"; s="${arg#*:}"
+      if [[ -n "$tpath" ]]; then
+        body="{\"state\":\"$s\",\"detail\":{\"transcript_path\":\"$tpath\"}}"
+      else
+        body="{\"state\":\"$s\"}"
+      fi
+      printf '  %q) echo %q ; exit 0 ;;\n' "$p" "$body"
+    done
+    printf '  *) exit 1 ;;\n'
+    printf 'esac\n'
+  } > "$file"
+  chmod +x "$file"
+}
+
+suite "service iterate restart recovery"
+
+test_service_iterate_restart_replays_resolved_demotes_delivering_and_retries_delivery_failed_preserving_attempts() {
   # Spec (Pane close and restart):
   #   - "resolved is re-delivered with the same watch_id"
   #   - "delivering becomes delivery_failed and retries with the same watch_id"
@@ -1605,9 +1644,12 @@ test_restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_deliv
   # Spec (Delivery contract): "A watch may retry delivery only from
   # delivery_failed, or from restart recovery of resolved, and only until
   # MAX_DELIVERY_ATTEMPTS is exhausted."
+  #
+  # The daemon's ongoing tick (`_eventsd_service_iterate`) is also the
+  # restart-recovery path for draining watches. Each of the three
+  # draining states must transition and retry exactly once on the same
+  # iteration, preserving the pre-crash retry budget.
   _install_bead7_deliver_mock
-  declare -F daemon_recover_restart >/dev/null \
-    || { echo "    missing: daemon_recover_restart"; return 1; }
 
   # (1) resolved with zero prior attempts.
   local w_resolved w_delivering w_failed rec
@@ -1623,15 +1665,15 @@ test_restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_deliv
   w_failed=$(_stage_delivery_failed "%92" 3) || return 1
 
   # Per-watch exit codes:
-  #   resolved   -> succeeds on its restart attempt.
-  #   delivering -> demoted to delivery_failed, restart retry fails.
-  #   failed     -> succeeds on its restart retry.
+  #   resolved   -> succeeds on its retry.
+  #   delivering -> demoted to delivery_failed, retry fails.
+  #   failed     -> succeeds on its retry.
   export "$(_exit_var_name "$w_resolved")=0"
   export "$(_exit_var_name "$w_delivering")=7"
   export "$(_exit_var_name "$w_failed")=0"
 
-  # Drive restart recovery.
-  daemon_recover_restart || return 1
+  # One iteration drives the full draining-recovery matrix.
+  _eventsd_service_iterate || return 1
 
   # resolved: same watch_id, one new attempt, delivered.
   rec=$(watch_get "$w_resolved")
@@ -1640,24 +1682,24 @@ test_restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_deliv
   assert_json_field "$rec" .delivery_attempts 1 || return 1
 
   # delivering: demoted to delivery_failed, SAME watch_id, retry budget
-  # preserved. The 2 pre-restart attempts + the 1 restart retry = 3.
+  # preserved. The 2 pre-crash attempts + the 1 retry on this iteration = 3.
   rec=$(watch_get "$w_delivering")
   assert_json_field "$rec" .watch_id "$w_delivering" || return 1
   assert_json_field "$rec" .state delivery_failed || return 1
   assert_json_field "$rec" .delivery_attempts 3 || return 1
 
   # delivery_failed: retried with SAME watch_id, budget preserved.
-  # 3 pre-restart + 1 restart retry (this one succeeded) = 4, within
-  # MAX_DELIVERY_ATTEMPTS=5.
+  # 3 pre-crash + 1 retry (succeeded) = 4, within MAX_DELIVERY_ATTEMPTS=5.
   rec=$(watch_get "$w_failed")
   assert_json_field "$rec" .watch_id "$w_failed" || return 1
   assert_json_field "$rec" .state delivered || return 1
   assert_json_field "$rec" .delivery_attempts 4 || return 1
 
-  # Exactly one restart attempt per staged watch_id — no cross-wiring,
-  # no duplicate retries. The test fixture accumulates resolved watches
-  # from prior suites in the shared state dir, so counting total deliver
-  # calls is meaningless; per-watch counts are what the spec pins.
+  # Exactly one attempt per staged watch_id on this iteration — no
+  # cross-wiring, no duplicate retries. The test fixture accumulates
+  # resolved watches from prior suites in the shared state dir, so
+  # counting total deliver calls is meaningless; per-watch counts are
+  # what the spec pins.
   local c
   c=$(grep -c "^$w_resolved " "$DELIVER_LOG" || true)
   assert_eq 1 "$c" || return 1
@@ -1666,112 +1708,7 @@ test_restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_deliv
   c=$(grep -c "^$w_failed " "$DELIVER_LOG" || true)
   assert_eq 1 "$c" || return 1
 }
-run_test "restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_delivery_failed_preserving_retry_budget" test_restart_replays_resolved_with_same_watch_id_and_demotes_delivering_to_delivery_failed_preserving_retry_budget
-
-test_restart_closes_pending_as_pending_timeout_without_delivery() {
-  # Spec (Pane close and restart): "pending closes as pending_timeout."
-  # A pending watch never received watch.start, so restart has nothing
-  # to reconcile — the only safe move is to close the watch and free
-  # the pane's live slot for a future turn.
-  _install_bead7_deliver_mock
-  local wid
-  wid=$(_mk_pending "%110") || return 1
-  daemon_recover_restart || return 1
-  local rec
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason pending_timeout || return 1
-  # Live slot must be freed so the pane can take a new prearm.
-  assert_eq "" "$(watch_get_live "%110")" || return 1
-  # No delivery for a pending-close path.
-  local c
-  c=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
-  assert_eq 0 "${c:-0}" || return 1
-}
-run_test "restart_closes_pending_as_pending_timeout_without_delivery" test_restart_closes_pending_as_pending_timeout_without_delivery
-
-# _install_reconcile_mock "<pane>:<state>" ... installs an agent-state
-# mock on PATH that returns the given state for each listed pane and
-# exits 1 for every other pane. Used by armed-recovery tests that need
-# to drive reconciliation to a chosen outcome without touching real
-# tmux/transcript plumbing.
-_install_reconcile_mock() {
-  local file="$MOCK_BIN/agent-state"
-  {
-    printf '#!/usr/bin/env bash\n'
-    printf 'pane="$1"\n'
-    printf 'case "$pane" in\n'
-    local arg p s
-    for arg in "$@"; do
-      p="${arg%%:*}"; s="${arg#*:}"
-      printf '  %q) echo %q ; exit 0 ;;\n' "$p" "{\"state\":\"$s\"}"
-    done
-    printf '  *) exit 1 ;;\n'
-    printf 'esac\n'
-  } > "$file"
-  chmod +x "$file"
-}
-
-test_restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state() {
-  # Spec (Pane close and restart): "armed gets one reconciliation pass
-  # before fresh fast-path evidence is allowed to resolve it."
-  # Spec (Degraded fallback): "Deadman reconciliation uses the same
-  # canonical states and the same live-resolution rule as fast evidence."
-  #
-  # Two armed watches survive the crash. Reconciliation (via agent-state)
-  # reports:
-  #   (a) %120 -> idle: terminal, != baseline=working, so the watch
-  #       resolves to idle and delivery is driven with the same watch_id.
-  #   (b) %121 -> working: non-terminal, so the watch stays armed. The
-  #       "one reconciliation pass" has been satisfied, so subsequent
-  #       fast-path evidence would be allowed to resolve it — but the
-  #       restart itself must not fabricate a resolution.
-  _install_bead7_deliver_mock
-  _install_reconcile_mock "%120:idle" "%121:working"
-  local w_term w_work rec
-  w_term=$(_arm_on "%120") || return 1
-  w_work=$(_arm_on "%121") || return 1
-  export "$(_exit_var_name "$w_term")=0"
-
-  daemon_recover_restart || return 1
-
-  # Terminal reconciliation resolved the watch and delivery ran with
-  # the same watch_id.
-  rec=$(watch_get "$w_term")
-  assert_json_field "$rec" .watch_id "$w_term" || return 1
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .resolved_state idle || return 1
-  assert_json_field "$rec" .delivery_attempts 1 || return 1
-  local c
-  c=$(grep -c "^$w_term " "$DELIVER_LOG" 2>/dev/null || true)
-  assert_eq 1 "${c:-0}" || return 1
-
-  # Non-terminal reconciliation leaves the watch armed. No delivery.
-  rec=$(watch_get "$w_work")
-  assert_json_field "$rec" .state armed || return 1
-  c=$(grep -c "^$w_work " "$DELIVER_LOG" 2>/dev/null || true)
-  assert_eq 0 "${c:-0}" || return 1
-}
-run_test "restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state" test_restart_armed_runs_one_reconciliation_pass_and_resolves_on_terminal_state
-
-test_restart_armed_ignores_fuzzy_blocked_unknown_reconciliation() {
-  # Spec (live watch resolution): restart recovery gets one reconcile
-  # pass, but fuzzy blocked:unknown must not resolve or self-clear a
-  # live watch.
-  _install_bead7_deliver_mock
-  _install_reconcile_mock "%122:blocked:unknown"
-  local wid rec c
-  wid=$(_arm_on "%122") || return 1
-
-  daemon_recover_restart || return 1
-
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state armed || return 1
-  assert_json_field "$(watch_get_live "%122")" .watch_id "$wid" || return 1
-  c=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
-  assert_eq 0 "${c:-0}" || return 1
-}
-run_test "restart_armed_ignores_fuzzy_blocked_unknown_reconciliation" test_restart_armed_ignores_fuzzy_blocked_unknown_reconciliation
+run_test "service_iterate_restart_replays_resolved_demotes_delivering_and_retries_delivery_failed_preserving_attempts" test_service_iterate_restart_replays_resolved_demotes_delivering_and_retries_delivery_failed_preserving_attempts
 
 suite "pane close recovery"
 
@@ -1812,7 +1749,14 @@ test_pane_close_on_armed_watch_reconciles_once_and_falls_back_to_blocked_unknown
   # even with the pane gone, the notification still routes to the
   # spawner.
   _install_bead7_deliver_mock
-  _install_reconcile_mock "%140:idle" "%141:working"
+  # Stage a transcript newer than prearm_cursor (4096) so the pane-close
+  # freshness gate accepts the reconciled terminal state. Without this,
+  # cursor=0 (no transcript) fails `cursor > prearm_cursor` and the
+  # terminal reconcile would be dropped — the test exercises the spec's
+  # "terminal != baseline" path, which requires fresh transcript data.
+  local tpath="$TEST_TMP/pane-close-armed.jsonl"
+  head -c 5000 < /dev/zero > "$tpath"
+  RECONCILE_TPATH="$tpath" _install_reconcile_mock "%140:idle" "%141:working"
   local w_term w_indef rec
   w_term=$(_arm_on "%140") || return 1
   w_indef=$(_arm_on "%141") || return 1
@@ -1882,6 +1826,130 @@ test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spaw
   assert_eq "%0" "$last_target" || return 1
 }
 run_test "pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner" test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner
+
+# _install_detail_gated_agent_state_mock <transcript_path>
+# Installs an agent-state mock that only emits `.detail.transcript_path`
+# when `--detail` is on the argv. Without --detail the response omits
+# the detail block entirely — the same contract agent-state has in
+# production. Used by the prearm-cursor capture tests to prove the
+# caller actually passes the flag.
+_install_detail_gated_agent_state_mock() {
+  local tpath="$1"
+  export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
+  export AGENT_STATE_TPATH="$tpath"
+  : > "$AGENT_STATE_LOG"
+  cat > "$MOCK_BIN/agent-state" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${AGENT_STATE_LOG:-/dev/null}"
+pane="$1"
+detail_on=0
+for arg in "$@"; do
+  [[ "$arg" == "--detail" ]] && detail_on=1
+done
+if (( detail_on )) && [[ -n "${AGENT_STATE_TPATH:-}" ]]; then
+  printf '{"pane":"%s","agent":"codex","state":"working","name":"t","detail":{"transcript_path":"%s"}}\n' \
+    "$pane" "$AGENT_STATE_TPATH"
+else
+  printf '{"pane":"%s","agent":"codex","state":"working","name":"t"}\n' "$pane"
+fi
+MOCK
+  chmod +x "$MOCK_BIN/agent-state"
+  export AGENT_STATE_CMD="$MOCK_BIN/agent-state"
+}
+
+test_capture_transcript_cursor_passes_detail_flag_to_agent_state() {
+  # Spec (steez-j815 + steez-si3.1): agent-state only emits
+  # `.detail.transcript_path` when `--detail` is set. Omitting the flag
+  # leaves the prearm cursor pinned at 0, which forever fails the
+  # freshness gate `cursor > prearm_cursor` and renders every reconcile
+  # on that pane stale. The prearm-time capture must pass `--detail`
+  # for the same reason the reconcile path does.
+  local pane="%180" tpath="$TEST_TMP/prearm-cursor.jsonl"
+  head -c 2500 < /dev/zero > "$tpath"
+  _install_detail_gated_agent_state_mock "$tpath"
+
+  local sz
+  sz=$(_eventsd_capture_transcript_cursor "$pane") || return 1
+  assert_eq "2500" "$sz" || return 1
+  # Prove the flag was on the wire — defence in depth against a future
+  # caller that shadows the result through a different code path.
+  grep -q -- '--detail' "$AGENT_STATE_LOG" \
+    || { echo "    agent-state call missing --detail"; return 1; }
+}
+run_test "capture_transcript_cursor_passes_detail_flag_to_agent_state" test_capture_transcript_cursor_passes_detail_flag_to_agent_state
+
+test_pane_close_rejects_stale_transcript_reconciliation_and_falls_back_to_blocked_unknown() {
+  # Spec (Pane close and restart): "an armed watch gets one final
+  # reconciliation from transcript data still newer than the prearm
+  # cursor." A reconcile that reports a terminal state but whose
+  # transcript has not advanced past prearm_cursor is stale (pre-turn
+  # evidence) and must not carry its state into the resolution — the
+  # watch falls back to blocked:unknown.
+  _install_bead7_deliver_mock
+  # Transcript pinned at exactly prearm_transcript_cursor (4096). The
+  # freshness rule `cursor > prearm_cursor` must fail, so the reported
+  # `idle` (terminal != baseline=working) is dropped on the floor.
+  local tpath="$TEST_TMP/pane-close-stale.jsonl"
+  head -c 4096 < /dev/zero > "$tpath"
+  RECONCILE_TPATH="$tpath" _install_reconcile_mock "%145:idle"
+
+  local wid rec
+  wid=$(_arm_on "%145") || return 1
+  export "$(_exit_var_name "$wid")=0"
+
+  watch_pane_close "%145" || return 1
+
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .watch_id "$wid" || return 1
+  assert_json_field "$rec" .state delivered || return 1
+  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+  assert_eq "" "$(watch_get_live "%145")" || return 1
+}
+run_test "pane_close_rejects_stale_transcript_reconciliation_and_falls_back_to_blocked_unknown" test_pane_close_rejects_stale_transcript_reconciliation_and_falls_back_to_blocked_unknown
+
+# ----- service iterate recovery (steez-si3.1) -----
+#
+# _eventsd_service_iterate is the ongoing daemon tick. It is also the
+# restart-recovery path: on first iteration after a crash the on-disk
+# records carry whatever state the crash left them in. A record in
+# `delivering` means the daemon persisted the pre-invoke state but did
+# not observe the reply — the retry budget was already incremented on
+# disk. The iterator must demote to `delivery_failed` (same watch_id,
+# attempts preserved) and retry on the same pass, not wait for manual
+# intervention.
+suite "service iterate recovery"
+
+test_service_iterate_demotes_persisted_delivering_to_delivery_failed_and_retries_preserving_attempts() {
+  # Spec (Pane close and restart): "delivering becomes delivery_failed
+  # and retries with the same watch_id."
+  # Spec (Delivery contract): "A watch may retry delivery only from
+  # delivery_failed, or from restart recovery of resolved, and only
+  # until MAX_DELIVERY_ATTEMPTS is exhausted."
+  _install_bead7_deliver_mock
+
+  local wid
+  wid=$(_stage_delivering "%170" 2) || return 1
+  # The retry fails (exit=7) so the watch is observably in
+  # delivery_failed after the iteration, not `delivered` — proof that
+  # the demotion was persisted before the retry ran.
+  export "$(_exit_var_name "$wid")=7"
+
+  _eventsd_service_iterate || return 1
+
+  local rec
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .watch_id "$wid" || return 1
+  assert_json_field "$rec" .state delivery_failed || return 1
+  # 2 pre-crash attempts + 1 retry on this iteration = 3. Budget
+  # preserved (MAX_DELIVERY_ATTEMPTS=5 in default config).
+  assert_json_field "$rec" .delivery_attempts 3 || return 1
+
+  # Exactly one retry for this watch_id — demotion must not fan out.
+  local c
+  c=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 1 "${c:-0}" || return 1
+}
+run_test "service_iterate_demotes_persisted_delivering_to_delivery_failed_and_retries_preserving_attempts" test_service_iterate_demotes_persisted_delivering_to_delivery_failed_and_retries_preserving_attempts
 
 # ----- recent attention evidence (S3) -----
 

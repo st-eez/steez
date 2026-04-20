@@ -804,69 +804,6 @@ _eventsd_reconcile() {
   printf '%s' "$state"
 }
 
-# daemon_recover_restart — drive the restart-recovery transitions from
-# the persisted store (spec: Pane close and restart). The daemon is
-# file-backed, so records survive a crash as-is; recovery has to apply
-# the state-specific transitions the spec pins:
-#
-#   - resolved          → replay delivery (same watch_id)
-#   - delivering        → demote to delivery_failed (retry budget
-#                         preserved), then retry (same watch_id)
-#   - delivery_failed   → retry (same watch_id), retry budget preserved
-#
-# Other states are outside this bead's first red test and handled by
-# subsequent tests (pending closes as pending_timeout; armed gets one
-# reconciliation pass before fast-path evidence).
-daemon_recover_restart() {
-  local dir="$_EVENTSD_STATE_DIR/watches"
-  [[ -d "$dir" ]] || return 0
-  local file wid state rec
-  for file in "$dir"/*.json; do
-    [[ -f "$file" ]] || continue
-    wid=$(jq -r .watch_id "$file")
-    state=$(jq -r .state "$file")
-    case "$state" in
-      pending)
-        # Spec: "pending closes as pending_timeout." The watch never
-        # received watch.start, so there is nothing to reconcile.
-        local pane
-        pane=$(jq -r .pane_id "$file")
-        _eventsd_close "$wid" "$pane" "pending_timeout"
-        ;;
-      armed)
-        # Spec: "armed gets one reconciliation pass before fresh
-        # fast-path evidence is allowed to resolve it." Reconcile via
-        # agent-state once. If it proves a live-resolving terminal state
-        # != baseline, resolve and deliver. Fuzzy blocked:unknown is not
-        # enough here — otherwise a still-working pane would self-clear.
-        # When reconcile stays non-resolving, leave the watch armed; the
-        # pass has been made, so later fast-path evidence is unblocked.
-        local pane rec_state baseline
-        pane=$(jq -r .pane_id "$file")
-        baseline=$(jq -r .baseline_state "$file")
-        rec_state=$(_eventsd_reconcile "$pane") || rec_state=""
-        if [[ -n "$rec_state" && "$rec_state" != "$baseline" ]] \
-          && _eventsd_live_resolving_state "$rec_state"; then
-          watch_resolve "$wid" "$rec_state" || true
-          watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
-        fi
-        ;;
-      delivering)
-        # Spec: "delivering becomes delivery_failed and retries with
-        # the same watch_id." Overwrite state in place so
-        # delivery_attempts stays untouched — the budget is preserved
-        # across the crash.
-        rec=$(jq -c '.state = "delivery_failed"' "$file")
-        _eventsd_write_record "$wid" "$rec"
-        watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
-        ;;
-      resolved|delivery_failed)
-        watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
-        ;;
-    esac
-  done
-}
-
 # watch_tick <watch_id>
 #
 # Drive the degraded-fallback state machine for one armed watch against
@@ -1029,10 +966,20 @@ watch_pane_close() {
       # resolves to blocked:unknown." Delivery then drives normally —
       # spec: "draining delivery continues against the spawner pane",
       # and watch_deliver_attempt already targets spawner_pane.
-      local baseline rec_state resolved
+      #
+      # The freshness gate is the real prearm cursor threaded from the
+      # watch record (steez-si3.1). A reconciled state whose transcript
+      # has not advanced past prearm_cursor is pre-turn evidence — it
+      # cannot resolve the current watch. Fall back to blocked:unknown
+      # instead of carrying the stale state into resolution.
+      local baseline rec_state resolved prearm_cursor cursor
       baseline=$(printf '%s' "$live" | jq -r .baseline_state)
+      prearm_cursor=$(printf '%s' "$live" | jq -r '.prearm_transcript_cursor // 0')
+      cursor=$(_eventsd_capture_transcript_cursor "$pane")
       rec_state=$(_eventsd_reconcile "$pane") || rec_state=""
-      if [[ -n "$rec_state" && "$rec_state" != "working" && "$rec_state" != "$baseline" ]]; then
+      if [[ -n "$rec_state" ]] \
+        && (( cursor > prearm_cursor )) \
+        && [[ "$rec_state" != "working" && "$rec_state" != "$baseline" ]]; then
         resolved="$rec_state"
       else
         resolved="blocked:unknown"
@@ -1080,7 +1027,13 @@ _eventsd_capture_screen_hash() {
 _eventsd_capture_transcript_cursor() {
   local pane="$1" path sz cmd
   cmd="${AGENT_STATE_CMD:-agent-state}"
-  path=$("$cmd" "$pane" 2>/dev/null \
+  # --detail (steez-si3.1): agent-state emits .detail.transcript_path
+  # only when --detail is set. Omitting it leaves path="" and pins the
+  # captured cursor at 0 — every downstream freshness check on this
+  # pane then falls through stale and the watch never resolves via
+  # cursor-anchored evidence. Matches the reconcile-path invocation in
+  # watch_tick (steez-j815).
+  path=$("$cmd" "$pane" --detail 2>/dev/null \
     | jq -r '.detail.transcript_path // empty' 2>/dev/null) || path=""
   if [[ -n "$path" && -f "$path" ]]; then
     sz=$(wc -c < "$path" 2>/dev/null | tr -d ' ')
@@ -1282,6 +1235,20 @@ _eventsd_service_iterate() {
         if [[ "$state" == "resolved" ]]; then
           watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
         fi
+        ;;
+      delivering)
+        # Spec (Pane close and restart): "delivering becomes
+        # delivery_failed and retries with the same watch_id." The
+        # daemon is file-backed, so a crash between watch_deliver_attempt
+        # persisting `delivering` and observing the deliver command's
+        # exit leaves state=delivering on disk with delivery_attempts
+        # already incremented. Overwrite state in place so the retry
+        # budget is preserved; watch_deliver_attempt then re-enters the
+        # retry path on the same iteration.
+        local rec
+        rec=$(jq -c '.state = "delivery_failed"' "$file")
+        _eventsd_write_record "$wid" "$rec"
+        watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
         ;;
       resolved|delivery_failed)
         watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
