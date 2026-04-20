@@ -344,7 +344,7 @@ def codex_state(lines, thread_id):
             payload_type = obj.get("payload", {}).get("type")
             if payload_type == "task_complete":
                 return "idle"
-            if payload_type == "user_message":
+            if payload_type in ("task_started", "user_message"):
                 return "working"
             continue
 
@@ -709,7 +709,7 @@ if agent in {"codex", "ren-codex"}:
             payload_type = obj.get("payload", {}).get("type")
             if payload_type == "task_complete":
                 emit("idle")
-            if payload_type == "user_message":
+            if payload_type in ("task_started", "user_message"):
                 emit("working")
             continue
 

@@ -184,6 +184,84 @@ JSONL
 }
 run_test "screen blocked overrides artifact working" test_artifact_working_screen_blocked
 
+# ----- codex live-state classification (steez-80p4.1) -----
+#
+# Codex writes `event_msg.task_started` when a new turn begins, then
+# `event_msg.user_message` a few ms later. Between those two writes (or if
+# write buffering delays user_message), the backward walk must not skip over
+# task_started and fall through to the previous turn's task_complete — that
+# would classify an actively working pane as idle.
+
+suite "codex live-state classification"
+
+test_codex_task_started_after_complete_is_working() {
+  # Prior turn completed, new turn just started but user_message has not been
+  # flushed yet. The pane is live-working; must NOT report idle.
+  local f="$TEST_TMP/codex-task-started.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started"}}
+{"type":"event_msg","payload":{"type":"user_message"}}
+{"type":"event_msg","payload":{"type":"task_complete"}}
+{"type":"event_msg","payload":{"type":"task_started"}}
+JSONL
+  local result
+  result=$(detect_state "" "" "codex" "$f" "")
+  assert_eq "working" "${result%%|*}"
+}
+run_test "codex task_started after task_complete reports working" test_codex_task_started_after_complete_is_working
+
+test_codex_task_started_with_response_items_is_working() {
+  # New turn started, bootstrap response_items written, but user_message not
+  # yet flushed. This is the real-world interleaving observed in Codex
+  # rollouts: task_started, then a handful of response_item.message entries
+  # for system/turn-context boilerplate, then user_message.
+  local f="$TEST_TMP/codex-bootstrap.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_complete"}}
+{"type":"event_msg","payload":{"type":"task_started"}}
+{"type":"response_item","payload":{"type":"message","role":"system","content":[]}}
+{"type":"response_item","payload":{"type":"message","role":"system","content":[]}}
+JSONL
+  local result
+  result=$(detect_state "" "" "codex" "$f" "")
+  assert_eq "working" "${result%%|*}"
+}
+run_test "codex task_started with bootstrap response_items reports working" \
+  test_codex_task_started_with_response_items_is_working
+
+test_codex_only_task_started_is_working() {
+  # Brand-new session: the very first event_msg is task_started and nothing
+  # else has landed yet. Classification must be working, not unknown-
+  # fallback-through-screen.
+  local f="$TEST_TMP/codex-fresh.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started"}}
+JSONL
+  local result
+  result=$(detect_state "" "" "codex" "$f" "")
+  assert_eq "working" "${result%%|*}"
+}
+run_test "codex fresh session with only task_started reports working" \
+  test_codex_only_task_started_is_working
+
+test_codex_explain_reports_working_for_task_started() {
+  # --explain surfaces feed SketchyBar and other live-status consumers.
+  # They must also see working, not idle, when the transcript ends on
+  # task_started.
+  local f="$TEST_TMP/codex-explain-started.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_complete"}}
+{"type":"event_msg","payload":{"type":"task_started"}}
+JSONL
+  local out
+  out=$(artifact_explanation "codex" "$f" "")
+  assert_json_field "$out" ".state" "working"
+  assert_json_field "$out" ".summary" "working"
+  assert_json_field "$out" ".source" "artifacts"
+}
+run_test "artifact_explanation reports working for codex task_started" \
+  test_codex_explain_reports_working_for_task_started
+
 # ----- emit_json -----
 
 suite "emit_json"

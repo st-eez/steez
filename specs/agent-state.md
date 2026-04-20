@@ -135,10 +135,15 @@ Recognized agents: `ren`, `ren-codex`, `claude`, `codex`. Anything else returns 
 
 **Codex/Ren-Codex:** Forward pass collects resolved `call_id`s from `function_call_output` entries. Backward pass checks:
 - `event_msg` with `task_complete` -> `idle`
-- `event_msg` with `user_message` -> `working`
+- `event_msg` with `task_started` or `user_message` -> `working`
 - Unresolved `function_call` named `request_user_input` -> `blocked:question`
 - Unresolved `function_call` with `sandbox_permissions: require_escalated` -> `blocked:permission`
 - `custom_tool_call` + TUI log confirmation -> `blocked:permission`
+
+Codex emits `task_started` at the start of every turn and `user_message` a
+few milliseconds later. Recognising both as working prevents the brief
+buffering window — where only `task_started` has been flushed — from
+classifying a live turn as idle and lying to live-status consumers.
 
 Codex has an additional `codex_waiting_for_approval` heuristic that tail-reads `~/.codex/log/codex-tui.log` looking for `ToolCall:` entries for the same `thread_id` followed by a `client: close` event (close is the most recent entry), with a 3-second age gate.
 
