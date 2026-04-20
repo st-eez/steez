@@ -1540,6 +1540,114 @@ test_idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown
 }
 run_test "idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown" test_idle_reconcile_resolves_cleanly_via_fast_path_semantics_not_blocked_unknown
 
+# ----- bead steez-ymcx: fuzzy reconcile state with advancing cursor -----
+#
+# Live repro on worker panes %65 and %66 (watches 3e46f1e7 / b4656a23):
+# both workers wrote ~460KB of transcript over their watch lifetime, but
+# agent-state kept returning `blocked:unknown` because Claude's "Esc to
+# cancel" screen tail is a working indicator that `screen_blocked_state`
+# conservatively classifies as blocked:unknown. Reconcile evidence was
+# accepted as "fresh" on the prearm-cursor gate, but the reset-to-healthy
+# branch only fired for state=working — so the watch stayed degraded,
+# the indeterminate timeout matured to a spurious blocked:unknown, and
+# the watch was marked delivered while the worker kept running. When
+# the worker's real Stop hook fired later, the watch was already
+# terminal and the completion was silently dropped.
+#
+# Ground truth: a transcript cursor that strictly advances over both
+# the prearm baseline and the most recent reconcile IS liveness proof.
+# A growing transcript is worker output; the inspector's best guess at
+# categorization cannot overrule it. The deadman must reset on
+# advancing cursor regardless of whether the observed state is
+# `working` or the fuzzy `blocked:unknown`.
+
+_arm_on_prearm_cursor() {
+  local pane="$1" prearm_cursor="$2" wid prearm_seq start_seq
+  prearm_seq=$(seq_next "$pane")
+  wid=$(watch_create_pending \
+    --pane "$pane" \
+    --spawner "%0" \
+    --label "codex" \
+    --baseline-state working \
+    --prearm-screen-hash "hash-$pane" \
+    --prearm-transcript-cursor "$prearm_cursor" \
+    --prearm-seq "$prearm_seq") || return 1
+  start_seq=$(seq_next "$pane")
+  watch_arm --pane "$pane" --watch-id "$wid" --start-seq "$start_seq" \
+    >/dev/null || return 1
+  printf '%s' "$wid"
+}
+
+test_fuzzy_blocked_unknown_with_advancing_cursor_is_liveness_proof() {
+  # Bead steez-ymcx: agent-state may return blocked:unknown for a worker
+  # that is actually working. When the transcript cursor is advancing,
+  # the worker is demonstrably not frozen — reset the deadman instead
+  # of maturing the indeterminate timeout.
+  _install_deliver_mock
+
+  local tpath="$TEST_TMP/transcript-ymcx.jsonl"
+  : > "$tpath"
+  _install_transcript_agent_state_mock "$tpath"
+  export AGENT_STATE_RESPONSE_STATE="blocked:unknown"
+
+  local pane="%165" wid rec t0=10000000 t last_ev prev_ev
+  _set_now "$t0"
+  wid=$(_arm_on_prearm_cursor "$pane" 0) || return 1
+
+  # Cross silence with an advancing transcript. The first reconcile
+  # sees state=blocked:unknown with a cursor that strictly exceeds
+  # prearm (0). That MUST reset the deadman.
+  head -c 10000 < /dev/zero > "$tpath"
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms null || return 1
+  assert_json_field "$rec" .last_evidence_ms $((t0 + 30000)) || return 1
+
+  # Drive past the old indeterminate-timeout boundary. Each 30s silence
+  # re-enters degraded; each reconcile sees an advancing cursor. Watch
+  # must stay armed and last_evidence_ms must advance on every tick.
+  prev_ev=$((t0 + 30000))
+  for (( t = t0 + 60000; t <= t0 + 30000 + 120000 + 60000; t += 30000 )); do
+    head -c 5000 < /dev/zero >> "$tpath"
+    _set_now "$t"
+    watch_tick "$wid" >/dev/null || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed \
+      || { echo "    watch unexpectedly left armed at t+$((t - t0))"; return 1; }
+    last_ev=$(printf '%s' "$rec" | jq -r '.last_evidence_ms')
+    [[ "$last_ev" -gt "$prev_ev" ]] \
+      || { echo "    last_evidence_ms did not advance across fuzzy reconcile: $prev_ev -> $last_ev"; return 1; }
+    prev_ev="$last_ev"
+  done
+
+  # Pane slot still owned by the same watch. No premature delivery.
+  local live
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_eq 0 "$(_deliver_call_count)" || return 1
+
+  # Worker's real Stop hook fires after the long task. Fast-path idle
+  # evidence must still resolve cleanly and deliver exactly once — on
+  # the pre-fix tree this ping was dropped because the watch had
+  # already been marked delivered by the spurious blocked:unknown.
+  local resolve_seq cursor
+  resolve_seq=$(seq_next "$pane")
+  cursor=$(wc -c < "$tpath" | tr -d ' ')
+  _set_now $((t0 + 30000 + 120000 + 90000))
+  watch_feed_evidence --watch-id "$wid" --seq "$resolve_seq" \
+    --candidate-state idle --transcript-cursor "$cursor" \
+    --source fast >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+
+  watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  assert_eq 1 "$(_deliver_call_count)" || return 1
+}
+run_test "fuzzy_blocked_unknown_with_advancing_cursor_is_liveness_proof" test_fuzzy_blocked_unknown_with_advancing_cursor_is_liveness_proof
+
 # ----- pane close and restart recovery via service iterate (steez-si3.1) -----
 #
 # Acceptance #6 (spec: TDD relationship): "Restart recovery preserves the

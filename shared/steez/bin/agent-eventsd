@@ -850,15 +850,19 @@ watch_feed_evidence() {
   # transcript cursor advanced past the prearm cursor, or the screen hash
   # differs from the prearm hash. Evidence lacking both is not fresh.
   #
-  # Reconcile + working is stricter (steez-j815). A frozen Claude returns
-  # state=working with the same transcript cursor every reconcile; the old
-  # synthetic-hash regime let that pass freshness, reset the deadman, and
-  # kept the watch armed forever. Require strict cursor advance over BOTH
-  # the prearm cursor AND the most recent reconcile observation. Screen
-  # hashes are ignored on this branch — a per-tick hash cannot prove
-  # liveness.
+  # Reconcile on non-live-resolving states is stricter. A frozen Claude
+  # returns the same transcript cursor every reconcile — whether the
+  # inspector reports `working` (steez-j815) or the fuzzy `blocked:unknown`
+  # (steez-ymcx: Claude's "Esc to cancel" working indicator is
+  # conservatively classified as blocked:unknown by `screen_blocked_state`).
+  # In both cases the only ground-truth liveness signal is the transcript
+  # cursor: require strict advance over BOTH the prearm cursor AND the
+  # most recent reconcile observation before accepting the evidence as
+  # fresh. Screen hashes are ignored on this branch — a per-tick hash
+  # cannot prove liveness.
   local fresh=0
-  if [[ "$source" == "reconcile" && "$state" == "working" ]]; then
+  if [[ "$source" == "reconcile" ]] \
+    && [[ "$state" == "working" || "$state" == "blocked:unknown" ]]; then
     local last_recon_cursor
     last_recon_cursor=$(printf '%s' "$cur" | jq -r '.last_reconcile_cursor // 0')
     if (( has_cursor )) \
@@ -877,10 +881,15 @@ watch_feed_evidence() {
   (( fresh )) || return 0
 
   # Fresh fast-path evidence returns the watch to healthy. A degraded
-  # reconcile that still proves `working` must do the same: it is fresh
-  # liveness proof for the active watch, so the deadman window must restart
-  # from that proof instead of timing out to blocked:unknown.
-  if [[ "$source" == "fast" || ( "$source" == "reconcile" && "$state" == "working" ) ]]; then
+  # reconcile with an advancing transcript cursor is also liveness proof —
+  # the worker is demonstrably producing output, so the deadman window must
+  # restart from that proof instead of timing out to blocked:unknown. This
+  # applies to both `working` (inspector agrees) and the fuzzy
+  # `blocked:unknown` (inspector can't tell, but transcript growth is
+  # ground truth — steez-ymcx).
+  if [[ "$source" == "fast" ]] \
+    || { [[ "$source" == "reconcile" ]] \
+      && [[ "$state" == "working" || "$state" == "blocked:unknown" ]]; }; then
     local now
     now=$(_eventsd_now_ms)
     cur=$(printf '%s' "$cur" | jq -c \
