@@ -53,6 +53,19 @@ publish_runtime_state() {
   else
     tmux set-option -p -t "$TMUX_PANE" -u @agent_runtime_expires_ms >/dev/null 2>&1 || true
   fi
+
+  trigger_sketchybar_refresh
+}
+
+# Fire the SketchyBar `agent_attention_changed` trigger after every runtime
+# pane-state write so the macOS bar refreshes working/idle transitions in
+# real time rather than waiting on its 5s poll. Best-effort: a missing
+# `sketchybar` binary is not an error and must not hold the hook open past
+# Codex's 5s timeout. Spec: specs/agent-events.md (Runtime pane state
+# producers — SketchyBar sink).
+trigger_sketchybar_refresh() {
+  command -v sketchybar >/dev/null 2>&1 || return 0
+  sketchybar --trigger agent_attention_changed >/dev/null 2>&1 || true
 }
 
 case "$hook_event" in

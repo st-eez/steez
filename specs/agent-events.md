@@ -439,6 +439,12 @@ The same file handles both events. Codex passes `hook_event_name` in the JSON pa
 
 The installer registers the same command (`bash $HOME/.codex/hooks/codex-stop.sh`) under both `hooks.Stop` and `hooks.UserPromptSubmit` in `~/.codex/hooks.json`.
 
+### SketchyBar sink
+
+Every runtime-state write also fires `sketchybar --trigger agent_attention_changed` best-effort so the macOS bar's agent cluster refreshes live working/idle/blocked transitions without waiting for its 5s poll. The SketchyBar subscription already exists for attention changes; reusing the same trigger keeps the bar event-driven with no additional subscription.
+
+The trigger fires from both `permission-state.sh` and `codex-stop.sh` on every canonical transition they publish — no trigger fires when the hook skips the runtime-state write (missing `TMUX_PANE`, `PreToolUse` for non-`AskUserQuestion` tools). A missing `sketchybar` binary is not an error and must not hold the hook open past its 5-second timeout.
+
 ### Failure handling
 
-Hook scripts swallow tmux errors (no tmux on `PATH`, no server running, unknown pane) silently. A tmux failure must never hold the hook open past its 5-second timeout. When the pane options cannot be written, consumers fall back to their pre-existing transcript / sidecar heuristics; evidence dispatch remains the fast-path for watch resolution.
+Hook scripts swallow tmux errors (no tmux on `PATH`, no server running, unknown pane) silently. A tmux failure must never hold the hook open past its 5-second timeout. When the pane options cannot be written, consumers fall back to their pre-existing transcript / sidecar heuristics; evidence dispatch remains the fast-path for watch resolution. SketchyBar refresh is also best-effort and treated the same way — a missing binary or failing trigger must not block the hook.

@@ -38,8 +38,10 @@ setup_hook_env() {
   setup_test_env
   RECORDER_LOG="$TEST_TMP/agent-eventsd-calls.log"
   TMUX_LOG="$TEST_TMP/tmux-calls.log"
+  SKETCHYBAR_LOG="$TEST_TMP/sketchybar-calls.log"
   : > "$RECORDER_LOG"
   : > "$TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
   mkdir -p "$HOME/.steez/bin" "$HOME/.steez/agent-state/claude"
   cat > "$HOME/.steez/bin/agent-eventsd" <<RECORDER_EOF
 #!/usr/bin/env bash
@@ -62,6 +64,19 @@ exit 0
 TMUX_EOF
   chmod +x "$MOCK_BIN/tmux"
   export TMUX_LOG
+
+  # SketchyBar recorder. The runtime-state publisher fires
+  # `sketchybar --trigger agent_attention_changed` after it writes
+  # pane options so the macOS bar refreshes without waiting for its
+  # 5s poll. The mock logs argv and exits 0 so the fire-and-forget
+  # call is observable.
+  cat > "$MOCK_BIN/sketchybar" <<SKETCHYBAR_EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$SKETCHYBAR_LOG'
+exit 0
+SKETCHYBAR_EOF
+  chmod +x "$MOCK_BIN/sketchybar"
+  export SKETCHYBAR_LOG
 }
 
 cleanup_hook_env() {
@@ -378,5 +393,137 @@ test_user_prompt_submit_without_tmux_pane_does_not_touch_tmux() {
 }
 run_test "UserPromptSubmit without TMUX_PANE does not touch @agent_runtime_state" \
   test_user_prompt_submit_without_tmux_pane_does_not_touch_tmux
+
+suite "permission-state.sh: SketchyBar runtime-state refresh trigger"
+
+# Every canonical runtime-state transition the hook publishes also fires
+# `sketchybar --trigger agent_attention_changed` best-effort, so the macOS
+# bar's agent cluster refreshes as soon as working/idle/blocked changes
+# instead of waiting for its 5s poll. The call must not block the hook's
+# 5s timeout. Events that do not publish runtime state (PreToolUse(Bash),
+# missing TMUX_PANE) must not fire the trigger either — otherwise SketchyBar
+# would refresh on lifecycle events that did not change pane state.
+# Spec: specs/agent-events.md (Runtime pane state producers — SketchyBar sink).
+
+test_stop_hook_triggers_sketchybar_runtime_refresh() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  TMUX_PANE="%42" run_hook_with "$(build_payload Stop)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "Stop triggers sketchybar agent_attention_changed refresh" \
+  test_stop_hook_triggers_sketchybar_runtime_refresh
+
+test_user_prompt_submit_triggers_sketchybar_runtime_refresh() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  TMUX_PANE="%21" run_hook_with "$(build_payload UserPromptSubmit)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "UserPromptSubmit triggers sketchybar agent_attention_changed refresh" \
+  test_user_prompt_submit_triggers_sketchybar_runtime_refresh
+
+test_permission_request_ask_user_question_triggers_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  TMUX_PANE="%7" run_hook_with "$(build_payload PermissionRequest AskUserQuestion)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "PermissionRequest AskUserQuestion triggers sketchybar refresh" \
+  test_permission_request_ask_user_question_triggers_sketchybar
+
+test_permission_request_other_tool_triggers_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  TMUX_PANE="%9" run_hook_with "$(build_payload PermissionRequest Bash)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "PermissionRequest non-AskUserQuestion triggers sketchybar refresh" \
+  test_permission_request_other_tool_triggers_sketchybar
+
+test_pre_tool_use_ask_user_question_triggers_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  TMUX_PANE="%11" run_hook_with "$(build_payload PreToolUse AskUserQuestion)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "PreToolUse AskUserQuestion triggers sketchybar refresh" \
+  test_pre_tool_use_ask_user_question_triggers_sketchybar
+
+test_pre_tool_use_other_tool_does_not_trigger_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  TMUX_PANE="%13" run_hook_with "$(build_payload PreToolUse Bash)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  [[ -z "$sb_logged" ]] || {
+    echo "    PreToolUse(Bash) must not trigger sketchybar (no runtime-state write), saw:"
+    printf '%s\n' "$sb_logged" | sed 's/^/      /'
+    exit 1
+  }
+}
+run_test "PreToolUse non-AskUserQuestion does not trigger sketchybar" \
+  test_pre_tool_use_other_tool_does_not_trigger_sketchybar
+
+test_stop_without_tmux_pane_does_not_trigger_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  unset TMUX_PANE
+  run_hook_with "$(build_payload Stop)"
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  [[ -z "$sb_logged" ]] || {
+    echo "    Stop without TMUX_PANE must not trigger sketchybar, saw:"
+    printf '%s\n' "$sb_logged" | sed 's/^/      /'
+    exit 1
+  }
+}
+run_test "Stop without TMUX_PANE does not trigger sketchybar" \
+  test_stop_without_tmux_pane_does_not_trigger_sketchybar
+
+test_sketchybar_missing_does_not_break_hook() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  # Remove the sketchybar mock so `command -v sketchybar` fails. The hook
+  # must still publish runtime state without erroring out — macOS-bar
+  # refresh is best-effort. A missing binary cannot be allowed to hold
+  # the hook open past its 5s timeout or break Claude's own lifecycle.
+  rm -f "$MOCK_BIN/sketchybar"
+
+  local rc=0
+  TMUX_PANE="%42" run_hook_with "$(build_payload Stop)" || rc=$?
+  assert_eq 0 "$rc"
+
+  local tmux_logged
+  tmux_logged=$(cat "$TMUX_LOG")
+  assert_contains "$tmux_logged" "set-option -p -t %42 @agent_runtime_state idle"
+}
+run_test "sketchybar missing from PATH does not break runtime-state publish" \
+  test_sketchybar_missing_does_not_break_hook
 
 report

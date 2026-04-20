@@ -27,8 +27,10 @@ setup_hook_env() {
   setup_test_env
   RECORDER_LOG="$TEST_TMP/agent-eventsd-calls.log"
   TMUX_LOG="$TEST_TMP/tmux-calls.log"
+  SKETCHYBAR_LOG="$TEST_TMP/sketchybar-calls.log"
   : > "$RECORDER_LOG"
   : > "$TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
   mkdir -p "$HOME/.steez/bin"
   cat > "$HOME/.steez/bin/agent-eventsd" <<RECORDER_EOF
 #!/usr/bin/env bash
@@ -44,6 +46,14 @@ exit 0
 TMUX_EOF
   chmod +x "$MOCK_BIN/tmux"
   export TMUX_LOG
+
+  cat > "$MOCK_BIN/sketchybar" <<SKETCHYBAR_EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> '$SKETCHYBAR_LOG'
+exit 0
+SKETCHYBAR_EOF
+  chmod +x "$MOCK_BIN/sketchybar"
+  export SKETCHYBAR_LOG
 }
 
 cleanup_hook_env() {
@@ -229,5 +239,120 @@ test_user_prompt_submit_without_tmux_pane_does_not_touch_tmux() {
 }
 run_test "UserPromptSubmit without TMUX_PANE skips tmux writes" \
   test_user_prompt_submit_without_tmux_pane_does_not_touch_tmux
+
+suite "codex-stop.sh: SketchyBar runtime-state refresh trigger"
+
+# Both Codex hook events publish runtime state (Stop -> idle,
+# UserPromptSubmit -> working lease). Each publication fires
+# `sketchybar --trigger agent_attention_changed` best-effort so the
+# macOS bar reflects live state without waiting for its 5s poll.
+# Events that skip the runtime-state write (missing TMUX_PANE) must
+# not fire the trigger either.
+
+test_codex_stop_triggers_sketchybar_runtime_refresh() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  local payload
+  payload=$(jq -cn '{session_id:"s", hook_event_name:"Stop"}')
+  TMUX_PANE="%42" run_hook_with "$payload" >/dev/null
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "Stop triggers sketchybar agent_attention_changed refresh" \
+  test_codex_stop_triggers_sketchybar_runtime_refresh
+
+test_codex_legacy_stop_payload_triggers_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  # Legacy payload shape (no hook_event_name) still follows the Stop
+  # branch, so the macOS-bar refresh must fire.
+  local payload
+  payload=$(jq -cn '{}')
+  TMUX_PANE="%43" run_hook_with "$payload" >/dev/null
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "legacy Stop payload (no hook_event_name) triggers sketchybar refresh" \
+  test_codex_legacy_stop_payload_triggers_sketchybar
+
+test_codex_user_prompt_submit_triggers_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  local payload
+  payload=$(jq -cn '{hook_event_name:"UserPromptSubmit"}')
+  TMUX_PANE="%77" run_hook_with "$payload" >/dev/null
+
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  assert_contains "$sb_logged" "--trigger agent_attention_changed"
+}
+run_test "UserPromptSubmit triggers sketchybar agent_attention_changed refresh" \
+  test_codex_user_prompt_submit_triggers_sketchybar
+
+test_codex_stop_without_tmux_pane_does_not_trigger_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  unset TMUX_PANE
+  local payload
+  payload=$(jq -cn '{hook_event_name:"Stop"}')
+  run_hook_with "$payload" >/dev/null || true
+
+  wait_no_dispatch
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  [[ -z "$sb_logged" ]] || {
+    echo "    Stop w/o TMUX_PANE triggered sketchybar: $sb_logged"
+    exit 1
+  }
+}
+run_test "Stop without TMUX_PANE does not trigger sketchybar" \
+  test_codex_stop_without_tmux_pane_does_not_trigger_sketchybar
+
+test_codex_user_prompt_submit_without_tmux_pane_does_not_trigger_sketchybar() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  unset TMUX_PANE
+  local payload
+  payload=$(jq -cn '{hook_event_name:"UserPromptSubmit"}')
+  run_hook_with "$payload" >/dev/null || true
+
+  wait_no_dispatch
+  local sb_logged
+  sb_logged=$(cat "$SKETCHYBAR_LOG")
+  [[ -z "$sb_logged" ]] || {
+    echo "    UserPromptSubmit w/o TMUX_PANE triggered sketchybar: $sb_logged"
+    exit 1
+  }
+}
+run_test "UserPromptSubmit without TMUX_PANE does not trigger sketchybar" \
+  test_codex_user_prompt_submit_without_tmux_pane_does_not_trigger_sketchybar
+
+test_codex_sketchybar_missing_does_not_break_hook() {
+  setup_hook_env
+  trap cleanup_hook_env EXIT
+
+  rm -f "$MOCK_BIN/sketchybar"
+
+  local payload out rc=0
+  payload=$(jq -cn '{hook_event_name:"UserPromptSubmit"}')
+  out=$(TMUX_PANE="%78" run_hook_with "$payload") || rc=$?
+  assert_eq 0 "$rc"
+  assert_eq '{"continue":true}' "$out"
+
+  local tmux_logged
+  tmux_logged=$(cat "$TMUX_LOG")
+  assert_contains "$tmux_logged" "set-option -p -t %78 @agent_runtime_state working"
+}
+run_test "sketchybar missing from PATH does not break codex runtime-state publish" \
+  test_codex_sketchybar_missing_does_not_break_hook
 
 report
