@@ -45,6 +45,28 @@ _eventsd_pane_key() {
   printf '%s' "${raw//[^a-zA-Z0-9]/_}"
 }
 
+# _eventsd_atomic_write <target> <content>
+# Write <content> to <target> atomically: stage to a sibling temp file,
+# then rename onto <target>. Readers see either the prior complete file
+# or the new complete file — never a truncated view. A crash between
+# stage and rename leaves the prior value intact; the stranded temp
+# file is cleanup debt, not a correctness hazard.
+#
+# Callers must have ensured dirname <target> exists.
+#
+# _eventsd_test_hook_post_stage is a test seam invoked between stage
+# and rename. Production never defines it.
+_eventsd_atomic_write() {
+  local target="$1" content="$2"
+  local tmp
+  tmp=$(mktemp "${target}.XXXXXX") || return 1
+  printf '%s' "$content" > "$tmp" || { rm -f "$tmp"; return 1; }
+  if declare -F _eventsd_test_hook_post_stage >/dev/null 2>&1; then
+    _eventsd_test_hook_post_stage "$target" "$tmp"
+  fi
+  mv -f "$tmp" "$target"
+}
+
 # seq_next <pane> — assign the next monotonic seq for <pane> and
 # print it. Counter is independent per pane. First call returns 1.
 seq_next() {
@@ -60,7 +82,7 @@ seq_next() {
     cur=0
   fi
   next=$((cur + 1))
-  printf '%s' "$next" > "$file"
+  _eventsd_atomic_write "$file" "$next"
   printf '%s' "$next"
 }
 
@@ -154,7 +176,7 @@ _eventsd_record_attention() {
      + (if $transcript_path != "" then {transcript_path: $transcript_path} else {} end)
      + (if $transcript_cursor != "" then {transcript_cursor: ($transcript_cursor | tonumber)} else {} end)
      + (if $detail != "" then {detail: $detail} else {} end)')
-  printf '%s\n' "$rec" > "$file"
+  _eventsd_atomic_write "$file" "${rec}"$'\n'
 }
 
 _eventsd_buffer_evidence() {
@@ -373,10 +395,10 @@ watch_get_draining() {
 }
 
 # _eventsd_write_record <watch_id> <json>
-# Overwrites the on-disk record file for a watch.
+# Overwrites the on-disk record file for a watch via temp+rename.
 _eventsd_write_record() {
   local wid="$1" json="$2"
-  printf '%s\n' "$json" > "$(_eventsd_watch_file "$wid")"
+  _eventsd_atomic_write "$(_eventsd_watch_file "$wid")" "${json}"$'\n'
 }
 
 # watch_arm — promote a pending watch to armed (spec: watch.start).

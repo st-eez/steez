@@ -1920,4 +1920,117 @@ JSONL
 }
 run_test "resolve persists recent terminal reason for the pane" test_resolve_persists_recent_attention_evidence
 
+# ----- atomic writes (U1) -----
+#
+# seq, attention, and watch record writes must be temp+rename so a
+# racing reader never sees a truncated/empty file and a crash between
+# stage and rename leaves the prior value intact. Evidence buffer and
+# draining-ledger writes stay append-only.
+
+suite "atomic writes (U1)"
+
+_u1_inode() {
+  # macOS stat vs Linux stat.
+  stat -f '%i' "$1" 2>/dev/null || stat -c '%i' "$1" 2>/dev/null
+}
+
+test_atomic_writer_never_yields_partial() {
+  # 200 rewrites on the same watch_id: every read parses cleanly and
+  # every write produces a fresh inode (temp+rename). Direct truncate
+  # fails the inode check on iteration 2.
+  declare -F _eventsd_write_record _eventsd_watch_file >/dev/null \
+    || { echo "    missing atomic-writer surface"; return 1; }
+  local wid="u1-write-record" file i prev_inode="" cur_inode rec parsed
+  mkdir -p "$_EVENTSD_STATE_DIR/watches"
+  file=$(_eventsd_watch_file "$wid")
+  for i in $(seq 1 200); do
+    rec=$(jq -cn --argjson i "$i" '{watch_id:"u1-write-record",state:"pending",seq:$i}')
+    _eventsd_write_record "$wid" "$rec" || { echo "    write $i failed"; return 1; }
+    parsed=$(jq -r .seq < "$file" 2>/dev/null) || { echo "    parse failed at iter $i"; return 1; }
+    assert_eq "$i" "$parsed" || return 1
+    cur_inode=$(_u1_inode "$file")
+    [[ -n "$cur_inode" ]] || { echo "    could not stat $file at iter $i"; return 1; }
+    if [[ -n "$prev_inode" ]]; then
+      [[ "$prev_inode" != "$cur_inode" ]] || {
+        echo "    inode unchanged between writes (iter $i): $cur_inode"
+        echo "    _eventsd_write_record must use temp+rename (U1)"
+        return 1
+      }
+    fi
+    prev_inode="$cur_inode"
+  done
+}
+run_test "atomic writer never yields partial and rotates inode per write" test_atomic_writer_never_yields_partial
+
+test_attention_record_uses_rename() {
+  # 50× rapid _eventsd_record_attention: each call must replace the
+  # file via rename (distinct inode) and yield parseable JSON.
+  declare -F _eventsd_record_attention _eventsd_attention_file >/dev/null \
+    || { echo "    missing attention-writer surface"; return 1; }
+  local pane="%u1att" file i prev_inode="" cur_inode parsed
+  file=$(_eventsd_attention_file "$pane")
+  for i in $(seq 1 50); do
+    EVENTSD_NOW_MS=$((1000 + i)) _eventsd_record_attention "$pane" "blocked:permission" \
+      || { echo "    record $i failed"; return 1; }
+    parsed=$(jq -r .observed_at_ms < "$file" 2>/dev/null) \
+      || { echo "    parse failed at iter $i"; return 1; }
+    assert_eq "$((1000 + i))" "$parsed" || return 1
+    cur_inode=$(_u1_inode "$file")
+    [[ -n "$cur_inode" ]] || { echo "    could not stat $file at iter $i"; return 1; }
+    if [[ -n "$prev_inode" ]]; then
+      [[ "$prev_inode" != "$cur_inode" ]] || {
+        echo "    inode unchanged between writes (iter $i): $cur_inode"
+        echo "    _eventsd_record_attention must use temp+rename (U1)"
+        return 1
+      }
+    fi
+    prev_inode="$cur_inode"
+  done
+}
+run_test "attention record uses rename (inode rotates per write)" test_attention_record_uses_rename
+
+test_seq_next_atomic_under_sigkill() {
+  # Simulate SIGKILL between stage and rename: the seq file must still
+  # read the previous value, never empty/corrupt. The test drives this
+  # through a post-stage hook function that self-kills the subshell
+  # before the rename can run. Direct printf > file has no stage step,
+  # so the file writes "2" directly and the assertion fails.
+  declare -F seq_next _eventsd_pane_key >/dev/null \
+    || { echo "    missing seq surface"; return 1; }
+  local pane="%u1sig" file first killed_val
+  mkdir -p "$_EVENTSD_STATE_DIR/seq"
+  first=$(seq_next "$pane") || return 1
+  assert_eq 1 "$first" || return 1
+  file="$_EVENTSD_STATE_DIR/seq/$(_eventsd_pane_key "$pane")"
+  [[ -f "$file" ]] || { echo "    seq file missing after first write"; return 1; }
+  (
+    _eventsd_test_hook_post_stage() { kill -KILL "$BASHPID"; }
+    seq_next "$pane" >/dev/null 2>&1
+  ) &
+  wait "$!" 2>/dev/null || true
+  killed_val=$(cat "$file" 2>/dev/null || true)
+  assert_eq 1 "$killed_val" || return 1
+}
+run_test "seq_next atomic under SIGKILL between stage and rename" test_seq_next_atomic_under_sigkill
+
+test_append_callsites_still_append() {
+  # Guard against accidental conversion of append-only writers to
+  # truncate+rename during U1. Two calls must leave two lines.
+  declare -F _eventsd_buffer_evidence _eventsd_add_draining \
+    _eventsd_buffer_file _eventsd_draining_file >/dev/null \
+    || { echo "    missing append surface"; return 1; }
+  local wid="u1-append-wid" pane="%u1append" buf_file drain_file lines
+  _eventsd_buffer_evidence "$wid" 1 "working" 0 "" 0 "" || return 1
+  _eventsd_buffer_evidence "$wid" 2 "working" 0 "" 0 "" || return 1
+  buf_file=$(_eventsd_buffer_file "$wid")
+  lines=$(wc -l < "$buf_file" | tr -d ' ')
+  assert_eq 2 "$lines" || return 1
+  _eventsd_add_draining "$pane" "wid-a" || return 1
+  _eventsd_add_draining "$pane" "wid-b" || return 1
+  drain_file=$(_eventsd_draining_file "$pane")
+  lines=$(wc -l < "$drain_file" | tr -d ' ')
+  assert_eq 2 "$lines" || return 1
+}
+run_test "append callsites still append (buffer, draining)" test_append_callsites_still_append
+
 report
