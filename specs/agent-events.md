@@ -332,6 +332,26 @@ reads `spawner_pane` from disk before unlinking so the refresh pass can
 target the correct window even when the caller has no live watch context
 (explicit remove, pane already reaped, daemon restart recovery).
 
+### Spawner-scoped ack
+
+`agent-eventsd ack --spawner <pane>` is the first-class read path for
+sticky spawner-scoped attention. A single call retires every attention
+record whose stored `spawner_pane` matches `<pane>` and then runs one
+refresh pass against that spawner's window so the tmux option unsets
+and SketchyBar re-reads.
+
+The ack is scoped to the addressed spawner. Attention records
+belonging to any other spawner — including records whose
+`spawner_pane` is empty or missing — must be left on disk and the
+refresh pass must target only the acknowledged window. A single
+refresh at the end is load-bearing: per-record clears would fire one
+tmux set-option and one SketchyBar trigger per worker, flapping state
+for no behavior gain.
+
+Missing `--spawner` is a usage error (exit 2). Ack on a spawner with
+no matching records is a no-op for on-disk state but still runs the
+refresh pass so the sink stays consistent.
+
 ## Default timers
 
 These defaults are part of v1:

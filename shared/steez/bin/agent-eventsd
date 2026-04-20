@@ -260,6 +260,35 @@ _eventsd_trigger_sketchybar_attention_changed() {
   sketchybar --trigger agent_attention_changed >/dev/null 2>&1 || true
 }
 
+# _eventsd_ack_spawner_attention <spawner_pane>
+# First-class ack/read path for sticky spawner-scoped attention.
+# Retires every attention record whose stored `spawner_pane` matches
+# <spawner_pane> by unlinking it from disk, then runs a single refresh
+# pass so the tmux window option unsets and SketchyBar re-reads. Other
+# spawners' records are untouched: the scan filters on the stored
+# `spawner_pane` field, and the refresh pass targets the acknowledged
+# window only.
+#
+# A single refresh at the end is load-bearing. Calling clear-per-file
+# would fire one tmux set-option and one sketchybar trigger per worker,
+# producing flapping state and N extra subprocess spawns for no
+# behavior gain.
+_eventsd_ack_spawner_attention() {
+  local spawner="$1"
+  [[ -n "$spawner" ]] || { echo "_eventsd_ack_spawner_attention: missing spawner" >&2; return 2; }
+  local dir="$_EVENTSD_STATE_DIR/attention"
+  if [[ -d "$dir" ]]; then
+    local f sp
+    for f in "$dir"/*.json; do
+      [[ -f "$f" ]] || continue
+      sp=$(jq -r '.spawner_pane // empty' "$f" 2>/dev/null) || continue
+      [[ "$sp" == "$spawner" ]] || continue
+      rm -f "$f"
+    done
+  fi
+  _eventsd_refresh_spawner_sink "$spawner"
+}
+
 _eventsd_buffer_evidence() {
   local wid="$1" seq="$2" state="$3"
   local has_cursor="$4" cursor="$5" has_hash="$6" hash="$7"
@@ -1211,6 +1240,23 @@ _cmd_remove() {
   watch_remove "$1"
 }
 
+# _cmd_ack — retire every attention record for --spawner and refresh
+# the spawner-scoped tmux sink + SketchyBar. Does not auto-start the
+# service: the ack operates directly on the on-disk attention store and
+# the tmux/SketchyBar side-effects are synchronous. A user focusing the
+# window wants the dot to clear now, not after a daemon spin-up.
+_cmd_ack() {
+  local spawner=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --spawner) spawner="$2"; shift 2 ;;
+      *) echo "agent-eventsd ack: unknown flag: $1" >&2; return 2 ;;
+    esac
+  done
+  [[ -n "$spawner" ]] || { echo "agent-eventsd ack: missing --spawner" >&2; return 2; }
+  _eventsd_ack_spawner_attention "$spawner"
+}
+
 _cmd_list() {
   watch_list
 }
@@ -1523,6 +1569,8 @@ Commands:
   start     --pane P --watch-id WID [--start-seq N]
             Promote pending → armed (watch.start).
   remove    <pane>      Close the live watch on <pane>.
+  ack       --spawner S Retire every attention record for spawner S
+                        and refresh the tmux + SketchyBar sink.
   list                  Print every watch record as JSONL.
   status                Primary-path health probe.
   serve                 Run the long-lived service loop (auto-started).
@@ -1539,6 +1587,7 @@ _eventsd_main() {
     prearm)          _cmd_prearm "$@" ;;
     start)           _cmd_start "$@" ;;
     remove)          _cmd_remove "$@" ;;
+    ack)             _cmd_ack "$@" ;;
     list)            _cmd_list "$@" ;;
     status)          _cmd_status "$@" ;;
     serve)           _cmd_serve "$@" ;;

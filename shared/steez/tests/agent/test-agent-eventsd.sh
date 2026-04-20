@@ -2446,4 +2446,152 @@ test_spawner_sink_unsets_when_last_attention_record_cleared() {
 run_test "spawner sink unsets when last attention record cleared" \
   test_spawner_sink_unsets_when_last_attention_record_cleared
 
+# ----- spawner-scoped ack (steez-ht6x) -----
+#
+# Acknowledging attention on a spawner window is a first-class operation:
+# a single call retires every sticky attention record whose
+# `spawner_pane` matches the focused window and refreshes the tmux +
+# SketchyBar sink so the dot clears. Crucially, the ack must stay
+# confined to the addressed spawner — attention records belonging to any
+# other spawner survive untouched.
+
+suite "spawner-scoped attention ack (steez-ht6x)"
+
+test_ack_retires_all_records_for_spawner_and_unsets_sink() {
+  # Two workers share a spawner. An ack for that spawner must unlink
+  # both records and then unset the aggregate tmux option once (only one
+  # set-option -u call against the spawner's window). SketchyBar must
+  # still fire so the macOS bar refreshes immediately.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local wa="%340" wb="%341" spawner="%342" fa fb
+  fa=$(_eventsd_attention_file "$wa")
+  fb=$(_eventsd_attention_file "$wb")
+  mkdir -p "$(dirname "$fa")"
+  _eventsd_record_attention "$wa" "blocked:question" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  _eventsd_record_attention "$wb" "idle" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  declare -F _eventsd_ack_spawner_attention >/dev/null \
+    || { echo "    missing _eventsd_ack_spawner_attention surface"; return 1; }
+  _eventsd_ack_spawner_attention "$spawner" || return 1
+  [[ -e "$fa" ]] && { echo "    ack did not unlink worker A: $fa"; return 1; }
+  [[ -e "$fb" ]] && { echo "    ack did not unlink worker B: $fb"; return 1; }
+  grep -Fq "set-option -w -u -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    ack did not unset the spawner sink:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+  grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
+    echo "    ack did not trigger sketchybar refresh:"
+    sed 's/^/      /' "$SKETCHYBAR_LOG"
+    return 1
+  }
+}
+run_test "ack retires all records for spawner and unsets sink" \
+  test_ack_retires_all_records_for_spawner_and_unsets_sink
+
+test_ack_leaves_other_spawners_records_untouched() {
+  # The ack is spawner-scoped. An attention record for a DIFFERENT
+  # spawner must not be unlinked, and the unrelated spawner's tmux
+  # window option must not be touched by this call.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local wa="%343" wb="%344" sa="%345" sb="%346" fa fb
+  fa=$(_eventsd_attention_file "$wa")
+  fb=$(_eventsd_attention_file "$wb")
+  mkdir -p "$(dirname "$fa")"
+  _eventsd_record_attention "$wa" "blocked:question" "eventsd" "" "" "" "$sa" \
+    >/dev/null || return 1
+  _eventsd_record_attention "$wb" "blocked:permission" "eventsd" "" "" "" "$sb" \
+    >/dev/null || return 1
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  _eventsd_ack_spawner_attention "$sa" || return 1
+  [[ -e "$fa" ]] && { echo "    ack did not unlink worker A under $sa: $fa"; return 1; }
+  [[ -e "$fb" ]] || { echo "    ack wrongly unlinked worker B under $sb: $fb"; return 1; }
+  if grep -Fq "@agent_monitor_attention" "$MOCK_TMUX_LOG" \
+     | grep -Fv -- "-t $sa "; then
+    :
+  fi
+  if grep -E -- "-t $sb([[:space:]]|$)" "$MOCK_TMUX_LOG" >/dev/null; then
+    echo "    ack touched the sibling spawner's tmux option:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  fi
+}
+run_test "ack leaves other spawners' records untouched" \
+  test_ack_leaves_other_spawners_records_untouched
+
+test_ack_with_no_matching_records_still_refreshes_sink() {
+  # An ack on a spawner that has no attention records is a harmless
+  # no-op for on-disk state, but it must still refresh the sink so the
+  # tmux option clears (idempotent) and SketchyBar fires.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local spawner="%347"
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  _eventsd_ack_spawner_attention "$spawner" || return 1
+  grep -Fq "set-option -w -u -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    empty ack did not unset the spawner sink:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+  grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
+    echo "    empty ack did not trigger sketchybar refresh:"
+    sed 's/^/      /' "$SKETCHYBAR_LOG"
+    return 1
+  }
+}
+run_test "ack with no matching records still refreshes sink" \
+  test_ack_with_no_matching_records_still_refreshes_sink
+
+test_ack_cli_drives_ack_end_to_end() {
+  # The CLI entrypoint `agent-eventsd ack --spawner <pane>` must drive
+  # the same behavior end-to-end: unlink matching records and refresh
+  # the spawner sink. Proves there is a callable command (not only an
+  # internal helper) for the focus-ack path.
+  _u3_install_sink_mocks
+  _u3_reset_attention_dir
+  local worker="%348" spawner="%349" file rc=0 out
+  file=$(_eventsd_attention_file "$worker")
+  mkdir -p "$(dirname "$file")"
+  _eventsd_record_attention "$worker" "blocked:question" "eventsd" "" "" "" "$spawner" \
+    >/dev/null || return 1
+  : > "$MOCK_TMUX_LOG"
+  : > "$SKETCHYBAR_LOG"
+  out=$(EVENTSD_REQUIRE_EXPLICIT_SERVICE=1 "$EVENTSD" ack --spawner "$spawner" 2>&1) || rc=$?
+  [[ "$rc" -eq 0 ]] || {
+    echo "    ack CLI exited $rc:"
+    printf '%s\n' "$out" | sed 's/^/      /'
+    return 1
+  }
+  [[ -e "$file" ]] && { echo "    ack CLI did not unlink record: $file"; return 1; }
+  grep -Fq "set-option -w -u -t $spawner @agent_monitor_attention" "$MOCK_TMUX_LOG" || {
+    echo "    ack CLI did not unset the spawner sink:"
+    sed 's/^/      /' "$MOCK_TMUX_LOG"
+    return 1
+  }
+  grep -Fq -- "--trigger agent_attention_changed" "$SKETCHYBAR_LOG" || {
+    echo "    ack CLI did not trigger sketchybar refresh:"
+    sed 's/^/      /' "$SKETCHYBAR_LOG"
+    return 1
+  }
+}
+run_test "ack CLI drives ack end-to-end" test_ack_cli_drives_ack_end_to_end
+
+test_ack_cli_rejects_missing_spawner_flag() {
+  # Missing --spawner is a usage error. Exit code 2 matches every other
+  # flag-validation path in the daemon (prearm/start/evidence).
+  local rc=0 out
+  out=$(EVENTSD_REQUIRE_EXPLICIT_SERVICE=1 "$EVENTSD" ack 2>&1) || rc=$?
+  assert_exit_code 2 "$rc" || { printf '%s\n' "$out" | sed 's/^/      /'; return 1; }
+  assert_contains "$out" "--spawner" || return 1
+}
+run_test "ack CLI rejects missing --spawner flag" \
+  test_ack_cli_rejects_missing_spawner_flag
+
 report
