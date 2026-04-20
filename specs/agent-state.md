@@ -79,11 +79,13 @@ With `--explain`, single-pane mode returns:
 ```
 
 `--explain` is the post-attention inspection surface. It prefers fresh
-attention records written by `agent-eventsd`, then falls back to transcript
-artifacts, then to the existing screen/title/default heuristics. Fresh
-attention records are keyed by pane and accepted only when their
-session/transcript identity still matches the pane and the transcript cursor
-has not advanced past the recorded attention point.
+attention records written by `agent-eventsd`, then the runtime pane state
+published by hooks, then falls back to transcript artifacts, then to the
+existing screen/title/default heuristics. Fresh attention records are keyed
+by pane and accepted only when their session/transcript identity still
+matches the pane and the transcript cursor has not advanced past the
+recorded attention point. Runtime pane state has no per-tool detail —
+attention records remain the source for that.
 
 Post-attention flow is narrow on purpose:
 
@@ -122,6 +124,21 @@ Recognized agents: `ren`, `ren-codex`, `claude`, `codex`. Anything else returns 
 
 `detect_state` determines the agent's current state using a layered strategy, from highest to lowest confidence:
 
+### Layer 0: Runtime pane state
+
+`read_runtime_state` reads the worker pane's tmux options before any other layer runs. Hooks publish canonical state on every lifecycle event (Claude `permission-state.sh`, Codex `codex-stop.sh`); see `specs/agent-events.md` §Runtime pane state producers for the full event → state table.
+
+- `@agent_runtime_state` — one of `working`, `blocked:question`, `blocked:permission`, `idle`. When set and fresh, returned as the pane state directly. No transcript / screen scan runs.
+- `@agent_runtime_expires_ms` — optional wall-clock epoch (ms). Set only for transient `working` leases written on `UserPromptSubmit`. Sticky states (`blocked:*`, `idle`) explicitly unset this option so previous-turn lease data cannot leak forward.
+
+Freshness:
+
+- Sticky states (no `@agent_runtime_expires_ms`) are always fresh — they persist until the next hook overwrites them.
+- Working leases are fresh while `now_ms <= @agent_runtime_expires_ms`. Past expiry, the layer is treated as missing and the artifact / screen / heuristic layers run.
+- Hook failures (no tmux on PATH, server down, unknown pane) leave the option absent, which is also "missing" and falls through.
+
+This layer is the primary live-status oracle. Sticky blocked states win while present (the hook is the canonical signal even if a transcript tool_use looks "working"). The transient working lease bridges the gap between the user pressing Enter and the first transcript write — without it, callers like SketchyBar see stale `idle` for the lease window.
+
 ### Layer 1: Transcript parsing
 
 `artifact_state` reads the JSONL transcript and walks it backward:
@@ -155,12 +172,9 @@ When the transcript is unavailable or returns `working`, the visible pane conten
 - `"Enter to select"` + `"Chat about this"` -> `blocked:question`
 - `"Esc to cancel"` / `"esc to cancel"` -> `blocked:unknown`
 
-Screen-detected blocked states override transcript-reported `working` when the UI is ahead of the transcript.
+Screen-detected blocked states override transcript-reported `working` when the UI is ahead of the transcript. This refinement only fires when no runtime pane state was published — Layer 0 already handled the case when the hook is wired up.
 
-For `codex` / `ren-codex`, a braille-spinner pane title also overrides
-artifact `idle`. This covers the live-render gap where the transcript still
-ends on the prior turn's `task_complete` while the next turn is already
-rendering and the title spinner has flipped live.
+The Codex-specific spinner-over-idle override has been removed. The runtime-pane-state layer (`UserPromptSubmit` working lease, `Stop` idle write) is now the primary live oracle for Codex panes. Codex panes without the hook installed report whatever the transcript says.
 
 ### Layer 3: Title character heuristic
 
@@ -210,9 +224,10 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 1. A single `ps` snapshot is taken per invocation and reused for all panes (`_init` / `_PS`). No TOCTOU between agent detection and state detection within a single call.
 2. `--all` excludes `unknown` agents — only recognized AI agents appear.
 3. `--layout` filters to windows containing at least one agent pane.
-4. Screen-detected blocked states override transcript-reported `working`, but never override transcript-reported terminal states (`idle`, `blocked:*`) except for the Codex-family spinner gap above (`idle` + live braille title -> `working`).
-5. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
-6. `--explain` returns the pane's current best-known reason with a concise `summary`, optional `detail`, and a `source` of `eventsd`, `artifacts`, `screen`, `title`, or `default`.
+4. A fresh runtime pane state (Layer 0) is the primary live oracle — when present it wins over every other layer. Sticky `blocked:*` / `idle` states have no expiry and persist until the next hook fires; working leases honor `@agent_runtime_expires_ms` and are ignored past expiry.
+5. Screen-detected blocked states override transcript-reported `working` only on the fallback path (no runtime pane state). They never override transcript-reported terminal states (`idle`, `blocked:*`).
+6. Single-pane mode exits non-zero if the pane is not a recognized agent. `--all` mode silently skips non-agent panes.
+7. `--explain` returns the pane's current best-known reason with a concise `summary`, optional `detail`, and a `source` of `eventsd`, `runtime`, `artifacts`, `screen`, `title`, or `default`. Eventsd attention records still beat runtime when fresh because they carry per-tool detail.
 
 ## Error Handling
 

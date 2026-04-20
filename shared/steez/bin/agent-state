@@ -8,6 +8,40 @@ _init() {
   _PS=$(ps -eo pid,ppid,command 2>/dev/null) || true
 }
 
+now_ms() {
+  local v
+  v=$(date +%s%3N 2>/dev/null || true)
+  case "$v" in
+    ''|*[!0-9]*) python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null || printf '0' ;;
+    *) printf '%s' "$v" ;;
+  esac
+}
+
+# Read canonical pane state published by the agent hooks. Returns the
+# value of @agent_runtime_state on stdout when fresh, exits non-zero
+# (empty stdout) otherwise. Sticky states (blocked:*, idle) carry no
+# @agent_runtime_expires_ms and never self-expire — the next hook
+# replaces them. Working leases set @agent_runtime_expires_ms to bound
+# how long the lease can bridge transcript lag; past expiry, the layer
+# is treated as missing so artifact / screen layers win. Spec:
+# specs/agent-events.md (Runtime pane state producers).
+read_runtime_state() {
+  local pane_id="$1"
+  [[ -n "$pane_id" ]] || return 1
+
+  local state expires now
+  state=$(tmux show-options -pv -t "$pane_id" @agent_runtime_state 2>/dev/null) || return 1
+  [[ -n "$state" ]] || return 1
+
+  if expires=$(tmux show-options -pv -t "$pane_id" @agent_runtime_expires_ms 2>/dev/null) && [[ -n "$expires" ]]; then
+    now=$(now_ms)
+    [[ -n "$now" && "$now" != "0" ]] || return 1
+    (( now <= expires )) || return 1
+  fi
+
+  printf '%s' "$state"
+}
+
 usage() {
   cat <<'EOF'
 Usage: agent-state <pane> [--read] [--detail] [--explain]
@@ -397,7 +431,7 @@ PYEOF
 }
 
 detect_state() {
-  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}" session_id="${5:-}"
+  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}" session_id="${5:-}" runtime_state="${6:-}"
 
   local name prefix
   if [[ "$title" == *" "* ]]; then
@@ -408,21 +442,27 @@ detect_state() {
     prefix=0
   fi
 
+  # Layer 0 — runtime pane state. Hooks publish canonical state on every
+  # lifecycle transition (Claude permission-state.sh, Codex codex-stop.sh).
+  # When fresh it is the primary live oracle: sticky blocked/idle states
+  # win while present; the working lease bridges the gap between
+  # UserPromptSubmit and the first transcript write. Caller is responsible
+  # for the freshness check (read_runtime_state); an expired lease arrives
+  # here as the empty string. Spec: specs/agent-state.md §State Detection.
+  if [[ -n "$runtime_state" ]]; then
+    echo "$runtime_state|$name"
+    return
+  fi
+
   local state blocked_from_screen=""
   blocked_from_screen=$(screen_blocked_state "$agent" "$tail_text")
 
   if state_from_artifacts=$(artifact_state "$agent" "$transcript" "$session_id" 2>/dev/null); then
     # Screen-detected blocked states refine transcript "working" because
-    # permission prompts aren't recorded in the transcript. For Codex-family
-    # panes, a live braille spinner in the title also refines stale artifact
-    # idle: the transcript can still end on task_complete while the next turn
-    # is already rendering.
+    # permission prompts aren't always recorded in the transcript on the
+    # fallback path (no hook → no runtime state → screen scrape).
     if [[ "$state_from_artifacts" == "working" && -n "$blocked_from_screen" ]]; then
       state="$blocked_from_screen"
-    elif [[ "$state_from_artifacts" == "idle" ]] \
-      && [[ "$agent" == "codex" || "$agent" == "ren-codex" ]] \
-      && (( prefix >= 0x2800 && prefix <= 0x28FF )); then
-      state="working"
     else
       state="$state_from_artifacts"
     fi
@@ -750,7 +790,17 @@ PYEOF
 }
 
 fallback_explanation() {
-  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}" session_id="${5:-}"
+  local title="$1" tail_text="$2" agent="$3" transcript="${4:-}" session_id="${5:-}" runtime_state="${6:-}"
+
+  # Layer 0 — runtime pane state (see detect_state). When the hook has
+  # published a fresh canonical state, surface it directly with
+  # `source: runtime`. The runtime layer carries no per-tool detail —
+  # eventsd attention records remain the source for that.
+  if [[ -n "$runtime_state" ]]; then
+    build_explanation_json "$runtime_state" "$(state_summary "$runtime_state")" "" "runtime"
+    return
+  fi
+
   local blocked_from_screen=""
   blocked_from_screen=$(screen_blocked_state "$agent" "$tail_text")
 
@@ -852,8 +902,11 @@ explain_pane() {
     session_id=$(transcript_session_id "$transcript" 2>/dev/null) || true
   fi
 
+  local runtime_state=""
+  runtime_state=$(read_runtime_state "$pane_id" 2>/dev/null) || true
+
   local fallback attention explanation
-  fallback=$(fallback_explanation "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id")
+  fallback=$(fallback_explanation "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id" "$runtime_state")
   attention=$(read_attention_record "$pane_id") || true
 
   if [[ -n "$attention" ]] && attention_record_is_fresh "$attention" "$session_id" "$transcript"; then
@@ -952,8 +1005,11 @@ check_pane() {
     session_id=$(transcript_session_id "$transcript_for_state" 2>/dev/null) || true
   fi
 
+  local runtime_state=""
+  runtime_state=$(read_runtime_state "$pane_id" 2>/dev/null) || true
+
   local result
-  result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript_for_state" "$session_id")
+  result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript_for_state" "$session_id" "$runtime_state")
   local state="${result%%|*}"
   local name="${result#*|}"
 
@@ -984,8 +1040,10 @@ render_layout() {
       if [[ -z "$session_id" && -n "$transcript" ]]; then
         session_id=$(transcript_session_id "$transcript" 2>/dev/null) || true
       fi
+      local runtime_state=""
+      runtime_state=$(read_runtime_state "$pane_id" 2>/dev/null) || true
       local result
-      result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id")
+      result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id" "$runtime_state")
       state="${result%%|*}"
       name="${result#*|}"
     else
@@ -1251,7 +1309,9 @@ main() {
           if [[ -z "$session_id" && -n "$transcript" ]]; then
             session_id=$(transcript_session_id "$transcript" 2>/dev/null) || true
           fi
-          result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id")
+          local runtime_state=""
+          runtime_state=$(read_runtime_state "$pane_id" 2>/dev/null) || true
+          result=$(detect_state "$pane_title" "$tail_text" "$agent" "$transcript" "$session_id" "$runtime_state")
           state="${result%%|*}"
           name="${result#*|}"
           printf '%s\t%s\t%s\t%s\n' "$pane_id" "$agent" "$state" "$name"

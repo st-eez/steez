@@ -184,20 +184,160 @@ JSONL
 }
 run_test "screen blocked overrides artifact working" test_artifact_working_screen_blocked
 
-test_codex_artifact_idle_title_spinner_overrides_to_working() {
-  # Real-world bug: Codex can leave the transcript on the prior turn's
-  # task_complete while the next turn is already rendering and the pane title
-  # spinner is live. SketchyBar should show working, not stale idle.
-  local f="$TEST_TMP/codex-idle-spinner.jsonl"
+test_codex_artifact_idle_no_runtime_state_reports_idle() {
+  # Locked design: the Codex-specific spinner-over-idle override is removed
+  # in favor of the runtime-pane-state layer. Without runtime state, an
+  # artifact-idle transcript reports idle even when a braille spinner is
+  # still in the title. Live-working coverage now flows through
+  # @agent_runtime_state (working lease) written by the Codex hook.
+  local f="$TEST_TMP/codex-idle-no-runtime.jsonl"
   cat > "$f" <<'JSONL'
 {"type":"event_msg","payload":{"type":"task_complete"}}
 JSONL
   local result
-  result=$(detect_state $'\xe2\xa0\xb8 steez' "" "codex" "$f" "")
+  result=$(detect_state $'\xe2\xa0\xb8 steez' "" "codex" "$f" "" "")
+  assert_eq "idle" "${result%%|*}"
+}
+run_test "codex artifact idle without runtime state reports idle" \
+  test_codex_artifact_idle_no_runtime_state_reports_idle
+
+# ----- detect_state (runtime pane state precedence) -----
+#
+# `agent-state` reads tmux pane options @agent_runtime_state and optional
+# @agent_runtime_expires_ms before falling through to transcript / screen
+# heuristics. Hooks (Claude permission-state.sh, Codex codex-stop.sh) write
+# canonical states onto the worker pane on every lifecycle event. The
+# runtime-state layer is the primary live oracle: sticky blocked/idle
+# states win while present, fresh working leases bridge transcript lag,
+# and expired leases are ignored.
+
+suite "detect_state (runtime pane state)"
+
+test_runtime_state_working_overrides_artifact_idle() {
+  # UserPromptSubmit hook wrote a fresh working lease. Transcript still
+  # ends on the prior turn's end_turn, but the lease must win so the
+  # pane is reported live-working (bridging transcript lag).
+  local f="$TEST_TMP/rs-working-vs-idle.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}
+JSONL
+  local result
+  result=$(detect_state "" "" "claude" "$f" "" "working")
   assert_eq "working" "${result%%|*}"
 }
-run_test "codex title spinner overrides stale artifact idle" \
-  test_codex_artifact_idle_title_spinner_overrides_to_working
+run_test "runtime working overrides artifact idle" \
+  test_runtime_state_working_overrides_artifact_idle
+
+test_runtime_state_blocked_question_wins_over_artifact_working() {
+  # Sticky blocked:question from PreToolUse(AskUserQuestion). The transcript
+  # may still show an unresolved tool_use as working; the hook is the
+  # canonical signal and must win.
+  local f="$TEST_TMP/rs-blocked-q.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"user","message":{"role":"user","content":"do it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"ls"}}]}}
+JSONL
+  local result
+  result=$(detect_state "" "" "claude" "$f" "" "blocked:question")
+  assert_eq "blocked:question" "${result%%|*}"
+}
+run_test "runtime blocked:question wins over artifact working" \
+  test_runtime_state_blocked_question_wins_over_artifact_working
+
+test_runtime_state_blocked_permission_wins_over_artifact_working() {
+  # Sticky blocked:permission from PermissionRequest. Transcript shows a
+  # working tool_use; runtime state must win.
+  local f="$TEST_TMP/rs-blocked-p.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"user","message":{"role":"user","content":"do it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"git push"}}]}}
+JSONL
+  local result
+  result=$(detect_state "" "" "claude" "$f" "" "blocked:permission")
+  assert_eq "blocked:permission" "${result%%|*}"
+}
+run_test "runtime blocked:permission wins over artifact working" \
+  test_runtime_state_blocked_permission_wins_over_artifact_working
+
+test_runtime_state_idle_wins_over_codex_braille_title() {
+  # The locked design removes the codex-specific spinner-over-idle
+  # override. With runtime state explicitly idle (Stop hook), the pane
+  # MUST report idle even when the title still carries a braille spinner.
+  local f="$TEST_TMP/rs-idle-codex.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_complete"}}
+JSONL
+  local result
+  result=$(detect_state $'\xe2\xa0\xb8 steez' "" "codex" "$f" "" "idle")
+  assert_eq "idle" "${result%%|*}"
+}
+run_test "runtime idle wins over codex braille title" \
+  test_runtime_state_idle_wins_over_codex_braille_title
+
+test_runtime_state_missing_falls_through_to_artifact() {
+  # No runtime state: existing artifact/screen/heuristic precedence applies.
+  local f="$TEST_TMP/rs-missing.jsonl"
+  cat > "$f" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}
+JSONL
+  local result
+  result=$(detect_state "" "" "claude" "$f" "" "")
+  assert_eq "idle" "${result%%|*}"
+}
+run_test "missing runtime state falls through to artifact" \
+  test_runtime_state_missing_falls_through_to_artifact
+
+# ----- read_runtime_state (freshness gate) -----
+
+suite "read_runtime_state"
+
+test_read_runtime_state_sticky_returns_state() {
+  # Sticky states (blocked:*, idle) have no @agent_runtime_expires_ms and
+  # never expire on their own.
+  set_mock_tmux_var "%30" "@agent_runtime_state" "blocked:permission"
+  local out
+  out=$(read_runtime_state "%30")
+  assert_eq "blocked:permission" "$out"
+}
+run_test "read_runtime_state returns sticky state without lease" \
+  test_read_runtime_state_sticky_returns_state
+
+test_read_runtime_state_fresh_lease_returns_state() {
+  # Fresh working lease: expires_ms is in the future.
+  local future
+  future=$(python3 -c 'import time; print(int(time.time()*1000)+60000)')
+  set_mock_tmux_var "%31" "@agent_runtime_state" "working"
+  set_mock_tmux_var "%31" "@agent_runtime_expires_ms" "$future"
+  local out
+  out=$(read_runtime_state "%31")
+  assert_eq "working" "$out"
+}
+run_test "read_runtime_state returns working with fresh lease" \
+  test_read_runtime_state_fresh_lease_returns_state
+
+test_read_runtime_state_expired_lease_is_ignored() {
+  # Expired lease: caller treats this as missing runtime state.
+  local past
+  past=$(python3 -c 'import time; print(int(time.time()*1000)-60000)')
+  set_mock_tmux_var "%32" "@agent_runtime_state" "working"
+  set_mock_tmux_var "%32" "@agent_runtime_expires_ms" "$past"
+  local out rc=0
+  out=$(read_runtime_state "%32") || rc=$?
+  assert_exit_code "1" "$rc"
+  assert_eq "" "$out"
+}
+run_test "read_runtime_state ignores expired lease" \
+  test_read_runtime_state_expired_lease_is_ignored
+
+test_read_runtime_state_missing_pane_option_returns_empty() {
+  # No @agent_runtime_state on the pane → missing.
+  local out rc=0
+  out=$(read_runtime_state "%33") || rc=$?
+  assert_exit_code "1" "$rc"
+  assert_eq "" "$out"
+}
+run_test "read_runtime_state exits non-zero when pane has no runtime state" \
+  test_read_runtime_state_missing_pane_option_returns_empty
 
 # ----- codex live-state classification (steez-80p4.1) -----
 #
@@ -479,6 +619,73 @@ test_layout_renders() {
 }
 run_test "--layout renders pane id + agent" test_layout_renders
 
+# ----- public modes (runtime pane state) -----
+#
+# End-to-end coverage for the runtime-pane-state layer through the binary:
+# `tmux show-options` is the source of truth, freshness is enforced by
+# @agent_runtime_expires_ms, and the layer wins over transcript artifacts.
+
+suite "public modes (runtime pane state)"
+
+_RS_STICKY_TRANSCRIPT="$TEST_TMP/rs-sticky-e2e.jsonl"
+cat > "$_RS_STICKY_TRANSCRIPT" <<'JSONL'
+{"type":"user","message":{"role":"user","content":"do it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{"command":"git push"}}]}}
+JSONL
+mock_pane "%40" "1001" "rs-sticky" "/tmp/rs-sticky"
+set_mock_tmux_capture "%40" ""
+set_mock_tmux_var "%40" "@session_id" "sess-rs-sticky"
+set_mock_tmux_var "%40" "@transcript_path" "$_RS_STICKY_TRANSCRIPT"
+set_mock_tmux_var "%40" "@agent_runtime_state" "blocked:permission"
+
+test_runtime_state_sticky_blocked_wins_e2e() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%40")
+  assert_json_field "$out" ".state" "blocked:permission"
+}
+run_test "sticky runtime blocked wins through the binary" \
+  test_runtime_state_sticky_blocked_wins_e2e
+
+_RS_LEASE_TRANSCRIPT="$TEST_TMP/rs-lease-e2e.jsonl"
+cat > "$_RS_LEASE_TRANSCRIPT" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}
+JSONL
+_RS_LEASE_FUTURE=$(python3 -c 'import time; print(int(time.time()*1000)+60000)')
+mock_pane "%41" "1001" "rs-lease" "/tmp/rs-lease"
+set_mock_tmux_capture "%41" ""
+set_mock_tmux_var "%41" "@session_id" "sess-rs-lease"
+set_mock_tmux_var "%41" "@transcript_path" "$_RS_LEASE_TRANSCRIPT"
+set_mock_tmux_var "%41" "@agent_runtime_state" "working"
+set_mock_tmux_var "%41" "@agent_runtime_expires_ms" "$_RS_LEASE_FUTURE"
+
+test_runtime_state_fresh_working_lease_bridges_transcript_lag_e2e() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%41")
+  assert_json_field "$out" ".state" "working"
+}
+run_test "fresh runtime working lease bridges transcript idle" \
+  test_runtime_state_fresh_working_lease_bridges_transcript_lag_e2e
+
+_RS_EXPIRED_TRANSCRIPT="$TEST_TMP/rs-expired-e2e.jsonl"
+cat > "$_RS_EXPIRED_TRANSCRIPT" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}
+JSONL
+_RS_EXPIRED_PAST=$(python3 -c 'import time; print(int(time.time()*1000)-60000)')
+mock_pane "%42" "1001" "rs-expired" "/tmp/rs-expired"
+set_mock_tmux_capture "%42" ""
+set_mock_tmux_var "%42" "@session_id" "sess-rs-expired"
+set_mock_tmux_var "%42" "@transcript_path" "$_RS_EXPIRED_TRANSCRIPT"
+set_mock_tmux_var "%42" "@agent_runtime_state" "working"
+set_mock_tmux_var "%42" "@agent_runtime_expires_ms" "$_RS_EXPIRED_PAST"
+
+test_runtime_state_expired_lease_falls_through_e2e() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%42")
+  assert_json_field "$out" ".state" "idle"
+}
+run_test "expired runtime working lease is ignored" \
+  test_runtime_state_expired_lease_falls_through_e2e
+
 # ----- agent-state --explain (S3) -----
 
 suite "agent-state --explain"
@@ -487,7 +694,8 @@ export MOCK_PS_OUTPUT="  PID  PPID COMMAND
 1001 1000 /usr/local/bin/claude --flag
 1010 1000 /usr/local/bin/claude --flag
 1011 1000 /usr/local/bin/claude --flag
-1012 1000 /usr/local/bin/claude --flag"
+1012 1000 /usr/local/bin/claude --flag
+1013 1000 /usr/local/bin/claude --flag"
 
 _EXPLAIN_EVENTSD_TRANSCRIPT="$TEST_TMP/explain-eventsd.jsonl"
 cat > "$_EXPLAIN_EVENTSD_TRANSCRIPT" <<'JSONL'
@@ -559,6 +767,30 @@ test_explain_ignores_stale_recent_evidence() {
   assert_json_field "$out" ".source" "artifacts"
 }
 run_test "agent-state --explain ignores stale recent evidence" test_explain_ignores_stale_recent_evidence
+
+# --explain reads runtime pane state when no eventsd attention record is
+# present, surfacing the hook-published canonical state with source=runtime.
+_EXPLAIN_RUNTIME_TRANSCRIPT="$TEST_TMP/explain-runtime.jsonl"
+cat > "$_EXPLAIN_RUNTIME_TRANSCRIPT" <<'JSONL'
+{"type":"user","message":{"role":"user","content":"do a thing"}}
+JSONL
+mock_pane "%13" "1013" "Explain runtime" "/tmp/explain-runtime"
+set_mock_tmux_capture "%13" ""
+set_mock_tmux_var "%13" "@session_id" "sess-explain-runtime"
+set_mock_tmux_var "%13" "@transcript_path" "$_EXPLAIN_RUNTIME_TRANSCRIPT"
+set_mock_tmux_var "%13" "@agent_runtime_state" "blocked:permission"
+
+test_explain_uses_runtime_pane_state() {
+  local out
+  out=$("$BIN_DIR/agent-state" "%13" --explain)
+  assert_json_field "$out" ".pane" "%13"
+  assert_json_field "$out" ".agent" "claude"
+  assert_json_field "$out" ".state" "blocked:permission"
+  assert_json_field "$out" ".summary" "waiting for permission approval"
+  assert_json_field "$out" ".source" "runtime"
+}
+run_test "agent-state --explain reads runtime pane state when no attention record exists" \
+  test_explain_uses_runtime_pane_state
 
 # ----- agent-history blocked inspection -----
 #
