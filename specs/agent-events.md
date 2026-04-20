@@ -397,7 +397,7 @@ These rules apply on top of the TDD relationship above. They exist because steez
 
 `shared/steez/hooks/codex-stop.sh` is the Codex-side fast-evidence producer for turn-end. It reads the Codex `Stop` payload on stdin, takes the transcript byte-count as the `transcript_cursor`, shells out `agent-eventsd evidence --pane "$TMUX_PANE" --state idle --transcript-cursor <cursor>` fire-and-forget, and returns `{"continue":true}` on stdout so Codex accepts the hook result. The resolver then closes the live watch on the pane through the canonical evidence path.
 
-The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and does **not** mutate `~/.codex/config.toml` or `~/.codex/hooks.json`. Users opt in by setting `[features] codex_hooks = true` in `~/.codex/config.toml` and registering a `Stop` hook group with no matcher override that points at `bash $HOME/.codex/hooks/codex-stop.sh`. The same file is also the Codex `UserPromptSubmit` hook — see "Runtime pane state producers" below — so it must be registered under both `hooks.Stop` and `hooks.UserPromptSubmit` in `~/.codex/hooks.json`.
+The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and auto-registers the `SessionStart`, `Stop`, and `UserPromptSubmit` groups in `~/.codex/hooks.json` on every `steez install`. Registration is idempotent, preserves any existing user hook groups, and only appends the steez-managed commands when they are missing. `~/.codex/config.toml` is **not** mutated; users must still opt in by setting `[features] codex_hooks = true` there.
 
 Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state`. That path stays armed while reconcile keeps proving `working`, and only resolves when reconcile proves a terminal state or the bounded `blocked:unknown` fallback takes over.
 
@@ -424,7 +424,7 @@ Event → runtime state table. Events not listed here produce no pane-option wri
 | `PermissionRequest` | `AskUserQuestion` | `blocked:question`     | unset                               |
 | `PermissionRequest` | other tools       | `blocked:permission`   | unset                               |
 
-The same hook file must be registered in `~/.claude/settings.json` under `hooks.PreToolUse` (matcher `AskUserQuestion`), `hooks.PermissionRequest` (matcher `*`), `hooks.Stop` (matcher `*`), and `hooks.UserPromptSubmit`.
+The same hook file must be registered in `~/.claude/settings.json` under `hooks.PreToolUse` (matcher `AskUserQuestion`), `hooks.PermissionRequest` (matcher `*`), `hooks.Stop` (matcher `*`), and `hooks.UserPromptSubmit`. The installer writes these groups automatically during `steez install`, alongside `hooks.PostToolUse` (matcher `Skill`, `steez-skill-analytics.sh`) and `hooks.SessionStart` (matcher `""`, `steez-session-start.sh`). Registration is idempotent and preserves existing user hooks.
 
 Fast-path evidence dispatch (`agent-eventsd evidence`) is unchanged — `UserPromptSubmit` does **not** dispatch evidence because `working` is never a resolution.
 
@@ -437,7 +437,7 @@ The same file handles both events. Codex passes `hook_event_name` in the JSON pa
 | `UserPromptSubmit`   | `working`              | now + `WORKING_LEASE_MS` (10000 ms) | —                                     |
 | `Stop` (or missing)  | `idle`                 | unset                               | `agent-eventsd evidence --state idle` |
 
-Users register the same command (`bash $HOME/.codex/hooks/codex-stop.sh`) under both `hooks.Stop` and `hooks.UserPromptSubmit` in `~/.codex/hooks.json`.
+The installer registers the same command (`bash $HOME/.codex/hooks/codex-stop.sh`) under both `hooks.Stop` and `hooks.UserPromptSubmit` in `~/.codex/hooks.json`.
 
 ### Failure handling
 

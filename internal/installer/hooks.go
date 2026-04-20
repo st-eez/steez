@@ -1,11 +1,54 @@
 package installer
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// requiredHook is one steez-managed hook group that must exist in a
+// Claude or Codex hooks config.
+//
+// event is the top-level key inside "hooks" (PreToolUse, Stop, ...).
+// matcher is the group matcher. An empty string means "no matcher key" and is
+// the shape Claude/Codex expect for events that don't branch on a matcher
+// (UserPromptSubmit and Codex Stop).
+// matcherRequired is true when the registration must live under that exact
+// matcher; false when any matcher is acceptable (we still emit with the
+// canonical matcher value for new writes).
+type requiredHook struct {
+	event           string
+	matcher         string
+	matcherRequired bool
+	command         string
+	timeout         int
+}
+
+func claudeRequiredHooks() []requiredHook {
+	const permission = "$HOME/.claude/hooks/steez-permission-state.sh"
+	const skill = "$HOME/.claude/hooks/steez-skill-analytics.sh"
+	const session = "$HOME/.claude/hooks/steez-session-start.sh"
+	return []requiredHook{
+		{event: "PreToolUse", matcher: "AskUserQuestion", matcherRequired: true, command: permission, timeout: 5},
+		{event: "PermissionRequest", matcher: "*", matcherRequired: true, command: permission, timeout: 5},
+		{event: "Stop", matcher: "*", matcherRequired: true, command: permission, timeout: 5},
+		{event: "UserPromptSubmit", matcher: "", matcherRequired: false, command: permission, timeout: 5},
+		{event: "PostToolUse", matcher: "Skill", matcherRequired: true, command: skill, timeout: 5},
+		{event: "SessionStart", matcher: "", matcherRequired: true, command: session},
+	}
+}
+
+func codexRequiredHooks() []requiredHook {
+	const sessionStart = "bash $HOME/.codex/hooks/session-start.sh"
+	const stop = "bash $HOME/.codex/hooks/codex-stop.sh"
+	return []requiredHook{
+		{event: "SessionStart", matcher: "startup|resume", matcherRequired: true, command: sessionStart, timeout: 5},
+		{event: "Stop", matcher: "", matcherRequired: false, command: stop, timeout: 5},
+		{event: "UserPromptSubmit", matcher: "", matcherRequired: false, command: stop, timeout: 5},
+	}
+}
 
 type claudeSettings struct {
 	Hooks map[string][]claudeHookGroup `json:"hooks"`
@@ -195,6 +238,153 @@ func printSessionStartHookSnippet() {
 	fmt.Println(`        }`)
 	fmt.Println(`      ]`)
 	fmt.Println(`    }`)
+}
+
+// EnsureHookRegistration edits ~/.claude/settings.json in place so every
+// steez-managed Claude hook group is registered. Existing hook groups and
+// unknown top-level keys are preserved. Returns changed=true only when the
+// file content was rewritten.
+func EnsureHookRegistration(home string) (bool, error) {
+	path := filepath.Join(home, ".claude", "settings.json")
+	return ensureHookFile(path, claudeRequiredHooks())
+}
+
+// EnsureCodexHookRegistration does the same for ~/.codex/hooks.json.
+func EnsureCodexHookRegistration(home string) (bool, error) {
+	path := filepath.Join(home, ".codex", "hooks.json")
+	return ensureHookFile(path, codexRequiredHooks())
+}
+
+func ensureHookFile(path string, required []requiredHook) (bool, error) {
+	root, err := readHookRoot(path)
+	if err != nil {
+		return false, err
+	}
+
+	hooks := rootHooksMap(root)
+	changed := false
+	for _, req := range required {
+		if ensureHookGroup(hooks, req) {
+			changed = true
+		}
+	}
+
+	if !changed {
+		return false, nil
+	}
+
+	root["hooks"] = hooks
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, fmt.Errorf("create hook config dir: %w", err)
+	}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(root); err != nil {
+		return false, fmt.Errorf("encode hook config: %w", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		return false, fmt.Errorf("write hook config: %w", err)
+	}
+	return true, nil
+}
+
+func readHookRoot(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]any{}, nil
+		}
+		return nil, fmt.Errorf("read hook config: %w", err)
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]any{}, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse hook config %s: %w", path, err)
+	}
+	if root == nil {
+		root = map[string]any{}
+	}
+	return root, nil
+}
+
+func rootHooksMap(root map[string]any) map[string]any {
+	raw, ok := root["hooks"]
+	if !ok || raw == nil {
+		return map[string]any{}
+	}
+	if m, ok := raw.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
+}
+
+func ensureHookGroup(hooks map[string]any, req requiredHook) bool {
+	groupsRaw, ok := hooks[req.event].([]any)
+	if !ok {
+		groupsRaw = nil
+	}
+
+	if hookGroupsContain(groupsRaw, req) {
+		return false
+	}
+
+	newGroup := map[string]any{
+		"hooks": []any{newHookEntry(req)},
+	}
+	if req.matcher != "" || req.matcherRequired {
+		newGroup["matcher"] = req.matcher
+	}
+
+	groupsRaw = append(groupsRaw, newGroup)
+	hooks[req.event] = groupsRaw
+	return true
+}
+
+func hookGroupsContain(groups []any, req requiredHook) bool {
+	for _, g := range groups {
+		group, ok := g.(map[string]any)
+		if !ok {
+			continue
+		}
+		if req.matcherRequired {
+			m, _ := group["matcher"].(string)
+			if m != req.matcher {
+				continue
+			}
+		}
+		inner, ok := group["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, h := range inner {
+			hook, ok := h.(map[string]any)
+			if !ok {
+				continue
+			}
+			cmd, _ := hook["command"].(string)
+			if cmd == req.command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func newHookEntry(req requiredHook) map[string]any {
+	entry := map[string]any{
+		"type":    "command",
+		"command": req.command,
+	}
+	if req.timeout > 0 {
+		entry["timeout"] = req.timeout
+	}
+	return entry
 }
 
 func printCodexHookSnippet() {

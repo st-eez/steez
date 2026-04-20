@@ -268,10 +268,21 @@ func cmdInstall(args []string) int {
 		fmt.Println(" Run steez doctor to verify.")
 	}
 
-	// Check if settings.json needs the Skill hook registered.
+	// Auto-register steez-managed hook groups. This preserves any existing
+	// user hooks and is idempotent on re-run.
 	if !*dryRun {
-		installer.CheckHookRegistration(home)
-		installer.CheckCodexHookRegistration(home)
+		if changed, err := installer.EnsureHookRegistration(home); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not update ~/.claude/settings.json: %v\n", err)
+			installer.CheckHookRegistration(home)
+		} else if changed {
+			fmt.Println("Updated ~/.claude/settings.json with missing steez hook groups.")
+		}
+		if changed, err := installer.EnsureCodexHookRegistration(home); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not update ~/.codex/hooks.json: %v\n", err)
+			installer.CheckCodexHookRegistration(home)
+		} else if changed {
+			fmt.Println("Updated ~/.codex/hooks.json with missing steez hook groups.")
+		}
 	}
 
 	// Build browse binary if requested.
