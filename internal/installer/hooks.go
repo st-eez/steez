@@ -58,7 +58,8 @@ func CheckHookRegistration(home string) {
 
 	if !(hasHookRegistration(settings.Hooks["PreToolUse"], "AskUserQuestion", permissionHook) &&
 		hasHookRegistration(settings.Hooks["PermissionRequest"], "*", permissionHook) &&
-		hasHookRegistration(settings.Hooks["Stop"], "*", permissionHook)) {
+		hasHookRegistration(settings.Hooks["Stop"], "*", permissionHook) &&
+		hasHookRegistrationAnyMatcher(settings.Hooks["UserPromptSubmit"], permissionHook)) {
 		printPermissionStateHookSnippet()
 	}
 
@@ -90,7 +91,8 @@ func CheckCodexHookRegistration(home string) {
 	)
 
 	if hasHookRegistration(hooks.Hooks["SessionStart"], "startup|resume", sessionHook) &&
-		hasHookRegistrationAnyMatcher(hooks.Hooks["Stop"], stopHook) {
+		hasHookRegistrationAnyMatcher(hooks.Hooks["Stop"], stopHook) &&
+		hasHookRegistrationAnyMatcher(hooks.Hooks["UserPromptSubmit"], stopHook) {
 		return
 	}
 
@@ -125,8 +127,9 @@ func hasHookRegistrationAnyMatcher(groups []claudeHookGroup, command string) boo
 func printPermissionStateHookSnippet() {
 	fmt.Println()
 	fmt.Println("  Hook registration needed. Add steez-permission-state.sh to ~/.claude/settings.json")
-	fmt.Println("  under hooks.PreToolUse with matcher AskUserQuestion, then under")
-	fmt.Println("  hooks.PermissionRequest and hooks.Stop with matcher *:")
+	fmt.Println("  under hooks.PreToolUse with matcher AskUserQuestion, under")
+	fmt.Println("  hooks.PermissionRequest and hooks.Stop with matcher *, and under")
+	fmt.Println("  hooks.UserPromptSubmit:")
 	fmt.Println()
 	fmt.Println(`    {`)
 	fmt.Println(`      "matcher": "AskUserQuestion",`)
@@ -141,6 +144,16 @@ func printPermissionStateHookSnippet() {
 	fmt.Println()
 	fmt.Println(`    {`)
 	fmt.Println(`      "matcher": "*",`)
+	fmt.Println(`      "hooks": [`)
+	fmt.Println(`        {`)
+	fmt.Println(`          "type": "command",`)
+	fmt.Println(`          "command": "$HOME/.claude/hooks/steez-permission-state.sh",`)
+	fmt.Println(`          "timeout": 5`)
+	fmt.Println(`        }`)
+	fmt.Println(`      ]`)
+	fmt.Println(`    }`)
+	fmt.Println()
+	fmt.Println(`    {`)
 	fmt.Println(`      "hooks": [`)
 	fmt.Println(`        {`)
 	fmt.Println(`          "type": "command",`)
@@ -192,7 +205,7 @@ func printCodexHookSnippet() {
 	fmt.Println(`    codex_hooks = true`)
 	fmt.Println()
 	fmt.Println("  Then ensure ~/.codex/hooks.json includes these groups under")
-	fmt.Println("  hooks.SessionStart and hooks.Stop:")
+	fmt.Println("  hooks.SessionStart, hooks.Stop, and hooks.UserPromptSubmit:")
 	fmt.Println()
 	fmt.Println(`    {`)
 	fmt.Println(`      "matcher": "startup|resume",`)
@@ -214,4 +227,8 @@ func printCodexHookSnippet() {
 	fmt.Println(`        }`)
 	fmt.Println(`      ]`)
 	fmt.Println(`    }`)
+	fmt.Println()
+	fmt.Println("  The same codex-stop.sh command must appear under both hooks.Stop and")
+	fmt.Println("  hooks.UserPromptSubmit so the hook can publish the working lease and")
+	fmt.Println("  the idle clear onto the pane.")
 }

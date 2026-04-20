@@ -397,6 +397,48 @@ These rules apply on top of the TDD relationship above. They exist because steez
 
 `shared/steez/hooks/codex-stop.sh` is the Codex-side fast-evidence producer for turn-end. It reads the Codex `Stop` payload on stdin, takes the transcript byte-count as the `transcript_cursor`, shells out `agent-eventsd evidence --pane "$TMUX_PANE" --state idle --transcript-cursor <cursor>` fire-and-forget, and returns `{"continue":true}` on stdout so Codex accepts the hook result. The resolver then closes the live watch on the pane through the canonical evidence path.
 
-The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and does **not** mutate `~/.codex/config.toml` or `~/.codex/hooks.json`. Users opt in by setting `[features] codex_hooks = true` in `~/.codex/config.toml` and registering a `Stop` hook group with no matcher override that points at `bash $HOME/.codex/hooks/codex-stop.sh`.
+The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and does **not** mutate `~/.codex/config.toml` or `~/.codex/hooks.json`. Users opt in by setting `[features] codex_hooks = true` in `~/.codex/config.toml` and registering a `Stop` hook group with no matcher override that points at `bash $HOME/.codex/hooks/codex-stop.sh`. The same file is also the Codex `UserPromptSubmit` hook — see "Runtime pane state producers" below — so it must be registered under both `hooks.Stop` and `hooks.UserPromptSubmit` in `~/.codex/hooks.json`.
 
 Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state`. That path stays armed while reconcile keeps proving `working`, and only resolves when reconcile proves a terminal state or the bounded `blocked:unknown` fallback takes over.
+
+## Runtime pane state producers
+
+Claude and Codex hooks publish canonical runtime state onto the worker pane via tmux pane options in addition to dispatching fast evidence. Consumers (e.g. `agent-state`) read these pane options to observe live state without scraping the transcript or walking Claude's JSONL sidecar. The store is the pane itself — no new filesystem sidecar bus is introduced.
+
+The shape on each worker pane is:
+
+- `@agent_runtime_state` — one of `working`, `blocked:question`, `blocked:permission`, `idle`. Always set when the hook fires on a canonical transition.
+- `@agent_runtime_expires_ms` — optional wall-clock epoch in milliseconds. Set only for transient leases (currently `working` on `UserPromptSubmit`); explicitly unset (`tmux set-option -u`) on sticky states (`blocked:*`, `idle`) so a previous turn's lease cannot leak forward.
+
+`Stop` is a turn boundary and MUST unset `@agent_runtime_expires_ms`. Writing `idle` without clearing the lease would leave stale timing data on a pane that is no longer working.
+
+### Claude (permission-state.sh)
+
+Event → runtime state table. Events not listed here produce no pane-option write.
+
+| `hook_event_name`   | `tool_name`       | `@agent_runtime_state` | `@agent_runtime_expires_ms`         |
+| ------------------- | ----------------- | ---------------------- | ----------------------------------- |
+| `UserPromptSubmit`  | —                 | `working`              | now + `WORKING_LEASE_MS` (10000 ms) |
+| `Stop`              | —                 | `idle`                 | unset                               |
+| `PreToolUse`        | `AskUserQuestion` | `blocked:question`     | unset                               |
+| `PermissionRequest` | `AskUserQuestion` | `blocked:question`     | unset                               |
+| `PermissionRequest` | other tools       | `blocked:permission`   | unset                               |
+
+The same hook file must be registered in `~/.claude/settings.json` under `hooks.PreToolUse` (matcher `AskUserQuestion`), `hooks.PermissionRequest` (matcher `*`), `hooks.Stop` (matcher `*`), and `hooks.UserPromptSubmit`.
+
+Fast-path evidence dispatch (`agent-eventsd evidence`) is unchanged — `UserPromptSubmit` does **not** dispatch evidence because `working` is never a resolution.
+
+### Codex (codex-stop.sh)
+
+The same file handles both events. Codex passes `hook_event_name` in the JSON payload; payloads that omit the field are treated as `Stop` to preserve the pre-branch registration shape.
+
+| `hook_event_name`    | `@agent_runtime_state` | `@agent_runtime_expires_ms`         | Fast evidence                         |
+| -------------------- | ---------------------- | ----------------------------------- | ------------------------------------- |
+| `UserPromptSubmit`   | `working`              | now + `WORKING_LEASE_MS` (10000 ms) | —                                     |
+| `Stop` (or missing)  | `idle`                 | unset                               | `agent-eventsd evidence --state idle` |
+
+Users register the same command (`bash $HOME/.codex/hooks/codex-stop.sh`) under both `hooks.Stop` and `hooks.UserPromptSubmit` in `~/.codex/hooks.json`.
+
+### Failure handling
+
+Hook scripts swallow tmux errors (no tmux on `PATH`, no server running, unknown pane) silently. A tmux failure must never hold the hook open past its 5-second timeout. When the pane options cannot be written, consumers fall back to their pre-existing transcript / sidecar heuristics; evidence dispatch remains the fast-path for watch resolution.

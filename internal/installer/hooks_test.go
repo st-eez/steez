@@ -89,7 +89,45 @@ func TestCheckCodexHookRegistration_WarnsWhenStopHookMissing(t *testing.T) {
 	}
 }
 
-func TestCheckCodexHookRegistration_SilencesGuidanceWhenSessionStartAndStopAreWired(t *testing.T) {
+func TestCheckCodexHookRegistration_SilencesGuidanceWhenSessionStartStopAndUserPromptSubmitAreWired(t *testing.T) {
+	home := t.TempDir()
+	writeCodexHooks(t, home, `{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {"type": "command", "command": "bash $HOME/.codex/hooks/session-start.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {"type": "command", "command": "bash $HOME/.codex/hooks/codex-stop.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {"type": "command", "command": "bash $HOME/.codex/hooks/codex-stop.sh", "timeout": 5}
+        ]
+      }
+    ]
+  }
+}`)
+
+	out := captureStdout(t, func() {
+		CheckCodexHookRegistration(home)
+	})
+
+	if strings.Contains(out, "codex-stop.sh") || strings.Contains(out, "session-start.sh") {
+		t.Fatalf("did not expect codex hook guidance, got %q", out)
+	}
+}
+
+func TestCheckCodexHookRegistration_WarnsWhenUserPromptSubmitHookMissing(t *testing.T) {
 	home := t.TempDir()
 	writeCodexHooks(t, home, `{
   "hooks": {
@@ -115,8 +153,11 @@ func TestCheckCodexHookRegistration_SilencesGuidanceWhenSessionStartAndStopAreWi
 		CheckCodexHookRegistration(home)
 	})
 
-	if strings.Contains(out, "codex-stop.sh") || strings.Contains(out, "session-start.sh") {
-		t.Fatalf("did not expect codex hook guidance, got %q", out)
+	if !strings.Contains(out, "codex-stop.sh") {
+		t.Fatalf("expected codex hook guidance when UserPromptSubmit is missing, got %q", out)
+	}
+	if !strings.Contains(out, "hooks.UserPromptSubmit") {
+		t.Fatalf("expected UserPromptSubmit-specific guidance, got %q", out)
 	}
 }
 
@@ -219,8 +260,70 @@ func TestCheckHookRegistration_WarnsWhenAskUserQuestionHookMissing(t *testing.T)
 	if !strings.Contains(out, "hooks.PermissionRequest and hooks.Stop") {
 		t.Fatalf("expected reduced hook guidance, got %q", out)
 	}
-	if strings.Contains(out, "PostToolUseFailure") || strings.Contains(out, "UserPromptSubmit") || strings.Contains(out, "SessionEnd") {
+	if !strings.Contains(out, "hooks.UserPromptSubmit") {
+		t.Fatalf("expected UserPromptSubmit registration guidance, got %q", out)
+	}
+	if strings.Contains(out, "PostToolUseFailure") || strings.Contains(out, "SessionEnd") {
 		t.Fatalf("did not expect legacy clear-hook guidance, got %q", out)
+	}
+}
+
+func TestCheckHookRegistration_WarnsWhenUserPromptSubmitHookMissing(t *testing.T) {
+	home := t.TempDir()
+	writeSettings(t, home, `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {"type": "command", "command": "$HOME/.claude/hooks/steez-skill-analytics.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {"type": "command", "command": "$HOME/.claude/hooks/steez-session-start.sh"}
+        ]
+      }
+    ]
+  }
+}`)
+
+	out := captureStdout(t, func() {
+		CheckHookRegistration(home)
+	})
+
+	if !strings.Contains(out, "steez-permission-state.sh") {
+		t.Fatalf("expected permission hook guidance when UserPromptSubmit is missing, got %q", out)
+	}
+	if !strings.Contains(out, "hooks.UserPromptSubmit") {
+		t.Fatalf("expected UserPromptSubmit-specific guidance, got %q", out)
 	}
 }
 
@@ -255,6 +358,13 @@ func TestCheckHookRegistration_SilencesPermissionGuidanceWhenMinimalStateHooksAr
     "Stop": [
       {
         "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
         "hooks": [
           {"type": "command", "command": "$HOME/.claude/hooks/steez-permission-state.sh", "timeout": 5}
         ]
