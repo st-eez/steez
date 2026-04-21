@@ -216,7 +216,7 @@ Live-resolving terminal states are:
 - `blocked:question`
 - `blocked:permission`
 
-`blocked:unknown` is a fuzzy inspector state. It must not resolve or self-clear a live watch on its own.
+`blocked:unknown` is a fuzzy inspector state. It must not resolve or self-clear a live watch on its own — not from fast evidence, not from degraded reconciliation, and not from the indeterminate-window diagnostic. It still exists as a canonical pane state for explain/debug surfaces (`agent-state <pane>`, attention records), and it may still appear as the recorded `resolved_state` on pane-close fallback where pane teardown is the terminal event, not `blocked:unknown` itself.
 
 ## Degraded fallback
 
@@ -228,13 +228,13 @@ In degraded mode the daemon must run `agent-state <pane> --detail` every `RECONC
 
 Deadman reconciliation uses the same canonical states and the same live-resolution rule as fast evidence. It is not a second state machine.
 
-If degraded reconciliation proves `working` or the fuzzy `blocked:unknown`, that is fresh liveness proof for the active watch only when the transcript cursor (byte length of `detail.transcript_path`) strictly advances over both the prearm cursor and the most recent reconcile cursor. A frozen worker returning the same cursor every reconcile is not liveness proof; the daemon must not refresh the deadman in that case. When the cursor does advance, the daemon must keep the watch armed, clear the degraded timer, and start any later timeout window from the next silence episode instead of the old one. Per-tick synthetic screen-hash tokens are not acceptable freshness signals on this branch. The `blocked:unknown` case is load-bearing (steez-ymcx): Claude's "Esc to cancel" working indicator is conservatively classified as `blocked:unknown` by the inspector, so a real working worker with an advancing transcript will reconcile as `blocked:unknown` every tick; without this rule the indeterminate timeout would mature to a spurious blocked:unknown and deliver while the worker was still producing output.
+If degraded reconciliation proves `working` or the fuzzy `blocked:unknown`, that is fresh liveness proof for the active watch only when the transcript cursor (byte length of `detail.transcript_path`) strictly advances over both the prearm cursor and the most recent reconcile cursor. A frozen worker returning the same cursor every reconcile is not liveness proof; the daemon must not refresh the deadman in that case. When the cursor does advance, the daemon must keep the watch armed, clear the degraded timer, and start any later timeout window from the next silence episode instead of the old one. Per-tick synthetic screen-hash tokens are not acceptable freshness signals on this branch. The `blocked:unknown` case is load-bearing (steez-ymcx): Claude's "Esc to cancel" working indicator is conservatively classified as `blocked:unknown` by the inspector, so a real working worker with an advancing transcript will reconcile as `blocked:unknown` every tick; without this rule the indeterminate window would spurious-log while the worker was still producing output.
 
 If degraded reconciliation proves a live-resolving terminal state, the watch resolves normally.
 
-If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state and without degraded reconciliation proving `working` or `blocked:unknown` with advancing cursor, the watch must resolve to `blocked:unknown` — but only if at least one reconcile in the episode returned non-empty inspector output. A degraded episode in which `agent-state` was silent for the whole window (zero observations) must keep the watch armed and keep reconciling; resolving to `blocked:unknown` without any observation would deliver a spurious notification while the real completion arrives later in silence. Inspector failures must be logged to stderr so the broken inspector is visible.
+If a degraded episode lasts `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal state and without degraded reconciliation proving `working` or `blocked:unknown` with advancing cursor, the daemon must keep the watch armed and log a single diagnostic line (pane id + watch id + "past indeterminate window, staying armed") per episode to stderr. The indeterminate window is a diagnostic threshold, not a timeout. A live watch must never be matured to terminal `blocked:unknown` by the degraded timer alone — that path was the source of steez-fyjy's false-attention regression, where the worker was still producing output at the inspector's fuzzy-classification threshold and the real Stop-hook idle ping arrived after the watch had already been drained. Only live-resolving terminal evidence (idle / blocked:question / blocked:permission), pane close, supersession, or explicit remove may retire a live watch. Inspector failures (empty agent-state output) must be logged to stderr so the broken inspector is visible.
 
-Returning to healthy clears the degraded timer. A later degraded episode starts a new timeout window.
+Returning to healthy clears the degraded timer and the indeterminate-logged flag. A later degraded episode starts a new window and may log its own diagnostic.
 
 ## Pane close and restart
 
@@ -244,7 +244,7 @@ On pane close:
 
 - a `pending` watch closes without delivery
 - an `armed` watch gets one final reconciliation from transcript data still newer than the prearm cursor
-- if that final reconciliation does not prove a terminal state, the watch resolves to `blocked:unknown`
+- if that final reconciliation does not prove a live-resolving terminal state, the watch resolves to `blocked:unknown` — pane close is itself the terminal event here, so this is not the degraded-timer path the steez-fyjy regression banned; the resolved state is recorded as `blocked:unknown` only because the inspector could not classify the pane at teardown, and the attention record exists for spawner inspection via `agent-state <pane> --explain`.
 - the armed-branch resolve writes a sticky attention record so the spawner-scoped tmux sink retains its badge after the worker pane disappears (see Recent attention evidence). Pane-close is not a turn boundary and must not unlink attention.
 - draining delivery continues against the spawner pane
 
@@ -359,7 +359,7 @@ These defaults are part of v1:
 - `PREARM_TIMEOUT_MS = 5000`
 - `RECONCILE_INTERVAL_MS = 5000`
 - `SILENCE_WINDOW_MS = 30000`
-- `INDETERMINATE_TIMEOUT_MS = 120000`
+- `INDETERMINATE_TIMEOUT_MS = 120000` (diagnostic threshold, not a resolution timeout — see Degraded fallback)
 - `MAX_DELIVERY_ATTEMPTS = 5`
 
 ## Daemon status
@@ -397,7 +397,7 @@ Keep the acceptance set short and derived from behavior:
 2. Evidence at or before the prearm baseline is stale. Manual add on an already-idle or already-blocked pane does not resolve without fresh evidence.
 3. A new `turn.prearm` supersedes an unresolved live watch without blocking the new turn.
 4. One `watch_id` produces one logical notification across duplicate evidence, retries, and restart recovery.
-5. Degraded watches reconcile through `agent-state`, stay armed when reconcile keeps proving `working`, and only fall back to `blocked:unknown` when reconcile cannot prove the pane is still working.
+5. Degraded watches reconcile through `agent-state` and stay armed while reconcile keeps proving `working` (or the fuzzy `blocked:unknown` with an advancing cursor). A degraded episode that runs past `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal ping must stay armed and log a single diagnostic line per episode — the daemon must not mature the live watch to terminal `blocked:unknown` (steez-fyjy).
 6. Restart recovery preserves the same `watch_id` and bounded delivery attempts.
 7. `agent-eventsd status` returns `ready` only when the service process is running and responsive; killing the service flips the result to `unavailable`.
 
@@ -411,7 +411,7 @@ These rules apply on top of the TDD relationship above. They exist because steez
 
 3. **Harness isolation.** The test harness MUST NOT be the origin of the evidence the service under test is meant to observe. Evidence feeding `agent-eventsd` on a primary-path test MUST come from an independent producer — a real agent process invoked via `$PATH`, a standalone fs-event emitter running out-of-process from the test driver, or a fixture process that is not the SUT's runtime and is not the test orchestrator. A single process that both drives the SUT lifecycle and emits the events the SUT is meant to observe does not satisfy this rule. (Failure mode: steez-401's harness was simultaneously the orchestrator that started/stopped the SUT and the producer that emitted the evidence. Nothing structurally distinguished harness-generated events from real production events, so green tests proved nothing about the real runtime path.)
 
-4. **Fallback companion tests.** Every fallback path named in this spec — degraded reconciliation via `agent-state`, `pending_timeout`, `INDETERMINATE_TIMEOUT_MS` resolution to `blocked:unknown`, delivery retry, and restart recovery — MUST ship with a companion test that explicitly disables or blocks that fallback and asserts the healthy primary path resolves the watch on its own within the latency bound required by rule 2. A fallback added to the spec without a matching healthy-path-alone test does not satisfy this rule. (Failure mode: steez-401's degraded reconciliation silently rescued every test because the fallback was always available; no test ever disabled it. The missing primary fast path was hidden for the entire life of the slice.)
+4. **Fallback companion tests.** Every fallback path named in this spec — degraded reconciliation via `agent-state`, `pending_timeout`, pane-close resolution, delivery retry, and restart recovery — MUST ship with a companion test that explicitly disables or blocks that fallback and asserts the healthy primary path resolves the watch on its own within the latency bound required by rule 2. A fallback added to the spec without a matching healthy-path-alone test does not satisfy this rule. (Failure mode: steez-401's degraded reconciliation silently rescued every test because the fallback was always available; no test ever disabled it. The missing primary fast path was hidden for the entire life of the slice.)
 
 ## Codex Stop hook
 
@@ -419,7 +419,7 @@ These rules apply on top of the TDD relationship above. They exist because steez
 
 The installer symlinks the hook into `~/.codex/hooks/codex-stop.sh` and auto-registers the `SessionStart`, `Stop`, and `UserPromptSubmit` groups in `~/.codex/hooks.json` on every `steez install`. Registration is idempotent, preserves any existing user hook groups, and only appends the steez-managed commands when they are missing. `~/.codex/config.toml` is **not** mutated; users must still opt in by setting `[features] codex_hooks = true` there.
 
-Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state`. That path stays armed while reconcile keeps proving `working`, and only resolves when reconcile proves a terminal state or the bounded `blocked:unknown` fallback takes over.
+Without this hook a watched codex pane falls back to degraded reconciliation via `agent-state`. That path stays armed while reconcile keeps proving `working` (or the fuzzy `blocked:unknown` with an advancing cursor) and only resolves when reconcile proves a live-resolving terminal state, the pane closes, or the watch is explicitly removed — the indeterminate window is a diagnostic log, not a resolution path.
 
 ## Runtime pane state producers
 

@@ -896,7 +896,8 @@ watch_feed_evidence() {
       --argjson now "$now" \
       '.last_evidence_ms = $now
        | .degraded_since_ms = null
-       | .last_reconcile_ms = null')
+       | .last_reconcile_ms = null
+       | .indeterminate_logged = null')
     _eventsd_write_record "$wid" "$cur"
   fi
 
@@ -945,8 +946,11 @@ _eventsd_reconcile() {
 #   - in degraded, agent-state <pane> runs every RECONCILE_INTERVAL_MS and
 #     its result is fed through the canonical resolver (no second state
 #     machine);
-#   - a degraded episode lasting INDETERMINATE_TIMEOUT_MS without a
-#     live-resolving terminal state resolves the watch to blocked:unknown.
+#   - a degraded episode that stays indeterminate past
+#     INDETERMINATE_TIMEOUT_MS logs once and keeps reconciling — it must
+#     not mature the live watch to terminal blocked:unknown (steez-fyjy).
+#     Only real live-resolving terminal evidence (idle / blocked:question /
+#     blocked:permission) or a pane-close event closes the watch.
 #
 # Non-armed watches are a no-op — the degraded machinery is irrelevant
 # for pending/draining/terminal states.
@@ -984,20 +988,25 @@ watch_tick() {
     fi
   fi
 
-  # Indeterminate timeout takes priority over further reconciliation — once
-  # the episode has run its course, the spec mandates blocked:unknown.
-  #
-  # Safety gate (steez-j815): never mature to blocked:unknown if no reconcile
-  # has ever returned output for this degraded episode. `last_reconcile_ms`
-  # is only stamped when agent-state returns non-empty output; a silent
-  # inspector leaves it at 0, which means we have zero observations and
-  # cannot justify a terminal resolution. Keep the watch armed and keep
-  # trying — a real stuck worker still hits this path because reconciles
-  # succeed (and cursor-advance freshness blocks the reset-to-healthy).
+  # Indeterminate-window diagnostic (steez-fyjy): a degraded episode that
+  # runs past INDETERMINATE_TIMEOUT_MS without fresh terminal evidence used
+  # to mature to blocked:unknown and deliver. That path resolved live
+  # watches while the worker was still producing output, freed the pane's
+  # live slot, and then silently dropped the real Stop-hook idle ping.
+  # The live watch must stay armed indefinitely — only idle,
+  # blocked:question, blocked:permission, pane close, or explicit remove
+  # retire it. Log once per episode so operators can still see long
+  # indeterminate stretches without the daemon fabricating a terminal.
   if (( now - degraded_since >= indeterminate_timeout )) \
     && (( last_reconcile != 0 )); then
-    watch_resolve "$wid" "blocked:unknown"
-    return 0
+    local logged
+    logged=$(printf '%s' "$rec" | jq -r '.indeterminate_logged // 0')
+    if (( logged == 0 )); then
+      printf 'agent-eventsd: watch %s (pane %s) past indeterminate window; staying armed pending terminal evidence\n' \
+        "$wid" "$pane" >&2
+      rec=$(printf '%s' "$rec" | jq -c '.indeterminate_logged = 1')
+      _eventsd_write_record "$wid" "$rec"
+    fi
   fi
 
   # Run a reconcile if one is due. First reconcile (last_reconcile == 0) is

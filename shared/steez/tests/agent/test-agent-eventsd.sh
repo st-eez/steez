@@ -1200,6 +1200,10 @@ test_second_degraded_episode_starts_a_new_indeterminate_timeout_window() {
   # timeout window." A first episode that returns to healthy must not
   # leak its elapsed time into the next one. Proves the window is timed
   # from the most recent degraded_since_ms, not from arm.
+  #
+  # Post-steez-fyjy: the indeterminate window no longer matures to
+  # blocked:unknown. The window survives as a diagnostic — `degraded_since_ms`
+  # still restarts cleanly per episode, the watch stays armed past it.
   _install_deliver_mock
   AGENT_STATE_RESPONSE='{"state":"blocked:unknown"}'
   export AGENT_STATE_RESPONSE
@@ -1210,7 +1214,7 @@ test_second_degraded_episode_starts_a_new_indeterminate_timeout_window() {
   wid=$(_arm_on_bead6 "$pane") || return 1
 
   # First degraded episode — cross silence, then return to healthy after
-  # 30s of degraded time (well under INDETERMINATE_TIMEOUT_MS).
+  # 30s of degraded time.
   _set_now $((t0 + 30000))
   watch_tick "$wid" >/dev/null || return 1
   rec=$(watch_get "$wid")
@@ -1234,27 +1238,26 @@ test_second_degraded_episode_starts_a_new_indeterminate_timeout_window() {
   assert_json_field "$rec" .state armed || return 1
   assert_json_field "$rec" .degraded_since_ms "$second_degraded_at" || return 1
 
-  # One tick just before the new indeterminate window closes — still armed.
-  _set_now $((second_degraded_at + 120000 - 1))
+  # Drive past the full indeterminate window from the new
+  # degraded_since_ms. Under the steez-fyjy contract the watch stays
+  # armed — blocked:unknown is no longer a terminal degraded-timeout
+  # outcome; a real terminal ping is the only thing that can resolve.
+  _set_now $((second_degraded_at + 120000 + 30000))
   watch_tick "$wid" >/dev/null || return 1
   rec=$(watch_get "$wid")
   assert_json_field "$rec" .state armed || return 1
-
-  # Crossing the full window from the new degraded_since_ms resolves
-  # blocked:unknown.
-  _set_now $((second_degraded_at + 120000))
-  watch_tick "$wid" >/dev/null || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state resolved || return 1
-  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+  assert_eq 0 "$(_deliver_call_count)" || return 1
 }
 run_test "second_degraded_episode_starts_a_new_indeterminate_timeout_window" test_second_degraded_episode_starts_a_new_indeterminate_timeout_window
 
 test_fuzzy_blocked_unknown_does_not_resolve_a_live_watch() {
   # Spec (live watch resolution): a fuzzy blocked:unknown sample from
   # degraded reconciliation must not resolve or self-clear a live watch.
-  # blocked:unknown is reserved for explicit timeout and pane-close
-  # fallback only.
+  # Post-steez-fyjy: blocked:unknown is no longer a terminal watch
+  # outcome at all — the degraded-window diagnostic logs past the
+  # indeterminate threshold but keeps the watch armed. Only a real
+  # live-resolving terminal ping (idle / blocked:question /
+  # blocked:permission), pane close, or explicit remove retires it.
   _install_deliver_mock
   export AGENT_STATE_LOG="$TEST_TMP/agent-state.log"
   : > "$AGENT_STATE_LOG"
@@ -1290,12 +1293,15 @@ MOCK
   assert_json_field "$live" .watch_id "$wid" || return 1
   assert_eq 2 "$(_agent_state_call_count)" || return 1
 
-  # The explicit degraded timeout still resolves to blocked:unknown.
-  _set_now $((t0 + 30000 + 120000))
+  # Past the old indeterminate window the watch still stays armed — no
+  # terminal blocked:unknown resolution fires from the degraded timer.
+  _set_now $((t0 + 30000 + 120000 + 30000))
   watch_tick "$wid" >/dev/null || return 1
   rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state resolved || return 1
-  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+  assert_json_field "$rec" .state armed || return 1
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_eq 0 "$(_deliver_call_count)" || return 1
 }
 run_test "fuzzy_blocked_unknown_does_not_resolve_a_live_watch" test_fuzzy_blocked_unknown_does_not_resolve_a_live_watch
 
@@ -1408,13 +1414,14 @@ test_inspector_silent_throughout_degraded_window_keeps_watch_armed() {
 }
 run_test "inspector_silent_throughout_degraded_window_keeps_watch_armed" test_inspector_silent_throughout_degraded_window_keeps_watch_armed
 
-test_stale_working_with_unchanged_cursor_times_out_to_blocked_unknown() {
-  # Acceptance B (steez-j815): a frozen Claude returns state=working with
-  # the same transcript cursor every reconcile. The old synthetic-hash
-  # regime kept the watch armed forever; with real-cursor freshness, a
-  # reconcile whose cursor has not advanced past both prearm and the last
-  # reconcile cursor is NOT fresh, the deadman does not reset, and the
-  # indeterminate timeout matures normally to blocked:unknown.
+test_stale_working_with_unchanged_cursor_stays_armed_past_indeterminate_window() {
+  # Acceptance B (steez-j815 + steez-fyjy): a frozen Claude returns
+  # state=working with the same transcript cursor every reconcile. Under
+  # real-cursor freshness the reconcile is not fresh, so the deadman does
+  # not reset. Pre-steez-fyjy, the indeterminate timeout matured to
+  # blocked:unknown and delivered — producing false attention on a worker
+  # that was still running. The post-steez-fyjy contract: the watch stays
+  # armed and waits for a real terminal ping. No spurious delivery.
   _install_deliver_mock
 
   # Transcript file pinned at exactly prearm_transcript_cursor (4096) so
@@ -1439,29 +1446,22 @@ test_stale_working_with_unchanged_cursor_times_out_to_blocked_unknown() {
   assert_json_field "$rec" .degraded_since_ms $((t0 + 30000)) || return 1
   assert_json_field "$rec" .last_reconcile_ms $((t0 + 30000)) || return 1
 
-  # One tick just before the indeterminate window closes — still armed.
-  _set_now $((t0 + 30000 + 120000 - 1))
-  watch_tick "$wid" >/dev/null || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state armed || return 1
+  # Drive well past the indeterminate window. Under the steez-fyjy
+  # contract the watch remains armed on every tick.
+  local t
+  for (( t = t0 + 30000 + 120000 - 1; t <= t0 + 30000 + 120000 + 60000; t += 5000 )); do
+    _set_now "$t"
+    watch_tick "$wid" >/dev/null || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed \
+      || { echo "    watch unexpectedly resolved at t+$((t - t0))"; return 1; }
+  done
 
-  # Crossing the full window resolves to blocked:unknown. The safety gate
-  # on `last_reconcile_ms != 0` is satisfied because reconciles succeeded
-  # (they just returned a frozen cursor), so the timeout matures normally.
-  _set_now $((t0 + 30000 + 120000))
-  watch_tick "$wid" >/dev/null || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state resolved || return 1
-  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
-
-  # Delivery fires for the resolved watch (exactly once — the canonical
-  # notifier path is already covered elsewhere; here we just confirm the
-  # timeout path still reaches delivery under the safety gate).
-  watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
-  [[ "$(_deliver_call_count)" -ge 1 ]] \
-    || { echo "    delivery never fired after indeterminate timeout"; return 1; }
+  # No delivery ever fired from the degraded timer — spurious
+  # blocked:unknown is the bug this test locks out.
+  assert_eq 0 "$(_deliver_call_count)" || return 1
 }
-run_test "stale_working_with_unchanged_cursor_times_out_to_blocked_unknown" test_stale_working_with_unchanged_cursor_times_out_to_blocked_unknown
+run_test "stale_working_with_unchanged_cursor_stays_armed_past_indeterminate_window" test_stale_working_with_unchanged_cursor_stays_armed_past_indeterminate_window
 
 test_working_with_cursor_advance_keeps_watch_armed_indefinitely() {
   # Acceptance C (steez-j815): when reconcile+working carries a strictly
@@ -2701,5 +2701,115 @@ test_ack_cli_rejects_missing_spawner_flag() {
 }
 run_test "ack CLI rejects missing --spawner flag" \
   test_ack_cli_rejects_missing_spawner_flag
+
+# ----- bead steez-fyjy: blocked:unknown is not a terminal watch outcome -----
+#
+# Regression: the degraded-fallback indeterminate timeout used to mature a
+# live watch to a terminal `blocked:unknown` and deliver. In production
+# that produced false attention (the worker was still producing output,
+# just under the inspector's fuzziness threshold) and then dropped the
+# real Stop-hook idle ping because `watch_resolve` had already cleared
+# the live slot. The spec no longer supports terminal `blocked:unknown`
+# as a live-watch resolution — the indeterminate window must keep the
+# watch armed, and the real terminal ping (idle / blocked:permission /
+# blocked:question) is the only evidence that can resolve it. Fuzzy
+# `blocked:unknown` observations remain available for the explain/debug
+# surfaces, just not as a delivery trigger.
+
+suite "blocked:unknown demotion (steez-fyjy)"
+
+test_indeterminate_timeout_does_not_mature_live_watch_to_blocked_unknown() {
+  # A stuck worker returns state=working with a transcript cursor frozen
+  # at the prearm baseline. Under the old spec the degraded window would
+  # mature to blocked:unknown and deliver. The new contract: stay armed,
+  # never deliver, wait for fresh terminal evidence.
+  _install_deliver_mock
+
+  local tpath="$TEST_TMP/transcript-fyjy-1.jsonl"
+  : > "$tpath"
+  head -c 4096 < /dev/zero > "$tpath"
+  _install_transcript_agent_state_mock "$tpath"
+  export AGENT_STATE_RESPONSE_STATE="working"
+
+  local pane="%500" wid rec t0=20000000 t
+  _set_now "$t0"
+  wid=$(_arm_on_bead6 "$pane") || return 1
+
+  # Cross silence: first reconcile sees frozen cursor, so degraded stays
+  # stamped and last_reconcile_ms is set.
+  _set_now $((t0 + 30000))
+  watch_tick "$wid" >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .degraded_since_ms $((t0 + 30000)) || return 1
+
+  # Drive well past the old indeterminate timeout (120s). Watch must stay
+  # armed on every tick — no blocked:unknown resolution is permitted from
+  # the degraded window alone.
+  for (( t = t0 + 35000; t <= t0 + 30000 + 120000 + 60000; t += 5000 )); do
+    _set_now "$t"
+    watch_tick "$wid" >/dev/null || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed \
+      || { echo "    watch unexpectedly resolved at t+$((t - t0))"; return 1; }
+  done
+
+  # Pane slot still owned by the same watch, no delivery has fired.
+  local live
+  live=$(watch_get_live "$pane")
+  assert_json_field "$live" .watch_id "$wid" || return 1
+  assert_eq 0 "$(_deliver_call_count)" || return 1
+}
+run_test "indeterminate_timeout_does_not_mature_live_watch_to_blocked_unknown" \
+  test_indeterminate_timeout_does_not_mature_live_watch_to_blocked_unknown
+
+test_idle_evidence_after_indeterminate_window_still_resolves_and_delivers() {
+  # The concrete user bug: a long working turn lives past the old
+  # indeterminate window, the inspector keeps reporting fuzzy
+  # `blocked:unknown`, and the real Stop hook eventually dispatches
+  # fast-path idle evidence. The idle ping must still resolve the
+  # original watch_id and deliver exactly once.
+  _install_deliver_mock
+
+  local tpath="$TEST_TMP/transcript-fyjy-2.jsonl"
+  : > "$tpath"
+  _install_transcript_agent_state_mock "$tpath"
+  export AGENT_STATE_RESPONSE_STATE="blocked:unknown"
+
+  local pane="%501" wid rec t0=21000000 cursor seq
+  _set_now "$t0"
+  wid=$(_arm_on_prearm_cursor "$pane" 0) || return 1
+
+  # Drive past the old indeterminate timeout with the cursor frozen so
+  # reconciles do not reset the deadman. Every tick must leave the watch
+  # armed under the new contract.
+  local t
+  for (( t = t0 + 30000; t <= t0 + 30000 + 120000 + 60000; t += 5000 )); do
+    _set_now "$t"
+    watch_tick "$wid" >/dev/null || return 1
+    rec=$(watch_get "$wid")
+    assert_json_field "$rec" .state armed \
+      || { echo "    watch unexpectedly resolved at t+$((t - t0))"; return 1; }
+  done
+  assert_eq 0 "$(_deliver_call_count)" || return 1
+
+  # Stop hook fires — fast-path idle evidence arrives with a strictly
+  # advancing cursor. Original watch_id must resolve to idle and deliver.
+  head -c 5000 < /dev/zero > "$tpath"
+  cursor=$(wc -c < "$tpath" | tr -d ' ')
+  seq=$(seq_next "$pane")
+  _set_now $((t0 + 30000 + 120000 + 90000))
+  watch_feed_evidence --watch-id "$wid" --seq "$seq" \
+    --candidate-state idle --transcript-cursor "$cursor" \
+    --source fast >/dev/null || return 1
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state resolved || return 1
+  assert_json_field "$rec" .resolved_state idle || return 1
+
+  watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  assert_eq 1 "$(_deliver_call_count)" || return 1
+}
+run_test "idle_evidence_after_indeterminate_window_still_resolves_and_delivers" \
+  test_idle_evidence_after_indeterminate_window_still_resolves_and_delivers
 
 report
