@@ -648,7 +648,7 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
     exit 1
   }
 
-  local i records first_watch second_watch first_state list sp_lines
+  local i records first_watch second_watch first_absent list sp_lines
   for ((i=0; i<100; i++)); do
     grep -F '"tool_use"' "$target_transcript" >/dev/null 2>&1 && break
     sleep 0.1
@@ -689,22 +689,28 @@ test_second_prompt_supersedes_first_unresolved_live_watch_without_duplicate_deli
   }
 
   records=""
-  first_state=""
+  first_absent=0
   second_watch=""
   for ((i=0; i<100; i++)); do
     records=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
       "$HOME/.steez/bin/agent-eventsd" list 2>/dev/null || true)
-    first_state=$(printf '%s\n' "$records" | jq -r --arg wid "$first_watch" '
-      select(.watch_id == $wid) | "\(.state):\(.close_reason // "")"
-    ' | head -1)
+    # Terminal state disposes the record on transition (steez-u7o7.1).
+    # The superseded first watch leaves the list entirely; presence in
+    # the list would mean the supersede did not fire.
+    if printf '%s\n' "$records" | jq -e --arg wid "$first_watch" \
+      'select(.watch_id == $wid)' >/dev/null 2>&1; then
+      first_absent=0
+    else
+      first_absent=1
+    fi
     second_watch=$(printf '%s\n' "$records" | jq -r --arg pane "$target" --arg first "$first_watch" '
       select(.pane_id == $pane and .watch_id != $first and .state == "armed") | .watch_id
     ' | head -1)
-    [[ "$first_state" == "closed:superseded" && -n "$second_watch" ]] && break
+    [[ "$first_absent" -eq 1 && -n "$second_watch" ]] && break
     sleep 0.1
   done
-  [[ "$first_state" == "closed:superseded" ]] || {
-    echo "    first live watch was not superseded:"
+  [[ "$first_absent" -eq 1 ]] || {
+    echo "    first live watch was not superseded (record still present):"
     printf '%s\n' "$records" | sed 's/^/      /'
     exit 1
   }

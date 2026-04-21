@@ -283,11 +283,12 @@ WRAPPER
     echo "    watch_pending_timeout failed"; return 1
   }
 
-  local final_state final_reason
-  final_state=$(_two_step_watch_field "$wid2" state)
-  final_reason=$(_two_step_watch_field "$wid2" close_reason)
-  assert_eq "closed" "$final_state" || return 1
-  assert_eq "pending_timeout" "$final_reason" || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  # pending_timeout closes the watch with reason=pending_timeout — the
+  # closure is visible as the record's absence on disk and the live
+  # slot being freed for the next prearm.
+  [[ ! -e "$STEEZ_STATE_DIR/eventsd/watches/$wid2.json" ]] \
+    || { echo "    pending_timeout record still on disk"; return 1; }
 
   # Pane's live slot is freed — next prearm can occupy it.
   local live_file2

@@ -111,15 +111,19 @@ test_add_second_add_supersedes_prior_watch_on_same_pane() {
   _install_real_eventsd
   _start_real_eventsd_service || { echo "    service failed to start"; return 1; }
 
-  local wid1 wid2 rec1
+  local wid1 wid2
   "$BIN_DIR/agent-watch" add %5 --label "first" >/dev/null 2>&1 || return 1
   wid1=$(cat "$(_live_file_for_pane "%5")")
   "$BIN_DIR/agent-watch" add %5 --label "second" >/dev/null 2>&1 || return 1
   wid2=$(cat "$(_live_file_for_pane "%5")")
   [[ "$wid1" != "$wid2" ]] || { echo "    new add reused prior watch_id"; return 1; }
-  rec1=$(jq -c . "$STEEZ_STATE_DIR/eventsd/watches/$wid1.json")
-  assert_json_field "$rec1" .state closed || return 1
-  assert_json_field "$rec1" .close_reason superseded || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1). The
+  # prior watch was closed:superseded, so its record is unlinked. New
+  # watch holds the live slot — proving supersession.
+  [[ ! -e "$STEEZ_STATE_DIR/eventsd/watches/$wid1.json" ]] \
+    || { echo "    superseded record still on disk"; return 1; }
+  [[ -s "$STEEZ_STATE_DIR/eventsd/watches/$wid2.json" ]] \
+    || { echo "    new live watch missing on disk"; return 1; }
 }
 run_test "add_second_add_supersedes_prior_watch_on_same_pane" test_add_second_add_supersedes_prior_watch_on_same_pane
 
@@ -137,12 +141,11 @@ test_remove_closes_live_watch_on_pane() {
   # Live slot freed.
   [[ ! -s "$(_live_file_for_pane "%5")" ]] \
     || { echo "    live slot not cleared on remove"; return 1; }
-  # Watch record closed with reason=removed.
-  local state reason
-  state=$(_watch_state "$wid")
-  reason=$(jq -r .close_reason "$STEEZ_STATE_DIR/eventsd/watches/$wid.json")
-  assert_eq "closed" "$state" || return 1
-  assert_eq "removed" "$reason" || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  # agent-watch remove closes the live watch with reason=removed — the
+  # closure is visible as the record's absence on disk.
+  [[ ! -e "$STEEZ_STATE_DIR/eventsd/watches/$wid.json" ]] \
+    || { echo "    removed record still on disk"; return 1; }
 }
 run_test "remove_closes_live_watch_on_pane" test_remove_closes_live_watch_on_pane
 

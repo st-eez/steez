@@ -510,10 +510,24 @@ watch_get_draining() {
 }
 
 # _eventsd_write_record <watch_id> <json>
-# Overwrites the on-disk record file for a watch via temp+rename.
+# Writes the on-disk record for a watch. For active states the write is a
+# temp+rename atomic replacement. For terminal states (delivered, closed)
+# the record is unlinked instead — no runtime path reads a post-terminal
+# record (retry paths read `delivery_failed`; resolve, feed_evidence, tick
+# and deliver_attempt are one-shot against terminal state), so leaving the
+# file on disk was pure accumulation. A single production snapshot showed
+# 148 delivered + 11 closed stranded files (bead steez-u7o7.1).
 _eventsd_write_record() {
-  local wid="$1" json="$2"
-  _eventsd_atomic_write "$(_eventsd_watch_file "$wid")" "${json}"$'\n'
+  local wid="$1" json="$2" state
+  state=$(printf '%s' "$json" | jq -r '.state // empty' 2>/dev/null || true)
+  case "$state" in
+    delivered|closed)
+      rm -f "$(_eventsd_watch_file "$wid")"
+      ;;
+    *)
+      _eventsd_atomic_write "$(_eventsd_watch_file "$wid")" "${json}"$'\n'
+      ;;
+  esac
 }
 
 # watch_arm — promote a pending watch to armed (spec: watch.start).

@@ -408,10 +408,8 @@ test_pending_timeout_closes_pending_without_delivery() {
   local wid
   wid=$(_mk_pending "%43")
   watch_pending_timeout "$wid" || return 1
-  local rec
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason pending_timeout || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$wid")" || return 1
   # Pane's live slot must be freed (next prearm can occupy it).
   assert_eq "" "$(watch_get_live "%43")" || return 1
   [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on pending_timeout"; return 1; }
@@ -441,10 +439,8 @@ test_watch_remove_closes_pending_without_delivery() {
   local wid
   wid=$(_mk_pending "%45")
   watch_remove "%45" || return 1
-  local rec
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason removed || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$wid")" || return 1
   assert_eq "" "$(watch_get_live "%45")" || return 1
   [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on remove"; return 1; }
 }
@@ -456,10 +452,8 @@ test_watch_remove_closes_armed_without_delivery() {
   wid=$(_mk_pending "%46")
   watch_arm --pane "%46" --watch-id "$wid" --start-seq 9 >/dev/null || return 1
   watch_remove "%46" || return 1
-  local rec
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason removed || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$wid")" || return 1
   assert_eq "" "$(watch_get_live "%46")" || return 1
   [[ "$(_deliver_call_count)" == "0" ]] || { echo "    deliver called on remove"; return 1; }
 }
@@ -522,8 +516,8 @@ test_deliver_after_resolve_transitions_to_delivered_on_success() {
   wid=$(_arm_on "%53") || return 1
   watch_resolve "$wid" idle || return 1
   MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$wid" || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state delivered || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$wid")" || return 1
   # Pane's live slot is freed — the watch is terminal.
   assert_eq "" "$(watch_get_live "%53")" || return 1
   # Exactly one deliver call; first arg is the watch_id.
@@ -549,9 +543,10 @@ test_deliver_failure_moves_to_delivery_failed_and_retry_uses_same_watch_id() {
   assert_json_field "$rec" .delivery_attempts 1 || return 1
   # Retry from delivery_failed; succeeds. Must reuse the same watch_id.
   MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$wid" || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 2 || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1); the
+  # retry budget becomes unobservable on disk. The deliver argv log below
+  # proves the retry reused the original watch_id and fired exactly twice.
+  assert_eq "" "$(watch_get "$wid")" || return 1
   # Two calls, same watch_id on both.
   assert_eq 2 "$(_deliver_call_count)" || return 1
   local ids
@@ -573,10 +568,11 @@ test_delivery_exhausted_closes_with_reason_after_MAX_DELIVERY_ATTEMPTS() {
   for ((i=1; i<=MAX_DELIVERY_ATTEMPTS; i++)); do
     MOCK_DELIVER_EXIT=9 watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
   done
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason delivery_exhausted || return 1
-  assert_json_field "$rec" .delivery_attempts "$MAX_DELIVERY_ATTEMPTS" || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1). The
+  # post-exhaustion retry refusal below (watch_deliver_attempt returning
+  # non-zero with no extra deliver call) is the external signature of
+  # close_reason=delivery_exhausted.
+  assert_eq "" "$(watch_get "$wid")" || return 1
   assert_eq "" "$(watch_get_live "%55")" || return 1
   # Further retries after exhaustion are refused (no extra deliver call).
   watch_deliver_attempt "$wid" >/dev/null 2>&1 || rc=$?
@@ -779,9 +775,9 @@ test_new_prearm_supersedes_live_watch_without_blocking_draining_delivery() {
     --prearm-seq 20) || return 1
   [[ "$w_live" != "$w_prior" ]] \
     || { echo "    new prearm reused prior watch_id"; return 1; }
-  rec=$(watch_get "$w_prior")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason superseded || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  # Supersede is a close, so the prior record vanishes.
+  assert_eq "" "$(watch_get "$w_prior")" || return 1
   [[ "$(_deliver_call_count)" == "0" ]] \
     || { echo "    deliver fired on supersede"; return 1; }
   live_rec=$(watch_get_live "$pane")
@@ -830,8 +826,8 @@ test_new_prearm_supersedes_live_watch_without_blocking_draining_delivery() {
 
   # (d) Draining delivery completes independently and exits the ledger.
   MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$w_live" || return 1
-  rec=$(watch_get "$w_live")
-  assert_json_field "$rec" .state delivered || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$w_live")" || return 1
   assert_eq "" "$(watch_get_draining "$pane")" || return 1
   # New live watch still untouched throughout.
   live_rec=$(watch_get_live "$pane")
@@ -879,14 +875,13 @@ test_at_most_one_live_watch_per_pane_under_concurrent_turn_sequences() {
     --baseline-state working --prearm-screen-hash "h-a" \
     --prearm-transcript-cursor 100 --prearm-seq 10) || return 1
   _assert_live_count "$pane" 1 || return 1
-  assert_json_field "$(watch_get "$w1")" .state closed || return 1
-  assert_json_field "$(watch_get "$w1")" .close_reason superseded || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$w1")" || return 1
   w3=$(watch_create_pending --pane "$pane" --spawner "%0" --label codex \
     --baseline-state working --prearm-screen-hash "h-b" \
     --prearm-transcript-cursor 200 --prearm-seq 20) || return 1
   _assert_live_count "$pane" 1 || return 1
-  assert_json_field "$(watch_get "$w2")" .state closed || return 1
-  assert_json_field "$(watch_get "$w2")" .close_reason superseded || return 1
+  assert_eq "" "$(watch_get "$w2")" || return 1
   assert_json_field "$(watch_get_live "$pane")" .watch_id "$w3" || return 1
 
   # (2) armed-phase supersession. Arm w3, then prearm w4.
@@ -898,8 +893,8 @@ test_at_most_one_live_watch_per_pane_under_concurrent_turn_sequences() {
     --baseline-state working --prearm-screen-hash "h-c" \
     --prearm-transcript-cursor 300 --prearm-seq 30) || return 1
   _assert_live_count "$pane" 1 || return 1
-  assert_json_field "$(watch_get "$w3")" .state closed || return 1
-  assert_json_field "$(watch_get "$w3")" .close_reason superseded || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$w3")" || return 1
   [[ "$(_deliver_call_count)" == "0" ]] \
     || { echo "    supersede fired a delivery"; return 1; }
 
@@ -942,8 +937,9 @@ test_at_most_one_live_watch_per_pane_under_concurrent_turn_sequences() {
   _assert_live_count "$pane" 1 || return 1
   MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$w5" || return 1
   _assert_live_count "$pane" 1 || return 1
-  assert_json_field "$(watch_get "$w4")" .state delivered || return 1
-  assert_json_field "$(watch_get "$w5")" .state delivered || return 1
+  # Terminal state disposes the records on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$w4")" || return 1
+  assert_eq "" "$(watch_get "$w5")" || return 1
   assert_eq "" "$(watch_get_draining "$pane")" || return 1
   assert_json_field "$(watch_get_live "$pane")" .watch_id "$w6" || return 1
   assert_json_field "$(watch_get_live "$pane")" .state pending || return 1
@@ -1059,9 +1055,10 @@ test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_an
   done
   watch_deliver_attempt "$wid" || return 1
 
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 5 || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1). The
+  # retry budget becomes unobservable on disk; the deliver log below
+  # proves exactly 5 attempts, all against the original watch_id.
+  assert_eq "" "$(watch_get "$wid")" || return 1
   assert_eq "" "$(watch_get_live "%70")" || return 1
 
   # (b) Every deliver call carried the same watch_id.
@@ -1079,12 +1076,14 @@ test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_an
   [[ ! -e "$AGENT_SEND_TRIPWIRE" ]] || { echo "    daemon called agent-send"; return 1; }
 
   # (f) One logical notification — post-delivered duplicate evidence
-  # and rogue retry attempts must neither mutate state nor trigger
-  # another agent-deliver invocation.
+  # and rogue retry attempts must neither resurrect the record nor
+  # trigger another agent-deliver invocation.
   watch_resolve "$wid" "blocked:permission" >/dev/null 2>&1 || true
   watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
   assert_eq 5 "$(_deliver_call_count)" || return 1
-  assert_json_field "$(watch_get "$wid")" .state delivered || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1);
+  # post-terminal evidence does not re-create it.
+  assert_eq "" "$(watch_get "$wid")" || return 1
 }
 run_test "one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries" test_one_watch_id_produces_one_logical_notification_across_duplicate_evidence_and_bounded_retries
 
@@ -1793,10 +1792,10 @@ test_service_iterate_restart_replays_resolved_demotes_delivering_and_retries_del
   _eventsd_service_iterate || return 1
 
   # resolved: same watch_id, one new attempt, delivered.
-  rec=$(watch_get "$w_resolved")
-  assert_json_field "$rec" .watch_id "$w_resolved" || return 1
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 1 || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1); the
+  # deliver-log check below proves one call against the original watch_id,
+  # which is the external signature of a successful delivered transition.
+  assert_eq "" "$(watch_get "$w_resolved")" || return 1
 
   # delivering: demoted to delivery_failed, SAME watch_id, retry budget
   # preserved. The 2 pre-crash attempts + the 1 retry on this iteration = 3.
@@ -1807,10 +1806,8 @@ test_service_iterate_restart_replays_resolved_demotes_delivering_and_retries_del
 
   # delivery_failed: retried with SAME watch_id, budget preserved.
   # 3 pre-crash + 1 retry (succeeded) = 4, within MAX_DELIVERY_ATTEMPTS=5.
-  rec=$(watch_get "$w_failed")
-  assert_json_field "$rec" .watch_id "$w_failed" || return 1
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 4 || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$w_failed")" || return 1
 
   # Exactly one attempt per staged watch_id on this iteration — no
   # cross-wiring, no duplicate retries. The test fixture accumulates
@@ -1839,10 +1836,8 @@ test_pane_close_on_pending_watch_closes_without_delivery() {
   local wid
   wid=$(_mk_pending "%130") || return 1
   watch_pane_close "%130" || return 1
-  local rec
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state closed || return 1
-  assert_json_field "$rec" .close_reason pane_closed || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  assert_eq "" "$(watch_get "$wid")" || return 1
   assert_eq "" "$(watch_get_live "%130")" || return 1
   local c
   c=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
@@ -1883,16 +1878,17 @@ test_pane_close_on_armed_watch_reconciles_once_and_falls_back_to_blocked_unknown
   watch_pane_close "%140" || return 1
   watch_pane_close "%141" || return 1
 
-  # Terminal reconciliation produced the reconciled state.
-  rec=$(watch_get "$w_term")
-  assert_json_field "$rec" .watch_id "$w_term" || return 1
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .resolved_state idle || return 1
-  # Non-terminal reconciliation fell back to blocked:unknown.
-  rec=$(watch_get "$w_indef")
-  assert_json_field "$rec" .watch_id "$w_indef" || return 1
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  # The resolved terminal flowed into the sticky attention record
+  # written by watch_pane_close; observe it there instead of on the
+  # vanished watch file.
+  assert_eq "" "$(watch_get "$w_term")" || return 1
+  assert_eq "" "$(watch_get "$w_indef")" || return 1
+  local attn_term attn_indef
+  attn_term=$(attention_get_recent "%140")
+  assert_json_field "$attn_term" .state idle || return 1
+  attn_indef=$(attention_get_recent "%141")
+  assert_json_field "$attn_indef" .state "blocked:unknown" || return 1
 
   # Both delivery calls carried the second arg = spawner_pane (%0),
   # not the closed pane. "Draining delivery continues against the
@@ -1934,13 +1930,19 @@ test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spaw
   # Retry after pane close succeeds; delivery is routed to spawner.
   export "$(_exit_var_name "$wid")=0"
   watch_deliver_attempt "$wid" || return 1
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 2 || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1). The
+  # deliver log below proves the retry used the same watch_id and the
+  # call was routed to spawner_pane.
+  assert_eq "" "$(watch_get "$wid")" || return 1
   # The final call's second arg = spawner_pane.
   local last_target
   last_target=$(awk -v w="$wid" '$1==w {target=$2} END{print target}' "$DELIVER_LOG")
   assert_eq "%0" "$last_target" || return 1
+  # Exactly two deliver calls for this watch_id (one pre-close failure +
+  # one post-close retry). Pins budget preservation observably.
+  local attempts
+  attempts=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 2 "${attempts:-0}" || return 1
 }
 run_test "pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner" test_pane_close_leaves_draining_watches_untouched_and_delivery_continues_to_spawner
 
@@ -2016,11 +2018,18 @@ test_pane_close_rejects_stale_transcript_reconciliation_and_falls_back_to_blocke
 
   watch_pane_close "%145" || return 1
 
-  rec=$(watch_get "$wid")
-  assert_json_field "$rec" .watch_id "$wid" || return 1
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .resolved_state "blocked:unknown" || return 1
+  # Terminal state disposes the record on transition (steez-u7o7.1).
+  # The attention record captures the resolved state for inspection.
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  local attn
+  attn=$(attention_get_recent "%145")
+  assert_json_field "$attn" .state "blocked:unknown" || return 1
   assert_eq "" "$(watch_get_live "%145")" || return 1
+  # Delivery actually fired with this watch_id — pane-close on an armed
+  # watch must drive delivery once the resolution lands.
+  local calls
+  calls=$(grep -c "^$wid " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 1 "${calls:-0}" || return 1
 }
 run_test "pane_close_rejects_stale_transcript_reconciliation_and_falls_back_to_blocked_unknown" test_pane_close_rejects_stale_transcript_reconciliation_and_falls_back_to_blocked_unknown
 
@@ -2811,5 +2820,102 @@ test_idle_evidence_after_indeterminate_window_still_resolves_and_delivers() {
 }
 run_test "idle_evidence_after_indeterminate_window_still_resolves_and_delivers" \
   test_idle_evidence_after_indeterminate_window_still_resolves_and_delivers
+
+# ----- terminal disposal (steez-u7o7.1) -----
+#
+# Terminal watch records (delivered, closed) have no runtime consumers —
+# retry paths read `delivery_failed`, and resolve / feed_evidence / tick /
+# deliver_attempt are one-shot against terminal state. The daemon
+# accumulated 148+ stale files in production because nothing unlinked them
+# on transition. Dispose of the record the moment the state becomes
+# terminal so the hot watches/ directory cannot leak.
+
+suite "terminal disposal (steez-u7o7.1)"
+
+test_delivered_watch_record_is_unlinked_on_transition() {
+  _install_deliver_mock
+  local wid
+  wid=$(_arm_on "%u7o7a") || return 1
+  watch_resolve "$wid" idle || return 1
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$wid" || return 1
+  [[ ! -e "$(_eventsd_watch_file "$wid")" ]] \
+    || { echo "    delivered record still on disk: $(_eventsd_watch_file "$wid")"; return 1; }
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  assert_eq "" "$(watch_get_live "%u7o7a")" || return 1
+}
+run_test "delivered_watch_record_is_unlinked_on_transition" test_delivered_watch_record_is_unlinked_on_transition
+
+test_closed_watch_record_is_unlinked_on_watch_remove() {
+  _install_deliver_mock
+  local wid
+  wid=$(_mk_pending "%u7o7b") || return 1
+  watch_remove "%u7o7b" || return 1
+  [[ ! -e "$(_eventsd_watch_file "$wid")" ]] \
+    || { echo "    removed record still on disk: $(_eventsd_watch_file "$wid")"; return 1; }
+  assert_eq "" "$(watch_get "$wid")" || return 1
+}
+run_test "closed_watch_record_is_unlinked_on_watch_remove" test_closed_watch_record_is_unlinked_on_watch_remove
+
+test_closed_watch_record_is_unlinked_on_supersede() {
+  _install_deliver_mock
+  local pane="%u7o7c" w_prior w_live
+  w_prior=$(_mk_pending "$pane") || return 1
+  w_live=$(watch_create_pending \
+    --pane "$pane" --spawner "%0" --label codex \
+    --baseline-state working \
+    --prearm-screen-hash "h-u7o7c" \
+    --prearm-transcript-cursor 8192 \
+    --prearm-seq 20) || return 1
+  [[ "$w_prior" != "$w_live" ]] || return 1
+  [[ ! -e "$(_eventsd_watch_file "$w_prior")" ]] \
+    || { echo "    superseded record still on disk: $(_eventsd_watch_file "$w_prior")"; return 1; }
+  assert_eq "" "$(watch_get "$w_prior")" || return 1
+}
+run_test "closed_watch_record_is_unlinked_on_supersede" test_closed_watch_record_is_unlinked_on_supersede
+
+test_closed_watch_record_is_unlinked_on_pending_timeout() {
+  _install_deliver_mock
+  local wid
+  wid=$(_mk_pending "%u7o7d") || return 1
+  watch_pending_timeout "$wid" || return 1
+  [[ ! -e "$(_eventsd_watch_file "$wid")" ]] \
+    || { echo "    pending_timeout record still on disk"; return 1; }
+}
+run_test "closed_watch_record_is_unlinked_on_pending_timeout" test_closed_watch_record_is_unlinked_on_pending_timeout
+
+test_closed_watch_record_is_unlinked_on_delivery_exhaustion() {
+  _install_deliver_mock
+  local wid i
+  wid=$(_arm_on "%u7o7e") || return 1
+  watch_resolve "$wid" idle || return 1
+  for ((i=1; i<=MAX_DELIVERY_ATTEMPTS; i++)); do
+    MOCK_DELIVER_EXIT=9 watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
+  done
+  [[ ! -e "$(_eventsd_watch_file "$wid")" ]] \
+    || { echo "    delivery-exhausted record still on disk"; return 1; }
+}
+run_test "closed_watch_record_is_unlinked_on_delivery_exhaustion" test_closed_watch_record_is_unlinked_on_delivery_exhaustion
+
+test_watch_list_omits_terminal_records() {
+  # watch_list walks the on-disk watches/ dir. With terminal records
+  # unlinked, list must only reflect active (pending/armed/resolved/
+  # delivering/delivery_failed) watches.
+  _install_deliver_mock
+  local w_active w_delivered out ids
+  w_active=$(_mk_pending "%u7o7f") || return 1
+  w_delivered=$(_arm_on "%u7o7g") || return 1
+  watch_resolve "$w_delivered" idle || return 1
+  MOCK_DELIVER_EXIT=0 watch_deliver_attempt "$w_delivered" || return 1
+
+  out=$(watch_list)
+  ids=$(printf '%s\n' "$out" | jq -r '.watch_id' 2>/dev/null | sort -u)
+  printf '%s\n' "$ids" | grep -Fxq "$w_active" \
+    || { echo "    active watch missing from list"; return 1; }
+  if printf '%s\n' "$ids" | grep -Fxq "$w_delivered"; then
+    echo "    delivered watch leaked into list"
+    return 1
+  fi
+}
+run_test "watch_list_omits_terminal_records" test_watch_list_omits_terminal_records
 
 report
