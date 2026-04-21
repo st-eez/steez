@@ -25,7 +25,7 @@ HARNESS_TMP=$(mktemp -d)
 trap 'rm -rf "$HARNESS_TMP"' EXIT
 FAKES_BUILD="$HARNESS_TMP/build"
 mkdir -p "$FAKES_BUILD"
-go build -o "$FAKES_BUILD/claude" "$FAKES_SRC_DIR/fake-agent" || {
+(cd "$REPO_ROOT" && go build -o "$FAKES_BUILD/claude" "./shared/steez/test/fakes/src/fake-agent") || {
   echo "  fake-agent build failed"
   exit 1
 }
