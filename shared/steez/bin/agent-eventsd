@@ -25,6 +25,7 @@ _EVENTSD_STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}/eventsd"
 : "${SILENCE_WINDOW_MS:=30000}"
 : "${RECONCILE_INTERVAL_MS:=5000}"
 : "${INDETERMINATE_TIMEOUT_MS:=120000}"
+: "${PREARM_TIMEOUT_MS:=5000}"
 
 # Monotonic clock in ms. Tests set EVENTSD_NOW_MS to drive the fake clock
 # deterministically. Real daemon reads wall time; sub-second precision is
@@ -1416,6 +1417,22 @@ _eventsd_service_iterate() {
       continue
     fi
     case "$state" in
+      pending)
+        # Prearm reaper (spec: PREARM_TIMEOUT_MS). File mtime is the age
+        # anchor — stable because _eventsd_atomic_write preserves write
+        # time and watch_arm is the sole rewriter of pending, which
+        # transitions out. watch_pending_timeout is the sanctioned
+        # closer; call it directly (the CLI wrapper auto-starts the
+        # service, irrelevant inside the tick).
+        local timeout_ms mtime_ms now_ms age_ms
+        timeout_ms="${PREARM_TIMEOUT_MS:-5000}"
+        mtime_ms=$(( $(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0) * 1000 ))
+        now_ms=$(_eventsd_now_ms)
+        age_ms=$(( now_ms - mtime_ms ))
+        if (( mtime_ms > 0 && age_ms >= timeout_ms )); then
+          watch_pending_timeout "$wid" >/dev/null 2>&1 || true
+        fi
+        ;;
       armed)
         watch_tick "$wid" >/dev/null 2>&1 || true
         # Tick may have resolved the watch via reconcile; if so, drive

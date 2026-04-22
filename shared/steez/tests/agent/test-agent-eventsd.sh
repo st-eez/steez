@@ -2189,6 +2189,55 @@ test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files() {
 run_test "service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files" \
   test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files
 
+# ----- pending-watch timeout via tick loop (steez-u7o7.3) -----
+#
+# Spec (agent-events.md): PREARM_TIMEOUT_MS=5000. If watch.start never
+# arrives, the prearm closes with pending_timeout. The tick loop is the
+# reaper: mtime is the age anchor because _eventsd_atomic_write preserves
+# write time and watch_arm is the only rewriter of pending (which
+# transitions out). A fake clock anchored to the file's real mtime
+# exercises the age comparison deterministically.
+
+suite "pending-watch timeout (steez-u7o7.3)"
+
+test_service_iterate_closes_stale_pending_via_mtime() {
+  _install_deliver_mock
+  local wid file mtime_sec c
+  wid=$(_mk_pending "%u7o7h") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  [[ -f "$file" ]] || { echo "    pending file not on disk"; return 1; }
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  # Push the fake clock 10s past mtime — default PREARM_TIMEOUT_MS=5000.
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 10000 ))
+  _eventsd_service_iterate || return 1
+  # Terminal disposal (steez-u7o7.1) unlinks closed records.
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  # Pane's live slot must be freed so a fresh prearm can take it.
+  assert_eq "" "$(watch_get_live "%u7o7h")" || return 1
+  # pending_timeout closes without delivery. Count only this watch_id —
+  # iterate may fire deliver on other watches left over from earlier tests.
+  c=$(grep -Fc "$wid" "${DELIVER_LOG:-/dev/null}" 2>/dev/null || true)
+  assert_eq 0 "${c:-0}" || return 1
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_closes_stale_pending_via_mtime" \
+  test_service_iterate_closes_stale_pending_via_mtime
+
+test_service_iterate_leaves_fresh_pending_untouched() {
+  _install_deliver_mock
+  local wid file mtime_sec
+  wid=$(_mk_pending "%u7o7i") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  # 1s of age — well under default 5000ms threshold.
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 1000 ))
+  _eventsd_service_iterate || return 1
+  assert_json_field "$(watch_get "$wid")" .state pending || return 1
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_leaves_fresh_pending_untouched" \
+  test_service_iterate_leaves_fresh_pending_untouched
+
 # ----- recent attention evidence (S3) -----
 
 suite "recent attention evidence"
