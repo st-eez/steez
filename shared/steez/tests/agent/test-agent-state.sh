@@ -517,6 +517,56 @@ test_find_transcript_pane_variable_priority() {
 }
 run_test "pane variable wins for ren" test_find_transcript_pane_variable_priority
 
+test_find_transcript_codex_session_id_match_beats_lsof_fallback() {
+  local sid="019db5-test-current"
+  local session_dir="$HOME/.codex/sessions/2026/04/22"
+  local current="$session_dir/rollout-2026-04-22T10-17-23-${sid}.jsonl"
+  local stale="$session_dir/rollout-2026-04-22T09-00-00-stale-old.jsonl"
+  mkdir -p "$session_dir"
+  : > "$current"
+  : > "$stale"
+
+  set_mock_tmux_var "%17" "@session_id" "$sid"
+
+  _PS="  PID  PPID COMMAND
+2000 1000 /bin/zsh
+2001 2000 node /opt/homebrew/bin/codex --yolo
+2002 2001 /opt/homebrew/bin/codex --yolo"
+
+  export MOCK_LSOF_JSONL="$stale"
+  create_mock_script "$MOCK_BIN/lsof" 'printf "n%s\n" "${MOCK_LSOF_JSONL:-}"'
+
+  local out
+  out=$(find_transcript "codex" "%17" 2000 "/tmp/anywhere")
+  assert_eq "$current" "$out"
+}
+run_test "codex session_id match beats stale lsof fallback" \
+  test_find_transcript_codex_session_id_match_beats_lsof_fallback
+
+test_find_transcript_codex_session_id_missing_match_returns_empty_not_stale_lsof() {
+  local sid="019db5-test-missing"
+  local session_dir="$HOME/.codex/sessions/2026/04/22"
+  local stale="$session_dir/rollout-2026-04-22T09-00-00-stale-old.jsonl"
+  mkdir -p "$session_dir"
+  : > "$stale"
+
+  set_mock_tmux_var "%18" "@session_id" "$sid"
+
+  _PS="  PID  PPID COMMAND
+2100 1000 /bin/zsh
+2101 2100 node /opt/homebrew/bin/codex --yolo
+2102 2101 /opt/homebrew/bin/codex --yolo"
+
+  export MOCK_LSOF_JSONL="$stale"
+  create_mock_script "$MOCK_BIN/lsof" 'printf "n%s\n" "${MOCK_LSOF_JSONL:-}"'
+
+  local out
+  out=$(find_transcript "codex" "%18" 2100 "/tmp/anywhere")
+  assert_eq "" "$out"
+}
+run_test "codex session_id with no filesystem match does not fall back to stale lsof" \
+  test_find_transcript_codex_session_id_missing_match_returns_empty_not_stale_lsof
+
 # ----- Public modes end-to-end -----
 #
 # Exercise the executable surface the spec claims: single-pane default,

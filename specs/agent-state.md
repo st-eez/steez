@@ -197,8 +197,9 @@ The `name` field is extracted from the tmux pane title. If the title contains a 
 `find_transcript` locates the JSONL transcript for a pane through a priority chain:
 
 1. **Pane variable:** `tmux show-options -pv @transcript_path` (set by SessionStart hook).
-2. **Claude filesystem match (agent type `claude` only, not `ren`):** `~/.claude/projects/{cwd-key}/` — most recently modified `.jsonl`. `ren` agents rely on the pane variable set by the SessionStart hook; the filesystem fallback does not fire for them.
-3. **Codex process handle:** Walk `shell -> node -> codex` in the process tree, then `lsof -p` to find the open `.jsonl` write handle.
+2. **Codex session-id filesystem match (agent types `codex` and `ren-codex` only):** when `@session_id` is present but `@transcript_path` is empty, search `~/.codex/sessions/**/rollout-*<session_id>*.jsonl`. If no match exists yet, return no transcript rather than falling through to a stale open-file probe.
+3. **Claude filesystem match (agent type `claude` only, not `ren`):** `~/.claude/projects/{cwd-key}/` — most recently modified `.jsonl`. `ren` agents rely on the pane variable set by the SessionStart hook; the filesystem fallback does not fire for them.
+4. **Codex process handle:** only when no current Codex `@session_id` is known, walk `shell -> node -> codex` in the process tree, then `lsof -p` to find the open `.jsonl` write handle.
 
 ## Dependencies
 

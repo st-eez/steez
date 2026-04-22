@@ -928,6 +928,9 @@ find_transcript() {
     return
   fi
 
+  local session_id=""
+  session_id=$(tmux show-options -pv -t "$pane" @session_id 2>/dev/null) || true
+
   case "$agent" in
     claude)
       [[ -z "$cwd" ]] && return 1
@@ -937,6 +940,15 @@ find_transcript() {
       ls -t "$session_dir"/*.jsonl 2>/dev/null | head -1
       ;;
     codex|ren-codex)
+      if [[ -n "$session_id" ]]; then
+        # A current Codex session id is stronger than any open-file probe.
+        # If the hook has published @session_id but not @transcript_path yet,
+        # lsof can still see an older JSONL from a previous session and attach
+        # the pane to stale state. Resolve by session id first; if no matching
+        # file exists yet, return nothing rather than cross streams.
+        find "$HOME/.codex/sessions" -type f -name "*${session_id}*.jsonl" 2>/dev/null | head -1
+        return
+      fi
       # Walk shell -> node -> codex binary; codex holds JSONL open as write handle
       local node_pid="" codex_pid=""
       node_pid=$(awk -v ppid="$shell_pid" '{
