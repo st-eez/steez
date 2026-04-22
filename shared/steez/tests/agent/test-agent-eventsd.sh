@@ -2077,6 +2077,120 @@ test_service_iterate_demotes_persisted_delivering_to_delivery_failed_and_retries
 }
 run_test "service_iterate_demotes_persisted_delivering_to_delivery_failed_and_retries_preserving_attempts" test_service_iterate_demotes_persisted_delivering_to_delivery_failed_and_retries_preserving_attempts
 
+# ----- service iterate state routing under collapsed jq (steez-u7o7.2) -----
+#
+# The hot path used to fork three jq processes per record per tick (6N
+# forks/sec at 2Hz, N=files). steez-u7o7.2 collapses that to one jq pass
+# over the whole watch dir per tick. The collapse must preserve every
+# observable behaviour the old per-file loop had: pending stays
+# untouched (no case in the switch), delivering is demoted to
+# delivery_failed and retried on the same iteration, resolved and
+# delivery_failed each drive one delivery attempt, and a malformed
+# record file in the watch dir is skipped without aborting the rest of
+# the pass. A naive `jq -rs '.[]'` collapse would slurp every record
+# into one array and a single parse error would short-circuit the whole
+# tick — that is the specific regression this test guards against.
+
+suite "service iterate state routing (steez-u7o7.2)"
+
+test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files() {
+  _install_bead7_deliver_mock
+
+  # pending — no case in the switch acts on it. No tmux registration
+  # needed; the pane_has_live_agent gate is keyed on state==armed.
+  local w_pending
+  w_pending=$(_mk_pending "%180") || return 1
+
+  # armed — needs to look live so the pane_has_live_agent gate does not
+  # close the watch before reaching the case statement. mock_pane makes
+  # `tmux display-message -t %181` succeed; an unconditional agent-state
+  # stub on AGENT_STATE_CMD makes the inspector probe exit zero. With
+  # fresh last_evidence_ms seeded at arm, watch_tick exits early under
+  # the silence-window check and the watch must still be armed after
+  # the iter.
+  mock_pane "%181" "11081" "armed agent" "/tmp"
+  local prior_agent_state_cmd="${AGENT_STATE_CMD:-}"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/stub-agent-state-ok"
+  chmod +x "$MOCK_BIN/stub-agent-state-ok"
+  export AGENT_STATE_CMD="$MOCK_BIN/stub-agent-state-ok"
+  local w_armed
+  w_armed=$(_arm_on "%181") || return 1
+
+  # delivering with one prior attempt — must be demoted to
+  # delivery_failed in place and retried; the retry fails so the
+  # observable state is delivery_failed afterward.
+  local w_delivering
+  w_delivering=$(_stage_delivering "%182" 1) || return 1
+
+  # resolved with zero prior attempts — must be delivered.
+  local w_resolved
+  w_resolved=$(_arm_on "%183") || return 1
+  watch_resolve "$w_resolved" idle || return 1
+
+  # delivery_failed with two prior attempts — must be retried, budget
+  # preserved (2 + 1 = 3, under MAX_DELIVERY_ATTEMPTS=5).
+  local w_failed
+  w_failed=$(_stage_delivery_failed "%184" 2) || return 1
+
+  export "$(_exit_var_name "$w_delivering")=7"
+  export "$(_exit_var_name "$w_resolved")=0"
+  export "$(_exit_var_name "$w_failed")=0"
+
+  # Plant two corrupt artefacts in the watch dir alongside the real
+  # records: a half-written record (parse error) and an empty file
+  # (no JSON value). The per-file loop tolerated both via `|| continue`
+  # on each per-record jq; the collapsed jq must too.
+  local watch_dir="$_EVENTSD_STATE_DIR/watches"
+  printf '{ "watch_id": "truncated' > "$watch_dir/zz_corrupt_truncated.json"
+  : > "$watch_dir/zz_corrupt_empty.json"
+
+  _eventsd_service_iterate || return 1
+
+  local rec c
+
+  # pending: untouched.
+  rec=$(watch_get "$w_pending")
+  assert_json_field "$rec" .state pending || return 1
+  c=$(grep -c "^$w_pending " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 0 "${c:-0}" || return 1
+
+  # armed: untouched (fresh evidence keeps watch_tick a no-op).
+  rec=$(watch_get "$w_armed")
+  assert_json_field "$rec" .state armed || return 1
+  c=$(grep -c "^$w_armed " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 0 "${c:-0}" || return 1
+
+  # delivering: demoted, one retry, attempts = 1 + 1 = 2.
+  rec=$(watch_get "$w_delivering")
+  assert_json_field "$rec" .state delivery_failed || return 1
+  assert_json_field "$rec" .delivery_attempts 2 || return 1
+  c=$(grep -c "^$w_delivering " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 1 "${c:-0}" || return 1
+
+  # resolved: delivered, attempts = 1.
+  rec=$(watch_get "$w_resolved")
+  assert_json_field "$rec" .state delivered || return 1
+  assert_json_field "$rec" .delivery_attempts 1 || return 1
+  c=$(grep -c "^$w_resolved " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 1 "${c:-0}" || return 1
+
+  # delivery_failed: delivered, attempts = 2 + 1 = 3.
+  rec=$(watch_get "$w_failed")
+  assert_json_field "$rec" .state delivered || return 1
+  assert_json_field "$rec" .delivery_attempts 3 || return 1
+  c=$(grep -c "^$w_failed " "$DELIVER_LOG" 2>/dev/null || true)
+  assert_eq 1 "${c:-0}" || return 1
+
+  rm -f "$watch_dir/zz_corrupt_truncated.json" "$watch_dir/zz_corrupt_empty.json"
+  if [[ -n "$prior_agent_state_cmd" ]]; then
+    export AGENT_STATE_CMD="$prior_agent_state_cmd"
+  else
+    unset AGENT_STATE_CMD
+  fi
+}
+run_test "service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files" \
+  test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files
+
 # ----- recent attention evidence (S3) -----
 
 suite "recent attention evidence"

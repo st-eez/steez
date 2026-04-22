@@ -1398,13 +1398,19 @@ _eventsd_build_notification_body() {
 _eventsd_service_iterate() {
   local dir="$_EVENTSD_STATE_DIR/watches"
   [[ -d "$dir" ]] || return 0
-  local file wid state pane
-  for file in "$dir"/*.json; do
-    [[ -f "$file" ]] || continue
-    wid=$(jq -r '.watch_id // empty' "$file" 2>/dev/null) || continue
+  # Snapshot (watch_id, state, pane_id) for every record in a single jq
+  # pass. The old loop forked three jq per file per tick (6N/s at 2Hz);
+  # this is one jq per tick regardless of N. `$(<"$f")` is a bash-native
+  # file read that does not fork. `jq -rR` reads each line raw and
+  # `fromjson?` emits nothing for malformed or empty records, so a
+  # corrupt or mid-tick-unlinked file skips silently instead of
+  # aborting the pass — the per-file `|| continue` tolerance the old
+  # loop had, preserved across the collapse. `--slurp` is deliberately
+  # avoided: slurping makes one parse error corrupt the whole tick.
+  local file wid state pane f
+  while IFS=$'\t' read -r wid state pane; do
     [[ -n "$wid" ]] || continue
-    state=$(jq -r '.state // empty' "$file" 2>/dev/null) || continue
-    pane=$(jq -r '.pane_id // empty' "$file" 2>/dev/null) || pane=""
+    file=$(_eventsd_watch_file "$wid")
     if [[ "$state" == "armed" && -n "$pane" ]] && ! _eventsd_pane_has_live_agent "$pane"; then
       watch_pane_close "$pane" >/dev/null 2>&1 || true
       continue
@@ -1437,7 +1443,14 @@ _eventsd_service_iterate() {
         watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
         ;;
     esac
-  done
+  done < <(
+    {
+      for f in "$dir"/*.json; do
+        [[ -f "$f" ]] || continue
+        printf '%s\n' "$(<"$f")"
+      done
+    } 2>/dev/null | jq -rR 'fromjson? | [.watch_id // "", .state // "", .pane_id // ""] | @tsv' 2>/dev/null || true
+  )
 }
 
 _cmd_serve() {
