@@ -2167,17 +2167,15 @@ test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files() {
   c=$(grep -c "^$w_delivering " "$DELIVER_LOG" 2>/dev/null || true)
   assert_eq 1 "${c:-0}" || return 1
 
-  # resolved: delivered, attempts = 1.
-  rec=$(watch_get "$w_resolved")
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 1 || return 1
+  # resolved: delivered (terminal — record disposed per steez-u7o7.1).
+  # Observable: deliver fired exactly once for this watch_id.
+  assert_eq "" "$(watch_get "$w_resolved")" || return 1
   c=$(grep -c "^$w_resolved " "$DELIVER_LOG" 2>/dev/null || true)
   assert_eq 1 "${c:-0}" || return 1
 
-  # delivery_failed: delivered, attempts = 2 + 1 = 3.
-  rec=$(watch_get "$w_failed")
-  assert_json_field "$rec" .state delivered || return 1
-  assert_json_field "$rec" .delivery_attempts 3 || return 1
+  # delivery_failed: delivered (terminal — record disposed per steez-u7o7.1).
+  # Observable: deliver fired exactly once on this iter (the retry).
+  assert_eq "" "$(watch_get "$w_failed")" || return 1
   c=$(grep -c "^$w_failed " "$DELIVER_LOG" 2>/dev/null || true)
   assert_eq 1 "${c:-0}" || return 1
 
