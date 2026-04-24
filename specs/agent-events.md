@@ -148,7 +148,29 @@ The daemon must capture the baseline before the turn becomes live.
 
 A pending watch never notifies. It only buffers fresh evidence.
 
-If `watch.start` never arrives, the watch closes with `pending_timeout`.
+If `watch.start` never arrives, the daemon reaps the pending watch on its next tick through a dedicated pending-liveness authority and a hard cap. Age alone is not a close trigger — a live pane with a pending watch must NOT close just because the record is several seconds old, because `agent-send`'s synchronous `prearm -> deliver -> start` sequence can legitimately hold a watch in pending across multi-second work (steez-z6ti).
+
+The pending-liveness authority returns one of four states, evaluated in this order:
+
+- **`dead_pane`**: tmux cannot locate the pane. Close via the pane-close branch with `close_reason=pane_closed`.
+- **`agent_gone`**: tmux has the pane but `agent-state` proves no recognized agent runs under it (the dedicated "not a recognized AI agent" signal that only fires after the inspector walks the pane's process tree). Close via the pane-close branch with `close_reason=pane_closed`.
+- **`indeterminate`**: tmux has the pane but `agent-state` failed for a reason we cannot attribute to "agent gone" (transient error, missing dependency, timeout). Stay pending — the daemon cannot prove the agent is gone, so closing would silently drop a legitimate live watch.
+- **`live`**: tmux has the pane and `agent-state` succeeded. Stay pending.
+
+A hard cap runs independently of the authority. When the pending record's age reaches `PREARM_HARD_CAP_MS` (default 60s) and the authority did not already close the watch, the daemon closes it with `close_reason=pending_timeout`. This is the only path from the tick loop that records `pending_timeout`; it covers clients that called prearm and never followed up with `watch.start`.
+
+The hard-cap age anchor is the `pending_at_ms` field stamped on the record at `watch_create_pending` time from the daemon clock (steez-es21). It must be millisecond-grade — `stat %m * 1000` truncation on the record file's mtime is not acceptable because it silently quantizes the cap boundary to whole seconds. Tests prove the boundary at ms precision by driving `EVENTSD_NOW_MS` at sub-second offsets from the stored `pending_at_ms`. Older records that predate this field may fall back to file mtime for one-off restart recovery only.
+
+The armed-path dead-pane helper (`_eventsd_pane_has_live_agent`) must NOT be reused for pending close decisions. It treats every `agent-state` failure as "dead" and silently conflates inspector flake with agent gone.
+
+Same-watch pending-state transitions must be serialized under a kernel-arbitrated advisory lock, not a shell-level symlink-and-rm or mkdir-and-pid-file scheme (steez-es21). Shell-level schemes cannot be made race-safe without compare-and-swap: a waiter's `readlink → kill -0 → rm` cycle TOCTOU-wipes a freshly-acquired valid lock if the holder released between check and rm, letting two callers both think they hold it. The daemon takes per-key `flock(2)` via `perl -MFcntl=:flock`; holder identity is the open file description, durable from acquisition (the kernel atomically installs the lock on the OFD) and bound to the acquirer's process lifetime (when the last fd to the OFD closes — whether through normal release or SIGKILL — the kernel releases the lock). The lock covers:
+
+- `watch_arm`, `watch_pending_timeout`, `watch_pane_close`'s pending branch, `watch_remove`, and `watch_create_pending`'s supersede-close — all keyed on the target watch id.
+- `watch_create_pending`'s full critical section (live-slot read, supersede close, record write, live-slot write) — keyed on the pane. Without the pane lock, two concurrent prearms on the same pane both read an empty live slot, both skip supersede, and both write a pending record; whichever loses the live-slot write is orphaned from the live slot and accumulates on disk.
+
+Each locked body must re-read state inside the lock — whichever transition runs second sees the post-first state and no-ops — so a stale `watch.start` cannot resurrect a concurrently-closed watch regardless of which transition "finished first."
+
+`$STEEZ_STATE_DIR` is required to live on a local filesystem; flock semantics on NFS are historically flaky. This is the same constraint the daemon already imposes for its singleton serve lock.
 
 ### `armed`
 
@@ -250,7 +272,7 @@ On pane close:
 
 On daemon restart, the daemon must restore enough watch state to preserve turn freshness and delivery idempotency. At minimum:
 
-- `pending` closes as `pending_timeout`
+- `pending` re-enters the same pending reaper rules: dead pane closes as `pane_closed`; live pane past `PREARM_HARD_CAP_MS` closes as `pending_timeout`; otherwise it stays pending
 - `armed` gets one reconciliation pass before fresh fast-path evidence is allowed to resolve it
 - a restart-time `blocked:unknown` reconcile sample leaves the watch armed
 - `resolved` is re-delivered with the same `watch_id`
@@ -356,7 +378,7 @@ refresh pass so the sink stays consistent.
 
 These defaults are part of v1:
 
-- `PREARM_TIMEOUT_MS = 5000`
+- `PREARM_HARD_CAP_MS = 60000` (hard cap that closes a stuck live-pending watch as `pending_timeout`)
 - `RECONCILE_INTERVAL_MS = 5000`
 - `SILENCE_WINDOW_MS = 30000`
 - `INDETERMINATE_TIMEOUT_MS = 120000` (diagnostic threshold, not a resolution timeout — see Degraded fallback)
@@ -385,7 +407,7 @@ This spec is normative. Tests should prove the rules above. They should not repl
 1. **Primary-path tests go through the service.** Tests that exercise watch lifecycle on the primary path must drive behavior through the client commands (`prearm`, `start`, `remove`, `list`, `status`) against a running `agent-eventsd` service. They must not call `watch_tick`, `watch_pending_timeout`, `watch_arm`, `watch_create_pending`, or any `_eventsd_*` helper directly. Those are internal to the daemon; driving them from tests bypasses the runtime under test.
 2. **Runtime harnesses own service lifetime in explicit-service mode.** When a harness sets `EVENTSD_REQUIRE_EXPLICIT_SERVICE=1`, it must start the service explicitly, stop it explicitly, and tear it down before deleting the temp state tree or tmux server.
 3. **Internal-function tests are kernel coverage, not runtime coverage.** Unit tests that exercise individual functions inside the daemon are useful for kernel correctness but do not prove the runtime works. A suite that passes entirely by calling internal helpers, with no end-to-end coverage against a live service, does not satisfy this spec.
-4. **Timers run in the service.** Tests that need to exercise `PREARM_TIMEOUT_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
+4. **Timers run in the service.** Tests that need to exercise `PREARM_HARD_CAP_MS`, `SILENCE_WINDOW_MS`, `INDETERMINATE_TIMEOUT_MS`, or delivery retry must do so by advancing the service's clock, not by invoking the timeout function directly from the test process.
 5. **Fake only the agent process.** End-to-end coverage runs against the zero-token fakes defined in `specs/fake-agent-harness.md`. The test seam is the `claude` / `codex` binary on `$PATH`; `spawn.sh`, `agent-send`, `agent-deliver`, `agent-eventsd`, `agent-watch`, `agent-history`, and `agent-state` stay real.
 6. **Assert through the public surface.** Primary-path tests must not prove behavior by reading files under `$STEEZ_STATE_DIR/eventsd/` directly. Use `agent-watch`, spawner-pane output, and other public runtime surfaces.
 7. **The primary path routes through `agent-eventsd`.** End-to-end runtime coverage must prove that every primary-path scenario drives the live `agent-eventsd` service: the service pidfile is alive, lifecycle state lands in `$STEEZ_STATE_DIR/eventsd/`, and `agent-watch daemon-status` reports eventsd health.
@@ -400,6 +422,7 @@ Keep the acceptance set short and derived from behavior:
 5. Degraded watches reconcile through `agent-state` and stay armed while reconcile keeps proving `working` (or the fuzzy `blocked:unknown` with an advancing cursor). A degraded episode that runs past `INDETERMINATE_TIMEOUT_MS` without a live-resolving terminal ping must stay armed and log a single diagnostic line per episode — the daemon must not mature the live watch to terminal `blocked:unknown` (steez-fyjy).
 6. Restart recovery preserves the same `watch_id` and bounded delivery attempts.
 7. `agent-eventsd status` returns `ready` only when the service process is running and responsive; killing the service flips the result to `unavailable`.
+8. A live-pending watch whose pane is still up does not close on age alone. A pending watch closes with `close_reason=pane_closed` when the pane is gone OR when the pane is present but the recognized agent is provably gone (`agent-state` emits the dedicated "not a recognized AI agent" signal). A pending watch past `PREARM_HARD_CAP_MS` on a live or indeterminate pane closes with `close_reason=pending_timeout`; the age anchor is the `pending_at_ms` field on the record, not file mtime, so the boundary holds at ms precision (steez-es21). An inspector flake that cannot prove the agent gone keeps the watch pending. Same-watch transitions (`watch_arm`, `watch_pending_timeout`, `watch_pane_close` pending-branch, `watch_remove`, `watch_create_pending` supersede) and same-pane `watch_create_pending` calls are serialized under kernel-arbitrated `flock(2)` locks (steez-es21) — not shell-level symlink/mkdir schemes which are inherently TOCTOU-racy — so a stale `watch.start` cannot resurrect a closed watch and two concurrent prearms cannot leave a pending record orphaned from the pane's live slot (steez-z6ti, steez-es21).
 
 ## Verification requirements
 

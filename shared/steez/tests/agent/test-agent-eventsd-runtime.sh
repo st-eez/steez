@@ -1325,5 +1325,90 @@ test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s() {
 run_test "codex Stop hook fires agent-eventsd evidence and notification arrives within 2s" \
   test_codex_stop_hook_fires_evidence_and_notification_arrives_within_2s
 
+# Pending-watch reaper live-service contract (steez-z6ti). On the live
+# service, a pending watch on a live pane must survive a multi-second
+# gap between `agent-eventsd prearm` and `agent-eventsd start`. Age
+# alone cannot be a close trigger (the old reaper conflated a live
+# delay with a stuck prearm at 5s). The gap here exceeds the old
+# PREARM_TIMEOUT_MS=5000 window by more than 2x while staying well
+# under PREARM_HARD_CAP_MS, so the only way this test goes green is if
+# the live-service tick loop no longer closes on age alone.
+test_live_service_keeps_pending_across_long_prearm_to_start_gap() {
+  setup_runtime
+  trap cleanup_runtime EXIT
+
+  local target spawner
+  run_spawn_into target  claude
+  run_spawn_into spawner claude
+  [[ "$target" != "$spawner" ]] || { echo "    target and spawner are the same pane ($target)"; exit 1; }
+
+  # Fast tick so the service runs many reaper passes inside the gap.
+  EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    start_runtime_eventsd_service || { echo "    service failed to start"; exit 1; }
+
+  local wid prearm_rc=0 prearm_out
+  prearm_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    EVENTSD_TICK_INTERVAL_SEC=0.1 \
+    "$BIN_DIR/agent-eventsd" prearm \
+      --pane "$target" --spawner "$spawner" --label claude \
+      --baseline-state working 2>&1) || prearm_rc=$?
+  [[ "$prearm_rc" -eq 0 ]] || {
+    echo "    agent-eventsd prearm failed (rc=$prearm_rc):"
+    printf '%s\n' "$prearm_out" | sed 's/^/      /'
+    exit 1
+  }
+  wid=$(printf '%s\n' "$prearm_out" | tail -1 | tr -d '[:space:]')
+  [[ -n "$wid" ]] || {
+    echo "    prearm did not print a watch_id. Output:"
+    printf '%s\n' "$prearm_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Poll the watch record for >10s to prove the service keeps ticking
+  # without closing. Old code would close at t=5s with pending_timeout.
+  # agent-eventsd list emits one JSON record per line; assert the
+  # watch_id is present and still in state "pending" throughout.
+  local deadline start_ms now_ms list rec_state
+  start_ms=$(date +%s%N)
+  start_ms=$(( start_ms / 1000000 ))
+  deadline=$(( start_ms + 10500 ))
+  while :; do
+    list=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+      "$BIN_DIR/agent-eventsd" list 2>/dev/null || true)
+    rec_state=$(printf '%s\n' "$list" | jq -r --arg w "$wid" \
+      'select(.watch_id == $w) | .state' 2>/dev/null | head -1)
+    if [[ -z "$rec_state" ]]; then
+      echo "    watch $wid vanished before start. eventsd list:"
+      printf '%s\n' "$list" | sed 's/^/      /'
+      exit 1
+    fi
+    [[ "$rec_state" == "pending" ]] || {
+      echo "    watch $wid is in state $rec_state, expected pending"
+      exit 1
+    }
+    now_ms=$(date +%s%N)
+    now_ms=$(( now_ms / 1000000 ))
+    (( now_ms >= deadline )) && break
+    sleep 0.25
+  done
+
+  # After the gap, watch.start must succeed and the record must arm.
+  local start_rc=0 start_out
+  start_out=$(PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    "$BIN_DIR/agent-eventsd" start --pane "$target" --watch-id "$wid" 2>&1) || start_rc=$?
+  [[ "$start_rc" -eq 0 ]] || {
+    echo "    agent-eventsd start failed after long gap (rc=$start_rc):"
+    printf '%s\n' "$start_out" | sed 's/^/      /'
+    exit 1
+  }
+
+  # Explicit cleanup: remove the watch so the test leaves no armed
+  # record behind.
+  PATH="$TEST_BIN:$PATH" HOME="$HOME" STEEZ_STATE_DIR="$STEEZ_STATE_DIR" \
+    "$BIN_DIR/agent-eventsd" remove "$target" >/dev/null 2>&1 || true
+}
+run_test "live service keeps pending across long prearm-to-start gap (steez-z6ti)" \
+  test_live_service_keeps_pending_across_long_prearm_to_start_gap
+
 drain_tests
 report

@@ -25,17 +25,24 @@ _EVENTSD_STATE_DIR="${STEEZ_STATE_DIR:-$HOME/.steez/state}/eventsd"
 : "${SILENCE_WINDOW_MS:=30000}"
 : "${RECONCILE_INTERVAL_MS:=5000}"
 : "${INDETERMINATE_TIMEOUT_MS:=120000}"
-: "${PREARM_TIMEOUT_MS:=5000}"
+: "${PREARM_HARD_CAP_MS:=60000}"
 
-# Monotonic clock in ms. Tests set EVENTSD_NOW_MS to drive the fake clock
-# deterministically. Real daemon reads wall time; sub-second precision is
-# not required by the spec, so a ms-from-seconds reading is fine.
+# Wall-clock in milliseconds. Tests set EVENTSD_NOW_MS to drive a fake
+# clock deterministically. The real-clock path is ms-grade — the spec's
+# `pending_at_ms` anchor requires sub-second resolution so the hard-cap
+# boundary at cap±1ms is distinguishable. A `date +%s * 1000` reading
+# quantizes to whole seconds and silently narrows that contract.
+#
+# perl(1) is already a hard daemon dep (flock supervisor, per-key
+# `_eventsd_with_lock`); Time::HiRes::time is core since 5.8, so reusing
+# it here adds no new dependency. Cost is ~5ms per call on macOS/Linux,
+# well inside the 2Hz tick budget.
 _eventsd_now_ms() {
   if [[ -n "${EVENTSD_NOW_MS:-}" ]]; then
     printf '%s' "$EVENTSD_NOW_MS"
     return
   fi
-  printf '%s' "$(( $(date +%s) * 1000 ))"
+  perl -MTime::HiRes=time -e 'printf "%d", int(time() * 1000)'
 }
 
 # Map arbitrary pane ids (e.g. '%42', 'main:0.1') to filesystem-safe
@@ -66,6 +73,179 @@ _eventsd_atomic_write() {
     _eventsd_test_hook_post_stage "$target" "$tmp"
   fi
   mv -f "$tmp" "$target"
+}
+
+# _eventsd_with_lock <key> <cmd...>
+# Generic advisory lock keyed by <key>. Runs <cmd...> while holding an
+# exclusive flock(2) on $_EVENTSD_STATE_DIR/locks/<key>.lock, then
+# releases. Blocks up to EVENTSD_WATCH_LOCK_TIMEOUT_MS (default 5000)
+# waiting for the holder. Intra-process reentrancy: the same shell
+# re-entering the same key short-circuits to the inner command, so a
+# locked caller may invoke a locked helper without deadlocking.
+#
+# Why flock, not symlink+pid (steez-es21):
+#   - A symlink-based scheme cannot be made race-safe in pure shell.
+#     Stale detection is `readlink → kill -0 → rm`, which is time-of-
+#     check-time-of-use: between our readlink and our rm, the previous
+#     holder may have released and a new holder may have created a
+#     valid symlink, and our rm then wipes the new holder's entry —
+#     two callers then think they hold the lock. We hit this in
+#     testing with multiple workers racing the same lock; symlink(2)
+#     itself is atomic, but `rm` is not "only if content still matches".
+#   - flock(2) is kernel-arbitrated. The kernel tracks the holder via
+#     the open file description, not a shell-level pid string. Holder
+#     identity is durable from acquisition to release (caveat 1) and
+#     dies with the acquirer (caveat 2): when the holding subshell
+#     exits, its last reference to the OFD closes and the kernel
+#     releases the lock — no stale detection, no reclaim path, no
+#     race.
+#   - perl(1) is already a daemon dependency (the service uses
+#     `perl -MFcntl=:flock` to gate the singleton serve loop). Reusing
+#     it for per-key locks costs a perl fork per acquire (~few ms);
+#     per-key critical sections are small (<50ms) so this is fine at
+#     the 2Hz tick rate.
+#
+# The namespace prefix (`w-` for watch keys, `p-` for pane keys) keeps
+# per-watch locks and per-pane locks in distinct key spaces, so a caller
+# can hold a pane lock and then take a watch lock on a wid inside that
+# pane without deadlocking and without key collisions.
+#
+# $STEEZ_STATE_DIR is required to live on a local filesystem — flock
+# semantics on NFS are historically flaky. Same constraint the daemon
+# already imposes for its singleton lock.
+_eventsd_with_lock() {
+  local key="$1"; shift
+  local lock_file="$_EVENTSD_STATE_DIR/locks/$key.lock"
+  mkdir -p "$_EVENTSD_STATE_DIR/locks" 2>/dev/null || true
+
+  local marker=" ${key} "
+  if [[ "${_EVENTSD_LOCKS_HELD:- }" == *"$marker"* ]]; then
+    "$@"
+    return
+  fi
+
+  # Ensure the lock file exists. flock(2) requires an open fd; the
+  # file itself is just a handle — its contents are ignored.
+  : > "$lock_file" 2>/dev/null || true
+  # Also clean up any pre-es21 symlink artifact that lived at the
+  # unsuffixed lock path. Tests and migrations need the old path gone
+  # so `[[ -e ]]` checks on it do not mislead callers.
+  local legacy_path="$_EVENTSD_STATE_DIR/locks/$key"
+  if [[ -L "$legacy_path" || -e "$legacy_path" ]]; then
+    rm -rf "$legacy_path" 2>/dev/null || true
+  fi
+
+  local deadline_ms="${EVENTSD_WATCH_LOCK_TIMEOUT_MS:-5000}"
+  local rc=0
+
+  # Open fd 9 on the lock file, run perl to acquire the flock, then
+  # run "$@" in the same subshell. The trick: perl's stdin is a dup
+  # of fd 9 (same OFD), so perl's `flock(STDIN, LOCK_EX)` holds the
+  # lock on the shared OFD. When perl exits, its fd 0 closes but
+  # bash's fd 9 is still open on the same OFD — the OFD refcount
+  # stays above zero and the lock stays held (verified on Linux and
+  # BSD/macOS: flock locks are associated with the OFD, released on
+  # last-fd-close). Bash then runs "$@" in the same subshell, with
+  # full access to the daemon's functions. When the subshell exits,
+  # fd 9 closes, the kernel drops the OFD, and the lock releases —
+  # no shell-level rm path to race.
+  (
+    exec 9>>"$lock_file"
+    if ! perl -MFcntl=:flock -MTime::HiRes=time,sleep -e '
+      use strict;
+      my $deadline = time() + ($ARGV[0] / 1000.0);
+      until (flock(STDIN, LOCK_EX | LOCK_NB)) {
+        exit 1 if time() >= $deadline;
+        sleep(0.01);
+      }
+    ' "$deadline_ms" <&9 2>/dev/null; then
+      echo "_eventsd_with_lock: timeout waiting for $key" >&2
+      exit 1
+    fi
+    _EVENTSD_LOCKS_HELD="${_EVENTSD_LOCKS_HELD:- }${key} "
+    "$@"
+  ) || rc=$?
+  return $rc
+}
+
+# _eventsd_with_watch_lock <watch_id> <cmd...>
+# Per-watch critical section. Primary serialization primitive for
+# pending-state transitions: watch_arm, watch_pending_timeout,
+# watch_remove, watch_pane_close's pending branch, and the supersede
+# close inside watch_create_pending. Same-watch transitions under the
+# same lock are totally ordered so a stale watch.start race
+# (steez-z6ti) cannot resurrect a concurrently-closed record — the
+# closer and the armer are serialized, and whichever runs second
+# re-reads state and bails.
+_eventsd_with_watch_lock() {
+  local wid="$1"; shift
+  _eventsd_with_lock "w-$wid" "$@"
+}
+
+# _eventsd_with_pane_lock <pane> <cmd...>
+# Per-pane critical section. Required for watch_create_pending
+# (steez-es21): two concurrent prearms on the same pane would
+# otherwise both read the empty live slot, both skip supersede, both
+# write a pending record, and both write the live slot — leaving one
+# record orphaned from the pane's live slot. Serializing the full
+# supersede-read + record-write + live-slot-write under this lock is
+# strictly stronger than a CAS-like rename guard would be because the
+# write set spans three files.
+_eventsd_with_pane_lock() {
+  local pane="$1"; shift
+  local key
+  key=$(_eventsd_pane_key "$pane")
+  _eventsd_with_lock "p-$key" "$@"
+}
+
+# _eventsd_pending_pane_status <pane>
+# Liveness authority for pending-state close decisions (steez-z6ti).
+# Unlike _eventsd_pane_has_live_agent, which conflates pane existence
+# with transient inspector success, this returns one of four states so
+# the pending reaper can distinguish "pane gone" from "agent gone" from
+# "inspector flake":
+#   dead_pane     — tmux cannot find the pane.
+#   agent_gone    — tmux has the pane but agent-state proved no
+#                   recognized agent runs under it.
+#   indeterminate — tmux has the pane but agent-state failed for a
+#                   reason we cannot attribute to "agent gone"
+#                   (transient error, missing dependency, timeout).
+#   live          — tmux has the pane and agent-state succeeded.
+#
+# Callers close pending on dead_pane / agent_gone (via watch_pane_close
+# → close_reason=pane_closed). On indeterminate / live they keep pending
+# and let the hard cap be the only timeout path.
+_eventsd_pending_pane_status() {
+  local pane="$1"
+  [[ -n "$pane" ]] || { printf 'dead_pane'; return 0; }
+  if ! command -v tmux >/dev/null 2>&1; then
+    printf 'indeterminate'
+    return 0
+  fi
+  if ! tmux display-message -t "$pane" -p '#{pane_id}' >/dev/null 2>&1; then
+    printf 'dead_pane'
+    return 0
+  fi
+  local cmd="${AGENT_STATE_CMD:-agent-state}"
+  local tmp_err rc=0 err
+  tmp_err=$(mktemp) || { printf 'indeterminate'; return 0; }
+  "$cmd" "$pane" >/dev/null 2>"$tmp_err" || rc=$?
+  err=$(cat "$tmp_err" 2>/dev/null || true)
+  rm -f "$tmp_err" 2>/dev/null || true
+  if (( rc == 0 )); then
+    printf 'live'
+    return 0
+  fi
+  # agent-state emits "not a recognized AI agent" only after walking the
+  # pane's process tree and finding no claude/codex/ren descendant.
+  # That is the only agent-state error we treat as "provably gone";
+  # everything else stays indeterminate so a flake keeps pending live.
+  if [[ "$err" == *"not a recognized AI agent"* ]]; then
+    printf 'agent_gone'
+    return 0
+  fi
+  printf 'indeterminate'
+  return 0
 }
 
 # seq_next <pane> — assign the next monotonic seq for <pane> and
@@ -424,19 +604,48 @@ watch_create_pending() {
     fi
   done
 
+  [[ -n "$watch_id" ]] || watch_id=$(_eventsd_gen_id)
+  [[ -n "$turn_id" ]] || turn_id=$(_eventsd_gen_id)
+
+  mkdir -p "$_EVENTSD_STATE_DIR/watches" "$_EVENTSD_STATE_DIR/index/live"
+
+  # Serialize the whole prearm critical section under the per-pane
+  # lock (steez-es21). Two concurrent prearms on the same pane would
+  # otherwise both read an empty live slot, both skip the supersede
+  # close, and both write a pending record + live_file — leaving
+  # whichever lost the live_file write orphaned from the pane's live
+  # slot. Locking across supersede + write closes that window.
+  _eventsd_with_pane_lock "$pane" \
+    _eventsd_watch_create_pending_commit \
+      "$pane" "$spawner" "$label" "$baseline" "$hash" "$cursor" \
+      "$prearm_seq" "$watch_id" "$turn_id"
+}
+
+# Locked body for watch_create_pending. Must only be invoked through
+# _eventsd_with_pane_lock so the live-slot read, the supersede close,
+# the new pending record write, and the live_file write are one
+# atomic unit against concurrent prearms on the same pane.
+_eventsd_watch_create_pending_commit() {
+  local pane="$1" spawner="$2" label="$3" baseline="$4" hash="$5"
+  local cursor="$6" prearm_seq="$7" watch_id="$8" turn_id="$9"
+
   # Spec (Live and draining watches): "A new turn.prearm supersedes any
-  # existing live watch on that pane without waiting for draining delivery
-  # to finish." The prior live watch closes with close_reason=superseded
-  # (spec: watch lifecycle — "Explicit removal or live-watch supersession
-  # closes an unresolved watch without delivery"). Draining watches on the
-  # same pane are untouched — they occupy the draining ledger, not the
-  # live slot.
+  # existing live watch on that pane without waiting for draining
+  # delivery to finish." The prior live watch closes with
+  # close_reason=superseded. Draining watches on the same pane are
+  # untouched — they occupy the draining ledger, not the live slot.
   local live_file
   live_file=$(_eventsd_live_file "$pane")
   if [[ -s "$live_file" ]]; then
     local prior_wid
     prior_wid=$(cat "$live_file")
-    _eventsd_close "$prior_wid" "$pane" "superseded"
+    # Nest the per-watch lock inside the per-pane lock so the
+    # supersede close is also ordered against any in-flight same-watch
+    # transition (watch_arm, watch_pending_timeout, watch_pane_close)
+    # on the prior wid (steez-z6ti). The namespace prefixes keep the
+    # two locks in distinct key spaces, so nesting is safe.
+    _eventsd_with_watch_lock "$prior_wid" \
+      _eventsd_close "$prior_wid" "$pane" "superseded"
   fi
 
   # Turn boundary: any attention record from a prior turn is stale now.
@@ -444,10 +653,12 @@ watch_create_pending() {
   # the new turn, and propagate the clear to the inline sinks.
   _eventsd_clear_attention "$pane"
 
-  [[ -n "$watch_id" ]] || watch_id=$(_eventsd_gen_id)
-  [[ -n "$turn_id" ]] || turn_id=$(_eventsd_gen_id)
-
-  mkdir -p "$_EVENTSD_STATE_DIR/watches" "$_EVENTSD_STATE_DIR/index/live"
+  # Stamp `pending_at_ms` from the daemon clock (steez-es21). The
+  # pending reaper uses this field — not `stat %m * 1000` — as the
+  # hard-cap age anchor, so the cap boundary is ms-precise instead of
+  # second-truncated.
+  local now_ms
+  now_ms=$(_eventsd_now_ms)
 
   local record
   record=$(jq -cn \
@@ -460,6 +671,7 @@ watch_create_pending() {
     --arg prearm_screen_hash "$hash" \
     --argjson prearm_transcript_cursor "$cursor" \
     --argjson prearm_seq "$prearm_seq" \
+    --argjson pending_at_ms "$now_ms" \
     '{
        watch_id: $watch_id,
        turn_id: $turn_id,
@@ -470,6 +682,7 @@ watch_create_pending() {
        prearm_screen_hash: $prearm_screen_hash,
        prearm_transcript_cursor: $prearm_transcript_cursor,
        prearm_seq: $prearm_seq,
+       pending_at_ms: $pending_at_ms,
        start_seq: null,
        state: "pending"
      }')
@@ -557,7 +770,22 @@ watch_arm() {
       return 2
     fi
   done
+  # Serialize pending-state transitions under the per-watch lock so a
+  # concurrent watch_pending_timeout / watch_pane_close / watch_remove
+  # cannot race this arm into resurrecting a closed record (steez-z6ti).
+  _eventsd_with_watch_lock "$wid" \
+    _eventsd_watch_arm_locked "$pane" "$wid" "$start_seq"
+}
 
+# Locked body for watch_arm. Must only be invoked through
+# _eventsd_with_watch_lock so the pending → armed state read and the
+# armed record write are serialized against every other same-watch
+# transition. The live-watch lookup + state check + write must all
+# happen inside the same lock — otherwise a concurrent close between
+# the read and the write could unlink the record and we would
+# resurrect it by writing back.
+_eventsd_watch_arm_locked() {
+  local pane="$1" wid="$2" start_seq="$3"
   local live rec state live_wid
   live=$(watch_get_live "$pane")
   [[ -n "$live" ]] || { echo "watch_arm: pane $pane has no live watch" >&2; return 1; }
@@ -626,6 +854,15 @@ _eventsd_close() {
 watch_pending_timeout() {
   local wid="$1"
   [[ -n "$wid" ]] || { echo "watch_pending_timeout: missing watch_id" >&2; return 2; }
+  # Serialize with watch_arm / watch_remove / watch_pane_close on the
+  # same wid. Re-read state inside the lock: a concurrent arm may have
+  # already transitioned the watch out of pending (steez-z6ti).
+  _eventsd_with_watch_lock "$wid" \
+    _eventsd_watch_pending_timeout_locked "$wid"
+}
+
+_eventsd_watch_pending_timeout_locked() {
+  local wid="$1"
   local cur state pane
   cur=$(watch_get "$wid")
   [[ -n "$cur" ]] || { echo "watch_pending_timeout: no record for $wid" >&2; return 1; }
@@ -645,8 +882,28 @@ watch_pending_timeout() {
 watch_remove() {
   local pane="$1"
   [[ -n "$pane" ]] || { echo "watch_remove: missing pane" >&2; return 2; }
-  local cur state wid
+  local cur wid
   cur=$(watch_get_live "$pane")
+  [[ -n "$cur" ]] || return 0
+  wid=$(printf '%s' "$cur" | jq -r .watch_id)
+  [[ -n "$wid" ]] || return 0
+  # Serialize the close with watch_arm and the tick-loop reaper.
+  _eventsd_with_watch_lock "$wid" \
+    _eventsd_watch_remove_locked "$pane" "$wid"
+}
+
+_eventsd_watch_remove_locked() {
+  local pane="$1" wid="$2"
+  local cur state current_live current_wid
+  # Re-read live under the lock: a concurrent supersede or close may
+  # have rotated the live slot between the caller's read and now. If
+  # the pane's live watch no longer matches $wid, another transition
+  # already retired the watch we were asked to remove — nothing to do.
+  current_live=$(watch_get_live "$pane")
+  [[ -n "$current_live" ]] || return 0
+  current_wid=$(printf '%s' "$current_live" | jq -r .watch_id)
+  [[ "$current_wid" == "$wid" ]] || return 0
+  cur=$(watch_get "$wid")
   [[ -n "$cur" ]] || return 0
   state=$(printf '%s' "$cur" | jq -r .state)
   case "$state" in
@@ -656,7 +913,6 @@ watch_remove() {
       return 1
       ;;
   esac
-  wid=$(printf '%s' "$cur" | jq -r .watch_id)
   _eventsd_close "$wid" "$pane" "removed"
 }
 
@@ -1116,7 +1372,14 @@ watch_pane_close() {
   state=$(printf '%s' "$live" | jq -r .state)
   case "$state" in
     pending)
-      _eventsd_close "$wid" "$pane" "pane_closed"
+      # Serialize with watch_arm / watch_pending_timeout / watch_remove
+      # on the same wid. Re-read state inside the lock: a concurrent
+      # arm may have already transitioned the watch out of pending
+      # (steez-z6ti), in which case this call becomes a no-op and the
+      # armed branch below does not run — the armed branch takes a
+      # fresh live-read on the next tick.
+      _eventsd_with_watch_lock "$wid" \
+        _eventsd_watch_pane_close_pending_locked "$wid" "$pane"
       ;;
     armed)
       # Spec: "an armed watch gets one final reconciliation from
@@ -1155,6 +1418,19 @@ watch_pane_close() {
       watch_deliver_attempt "$wid" >/dev/null 2>&1 || true
       ;;
   esac
+}
+
+# Locked body for watch_pane_close's pending branch. Re-read state
+# inside the lock so a concurrent watch_arm that already transitioned
+# the watch cannot be silently unclosed by this call.
+_eventsd_watch_pane_close_pending_locked() {
+  local wid="$1" pane="$2"
+  local cur state
+  cur=$(watch_get "$wid")
+  [[ -n "$cur" ]] || return 0
+  state=$(printf '%s' "$cur" | jq -r .state)
+  [[ "$state" == "pending" ]] || return 0
+  _eventsd_close "$wid" "$pane" "pane_closed"
 }
 
 # watch_list — print JSONL of every known watch record.
@@ -1412,24 +1688,63 @@ _eventsd_service_iterate() {
   while IFS=$'\t' read -r wid state pane; do
     [[ -n "$wid" ]] || continue
     file=$(_eventsd_watch_file "$wid")
-    if [[ "$state" == "armed" && -n "$pane" ]] && ! _eventsd_pane_has_live_agent "$pane"; then
+    # Armed dead-pane sweep (unchanged). Pending has a dedicated
+    # authority below — _eventsd_pane_has_live_agent cannot be used
+    # for pending because it treats every agent-state failure as
+    # "dead", which silently closes a flaking-but-live watch
+    # (steez-z6ti).
+    if [[ "$state" == "armed" ]] \
+      && [[ -n "$pane" ]] \
+      && ! _eventsd_pane_has_live_agent "$pane"; then
       watch_pane_close "$pane" >/dev/null 2>&1 || true
       continue
     fi
     case "$state" in
       pending)
-        # Prearm reaper (spec: PREARM_TIMEOUT_MS). File mtime is the age
-        # anchor — stable because _eventsd_atomic_write preserves write
-        # time and watch_arm is the sole rewriter of pending, which
-        # transitions out. watch_pending_timeout is the sanctioned
-        # closer; call it directly (the CLI wrapper auto-starts the
-        # service, irrelevant inside the tick).
-        local timeout_ms mtime_ms now_ms age_ms
-        timeout_ms="${PREARM_TIMEOUT_MS:-5000}"
-        mtime_ms=$(( $(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0) * 1000 ))
+        # Pending reaper (steez-z6ti). Three outcomes, in order:
+        #
+        #   1. Dead pane (tmux has no record): close via
+        #      watch_pane_close → reason=pane_closed.
+        #   2. Pane present + recognized agent provably gone:
+        #      same — close via watch_pane_close → pane_closed.
+        #   3. Pane present + inspector flake OR agent alive:
+        #      stay pending unless mtime age exceeds
+        #      PREARM_HARD_CAP_MS, in which case close via
+        #      watch_pending_timeout → reason=pending_timeout.
+        #
+        # Age alone is never a trigger. The hard cap is the only
+        # path from the tick loop that still closes a live-pending
+        # watch as pending_timeout — it covers clients that called
+        # prearm and never followed up with watch.start.
+        #
+        # The watch record's mtime is stable because
+        # _eventsd_atomic_write preserves write time and watch_arm
+        # is the sole rewriter of pending.
+        local pstatus
+        if [[ -n "$pane" ]]; then
+          pstatus=$(_eventsd_pending_pane_status "$pane")
+          case "$pstatus" in
+            dead_pane|agent_gone)
+              watch_pane_close "$pane" >/dev/null 2>&1 || true
+              continue
+              ;;
+          esac
+        fi
+        local hard_cap_ms anchor_ms now_ms age_ms
+        hard_cap_ms="${PREARM_HARD_CAP_MS:-60000}"
+        # `pending_at_ms` is the daemon clock at watch_create_pending
+        # time (steez-es21). Ms-precise, so the hard cap boundary is
+        # ms-precise instead of second-truncated. Fallback to mtime
+        # only for records written by a pre-es21 daemon still present
+        # on disk after restart — legacy compatibility, not the
+        # primary path.
+        anchor_ms=$(jq -r '.pending_at_ms // empty' "$file" 2>/dev/null || true)
+        if [[ -z "$anchor_ms" || "$anchor_ms" == "null" ]]; then
+          anchor_ms=$(( $(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file" 2>/dev/null || echo 0) * 1000 ))
+        fi
         now_ms=$(_eventsd_now_ms)
-        age_ms=$(( now_ms - mtime_ms ))
-        if (( mtime_ms > 0 && age_ms >= timeout_ms )); then
+        age_ms=$(( now_ms - anchor_ms ))
+        if (( anchor_ms > 0 && age_ms >= hard_cap_ms )); then
           watch_pending_timeout "$wid" >/dev/null 2>&1 || true
         fi
         ;;

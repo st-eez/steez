@@ -2096,23 +2096,26 @@ suite "service iterate state routing (steez-u7o7.2)"
 test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files() {
   _install_bead7_deliver_mock
 
-  # pending — no case in the switch acts on it. No tmux registration
-  # needed; the pane_has_live_agent gate is keyed on state==armed.
+  # pending — must look live so the dead-pane sweep (steez-z6ti) does
+  # not route the watch through watch_pane_close before the tick reaches
+  # the switch. With the pane registered and agent-state stubbed, the
+  # pending branch falls through the hard-cap check (age 0 under the
+  # 60s default) and the watch must still be pending after the iter.
+  mock_pane "%180" "11080" "pending agent" "/tmp"
+  local prior_agent_state_cmd="${AGENT_STATE_CMD:-}"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/stub-agent-state-ok"
+  chmod +x "$MOCK_BIN/stub-agent-state-ok"
+  export AGENT_STATE_CMD="$MOCK_BIN/stub-agent-state-ok"
   local w_pending
   w_pending=$(_mk_pending "%180") || return 1
 
   # armed — needs to look live so the pane_has_live_agent gate does not
   # close the watch before reaching the case statement. mock_pane makes
-  # `tmux display-message -t %181` succeed; an unconditional agent-state
-  # stub on AGENT_STATE_CMD makes the inspector probe exit zero. With
-  # fresh last_evidence_ms seeded at arm, watch_tick exits early under
-  # the silence-window check and the watch must still be armed after
-  # the iter.
+  # `tmux display-message -t %181` succeed; the agent-state stub above
+  # covers the inspector probe. With fresh last_evidence_ms seeded at
+  # arm, watch_tick exits early under the silence-window check and the
+  # watch must still be armed after the iter.
   mock_pane "%181" "11081" "armed agent" "/tmp"
-  local prior_agent_state_cmd="${AGENT_STATE_CMD:-}"
-  printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/stub-agent-state-ok"
-  chmod +x "$MOCK_BIN/stub-agent-state-ok"
-  export AGENT_STATE_CMD="$MOCK_BIN/stub-agent-state-ok"
   local w_armed
   w_armed=$(_arm_on "%181") || return 1
 
@@ -2189,54 +2192,1113 @@ test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files() {
 run_test "service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files" \
   test_service_iterate_routes_all_lifecycle_states_and_tolerates_corrupt_files
 
-# ----- pending-watch timeout via tick loop (steez-u7o7.3) -----
+# ----- pending-watch reaper (steez-z6ti) -----
 #
-# Spec (agent-events.md): PREARM_TIMEOUT_MS=5000. If watch.start never
-# arrives, the prearm closes with pending_timeout. The tick loop is the
-# reaper: mtime is the age anchor because _eventsd_atomic_write preserves
-# write time and watch_arm is the only rewriter of pending (which
-# transitions out). A fake clock anchored to the file's real mtime
-# exercises the age comparison deterministically.
+# Spec (agent-events.md): the pending reaper splits on a dedicated
+# liveness authority that distinguishes pane missing, recognized agent
+# provably gone, and inspector flake. Age alone never closes a live
+# pending — the only age-based close path is PREARM_HARD_CAP_MS, and
+# it only fires while the pane is present and not provably dead.
+#
+# Contract covered below:
+#   1. live pending below the hard cap stays pending (fresh record).
+#   2. live pending well past the OLD 5s window stays pending AND
+#      watch_arm still succeeds after.
+#   3. pane gone before start closes pane_closed.
+#   4. pane present + recognized agent provably gone closes pane_closed.
+#   5. pane present + inspector flake stays pending AND arms later.
+#   6. live pending past hard cap closes pending_timeout.
+#   7. restart re-enters the same rules (multi-iterate equivalence):
+#      live-pane pending stays pending, dead-pane pending closes
+#      pane_closed, no pending_timeout for restart itself.
+#   8. real concurrent close vs arm cannot resurrect the watch —
+#      the per-watch lock serializes both and whichever runs second
+#      re-reads state and bails.
+#
+# Tests observe the close reason by wrapping _eventsd_close so terminal
+# disposal (steez-u7o7.1) does not erase the signal.
 
-suite "pending-watch timeout (steez-u7o7.3)"
+suite "pending-watch reaper (steez-z6ti)"
 
-test_service_iterate_closes_stale_pending_via_mtime() {
-  _install_deliver_mock
-  local wid file mtime_sec c
-  wid=$(_mk_pending "%u7o7h") || return 1
-  file=$(_eventsd_watch_file "$wid")
-  [[ -f "$file" ]] || { echo "    pending file not on disk"; return 1; }
-  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
-  # Push the fake clock 10s past mtime — default PREARM_TIMEOUT_MS=5000.
-  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 10000 ))
-  _eventsd_service_iterate || return 1
-  # Terminal disposal (steez-u7o7.1) unlinks closed records.
-  assert_eq "" "$(watch_get "$wid")" || return 1
-  # Pane's live slot must be freed so a fresh prearm can take it.
-  assert_eq "" "$(watch_get_live "%u7o7h")" || return 1
-  # pending_timeout closes without delivery. Count only this watch_id —
-  # iterate may fire deliver on other watches left over from earlier tests.
-  c=$(grep -Fc "$wid" "${DELIVER_LOG:-/dev/null}" 2>/dev/null || true)
-  assert_eq 0 "${c:-0}" || return 1
-  unset EVENTSD_NOW_MS
+# _install_close_log snapshots _eventsd_close and wraps it so every call
+# appends "<wid> <pane> <reason>" to $CLOSE_LOG. Tests run inside a
+# command-substitution subshell (see run_test), so the override is
+# scoped to the test body.
+_install_close_log() {
+  export CLOSE_LOG="$TEST_TMP/close-z6ti.log"
+  : > "$CLOSE_LOG"
+  if ! declare -F _eventsd_close_orig >/dev/null 2>&1; then
+    eval "$(declare -f _eventsd_close | sed '1 s/^_eventsd_close/_eventsd_close_orig/')"
+  fi
+  _eventsd_close() {
+    printf '%s %s %s\n' "$1" "$2" "$3" >> "${CLOSE_LOG:-/dev/null}"
+    _eventsd_close_orig "$@"
+  }
 }
-run_test "service_iterate_closes_stale_pending_via_mtime" \
-  test_service_iterate_closes_stale_pending_via_mtime
 
-test_service_iterate_leaves_fresh_pending_untouched() {
+# _register_live_pane <pane> — pane is in mock tmux AND agent-state
+# reports success. _eventsd_pending_pane_status returns "live".
+_register_live_pane() {
+  local pane="$1"
+  mock_pane "$pane" "9999" "live pane" "/tmp"
+  cat > "$MOCK_BIN/z6ti-agent-state-ok" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+  chmod +x "$MOCK_BIN/z6ti-agent-state-ok"
+  export AGENT_STATE_CMD="$MOCK_BIN/z6ti-agent-state-ok"
+}
+
+# _register_pane_with_agent_gone <pane> — pane is in mock tmux but
+# agent-state emits the canonical "not a recognized AI agent" error.
+# _eventsd_pending_pane_status returns "agent_gone" and the reaper
+# must close the watch via pane_close semantics.
+_register_pane_with_agent_gone() {
+  local pane="$1"
+  mock_pane "$pane" "9999" "agent-gone pane" "/tmp"
+  cat > "$MOCK_BIN/z6ti-agent-state-gone" <<MOCK
+#!/usr/bin/env bash
+printf 'error: pane %s is not a recognized AI agent\n' "\${1:-}" >&2
+exit 1
+MOCK
+  chmod +x "$MOCK_BIN/z6ti-agent-state-gone"
+  export AGENT_STATE_CMD="$MOCK_BIN/z6ti-agent-state-gone"
+}
+
+# _register_pane_with_flaky_agent_state <pane> — pane is in mock tmux
+# but agent-state fails with a transient error NOT matching the
+# "not a recognized AI agent" signal. _eventsd_pending_pane_status
+# must return "indeterminate" so the reaper keeps the watch pending.
+_register_pane_with_flaky_agent_state() {
+  local pane="$1"
+  mock_pane "$pane" "9999" "flaky pane" "/tmp"
+  cat > "$MOCK_BIN/z6ti-agent-state-flake" <<'MOCK'
+#!/usr/bin/env bash
+printf 'error: transient inspector failure\n' >&2
+exit 1
+MOCK
+  chmod +x "$MOCK_BIN/z6ti-agent-state-flake"
+  export AGENT_STATE_CMD="$MOCK_BIN/z6ti-agent-state-flake"
+}
+
+# _swap_agent_state_to_ok <pane> — flip a previously-flaky mock into
+# healthy so a later watch_arm can complete once the inspector
+# recovers. The pane must already be registered via mock_pane.
+_swap_agent_state_to_ok() {
+  cat > "$MOCK_BIN/z6ti-agent-state-ok" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+  chmod +x "$MOCK_BIN/z6ti-agent-state-ok"
+  export AGENT_STATE_CMD="$MOCK_BIN/z6ti-agent-state-ok"
+}
+
+test_service_iterate_leaves_live_pending_below_prearm_timeout_untouched() {
+  # A freshly-created pending watch on a live pane stays pending — no
+  # timer has tripped yet.
   _install_deliver_mock
+  _register_live_pane "%z6ti-a"
   local wid file mtime_sec
-  wid=$(_mk_pending "%u7o7i") || return 1
+  wid=$(_mk_pending "%z6ti-a") || return 1
   file=$(_eventsd_watch_file "$wid")
   mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
-  # 1s of age — well under default 5000ms threshold.
   export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 1000 ))
   _eventsd_service_iterate || return 1
   assert_json_field "$(watch_get "$wid")" .state pending || return 1
   unset EVENTSD_NOW_MS
 }
-run_test "service_iterate_leaves_fresh_pending_untouched" \
-  test_service_iterate_leaves_fresh_pending_untouched
+run_test "service_iterate_leaves_live_pending_below_prearm_timeout_untouched" \
+  test_service_iterate_leaves_live_pending_below_prearm_timeout_untouched
+
+test_service_iterate_leaves_live_pending_past_prearm_timeout_and_later_arms() {
+  # Root regression (steez-z6ti): agent-send's prearm -> deliver -> start
+  # sequence can hold a watch in pending across multi-second sync work.
+  # The 5s age check alone must NOT reap a live-pending watch — the pane
+  # is alive, watch.start is coming. Verifies both that the reaper
+  # leaves the record alone AND that watch_arm still succeeds after the
+  # long delay (the real-world path agent-send follows).
+  _install_deliver_mock
+  _install_close_log
+  _register_live_pane "%z6ti-b"
+  local wid file mtime_sec hits rec
+  wid=$(_mk_pending "%z6ti-b") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  # 10s past mtime — long enough to reproduce the old age-only reap,
+  # still far below PREARM_HARD_CAP_MS (60000).
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 10000 ))
+  _eventsd_service_iterate || return 1
+  assert_json_field "$(watch_get "$wid")" .state pending || return 1
+  hits=$(grep -Fc "$wid" "$CLOSE_LOG" 2>/dev/null || true)
+  assert_eq 0 "${hits:-0}" || return 1
+  # Real-world path: after the gap, watch.start arrives and arms.
+  watch_arm --pane "%z6ti-b" --watch-id "$wid" --start-seq 11 >/dev/null \
+    || { echo "    watch_arm failed after long pending gap"; return 1; }
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .start_seq 11 || return 1
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_leaves_live_pending_past_prearm_timeout_and_later_arms" \
+  test_service_iterate_leaves_live_pending_past_prearm_timeout_and_later_arms
+
+test_service_iterate_closes_dead_pane_pending_via_pane_close() {
+  # A pending watch whose pane has vanished must close via pane_close
+  # semantics (close_reason=pane_closed), NOT pending_timeout.
+  _install_deliver_mock
+  _install_close_log
+  # No pane registration — tmux display-message fails.
+  local wid pane="%z6ti-c" file mtime_sec
+  wid=$(_mk_pending "$pane") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 10000 ))
+  _eventsd_service_iterate || return 1
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  assert_eq "" "$(watch_get_live "$pane")" || return 1
+  grep -Fq "$wid $pane pane_closed" "$CLOSE_LOG" || {
+    echo "    expected pane_closed on dead-pane pending; close log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  if grep -Fq "$wid $pane pending_timeout" "$CLOSE_LOG"; then
+    echo "    dead-pane pending closed as pending_timeout; must be pane_closed"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  fi
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_closes_dead_pane_pending_via_pane_close" \
+  test_service_iterate_closes_dead_pane_pending_via_pane_close
+
+test_service_iterate_closes_pane_present_agent_gone_via_pane_close() {
+  # Pane still exists but the recognized agent is provably gone
+  # (agent-state emits "not a recognized AI agent"). Closes via
+  # pane_close — NOT pending_timeout — because age is not the signal
+  # (steez-z6ti). This is the "live pane, dead worker" case.
+  _install_deliver_mock
+  _install_close_log
+  _register_pane_with_agent_gone "%z6ti-f"
+  local wid pane="%z6ti-f" file mtime_sec
+  wid=$(_mk_pending "$pane") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  # 3s of age — well below the hard cap. The close must still fire via
+  # the liveness authority, proving the path is not age-gated.
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 3000 ))
+  _eventsd_service_iterate || return 1
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  assert_eq "" "$(watch_get_live "$pane")" || return 1
+  grep -Fq "$wid $pane pane_closed" "$CLOSE_LOG" || {
+    echo "    expected pane_closed when agent provably gone; close log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  if grep -Fq "$wid $pane pending_timeout" "$CLOSE_LOG"; then
+    echo "    agent-gone pending closed as pending_timeout; must be pane_closed"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  fi
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_closes_pane_present_agent_gone_via_pane_close" \
+  test_service_iterate_closes_pane_present_agent_gone_via_pane_close
+
+test_service_iterate_keeps_flaky_pending_alive_and_later_arms() {
+  # Pane exists and agent-state is flaking (transient error that does
+  # NOT match the "not a recognized AI agent" signal). The pending
+  # reaper must stay hands-off: it cannot prove the agent gone, so the
+  # watch stays pending. After the inspector recovers and watch.start
+  # arrives, arming must succeed. This is the "stay pending when
+  # indeterminate" contract from the bead.
+  _install_deliver_mock
+  _install_close_log
+  _register_pane_with_flaky_agent_state "%z6ti-g"
+  local wid pane="%z6ti-g" file mtime_sec hits rec
+  wid=$(_mk_pending "$pane") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  # 10s of age — past the OLD 5s reaper but well below hard cap.
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 10000 ))
+  _eventsd_service_iterate || return 1
+  assert_json_field "$(watch_get "$wid")" .state pending || return 1
+  hits=$(grep -Fc "$wid" "$CLOSE_LOG" 2>/dev/null || true)
+  assert_eq 0 "${hits:-0}" || {
+    echo "    close fired on flaky (indeterminate) pending; log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  # Inspector recovers; the real watch.start arrives and arms.
+  _swap_agent_state_to_ok
+  watch_arm --pane "$pane" --watch-id "$wid" --start-seq 17 >/dev/null \
+    || { echo "    watch_arm failed after flaky inspector recovered"; return 1; }
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .start_seq 17 || return 1
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_keeps_flaky_pending_alive_and_later_arms" \
+  test_service_iterate_keeps_flaky_pending_alive_and_later_arms
+
+test_service_iterate_closes_live_pending_past_hard_cap_via_pending_timeout() {
+  # A live pane past PREARM_HARD_CAP_MS is the only path that still
+  # closes a pending watch as pending_timeout. Guards against a client
+  # that called prearm but never followed up with watch.start.
+  _install_deliver_mock
+  _install_close_log
+  _register_live_pane "%z6ti-d"
+  local wid pane="%z6ti-d" file mtime_sec
+  wid=$(_mk_pending "$pane") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  # 1s past default PREARM_HARD_CAP_MS (60000).
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 61000 ))
+  _eventsd_service_iterate || return 1
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  assert_eq "" "$(watch_get_live "$pane")" || return 1
+  grep -Fq "$wid $pane pending_timeout" "$CLOSE_LOG" || {
+    echo "    expected pending_timeout at hard cap; close log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_closes_live_pending_past_hard_cap_via_pending_timeout" \
+  test_service_iterate_closes_live_pending_past_hard_cap_via_pending_timeout
+
+test_service_iterate_hard_cap_boundary_holds_at_one_ms_before_and_fires_at_cap() {
+  # Boundary: age < hard_cap stays pending; age == hard_cap closes.
+  # Proves the comparison is >= and not > (or vice versa) so a future
+  # off-by-one cannot quietly drift the timing.
+  #
+  # The anchor is the record's `pending_at_ms` (stamped at creation
+  # from `_eventsd_now_ms`, which is ms-grade under real wall time).
+  # We pin creation time via `EVENTSD_NOW_MS` so the boundary maths
+  # is deterministic — the older `stat %m * 1000` anchor quantized
+  # the real clock to whole seconds and masked any sub-second drift.
+  _install_deliver_mock
+  _install_close_log
+  _register_live_pane "%z6ti-boundary"
+  local wid pane="%z6ti-boundary" anchor_ms hits
+  anchor_ms=1700000000500
+  export EVENTSD_NOW_MS="$anchor_ms"
+  wid=$(_mk_pending "$pane") || return 1
+  # 1ms below cap — must stay pending.
+  export EVENTSD_NOW_MS=$(( anchor_ms + 60000 - 1 ))
+  _eventsd_service_iterate || return 1
+  assert_json_field "$(watch_get "$wid")" .state pending || {
+    echo "    watch closed 1ms below hard cap"
+    return 1
+  }
+  hits=$(grep -Fc "$wid" "$CLOSE_LOG" 2>/dev/null || true)
+  assert_eq 0 "${hits:-0}" || return 1
+  # Exactly at cap — must close with pending_timeout.
+  export EVENTSD_NOW_MS=$(( anchor_ms + 60000 ))
+  _eventsd_service_iterate || return 1
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  grep -Fq "$wid $pane pending_timeout" "$CLOSE_LOG" || {
+    echo "    expected pending_timeout at exact cap; close log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_hard_cap_boundary_holds_at_one_ms_before_and_fires_at_cap" \
+  test_service_iterate_hard_cap_boundary_holds_at_one_ms_before_and_fires_at_cap
+
+test_restart_with_live_pending_below_hard_cap_keeps_watch_pending() {
+  # Restart recovery contract (steez-z6ti): the daemon re-enters the
+  # same pending rules on a restart tick; it does not invent a new
+  # pending_timeout just because the service bounced. A live pane
+  # with an unresolved pending watch below the hard cap must stay
+  # pending across repeated iterations, and a following watch_arm
+  # must still succeed.
+  _install_deliver_mock
+  _install_close_log
+  _register_live_pane "%z6ti-restart-live"
+  local wid pane="%z6ti-restart-live" file mtime_sec hits rec i
+  wid=$(_mk_pending "$pane") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 7000 ))
+  # Three iterate passes stand in for "daemon booted into a state
+  # snapshot and ticked repeatedly after restart".
+  for i in 1 2 3; do
+    _eventsd_service_iterate || return 1
+  done
+  assert_json_field "$(watch_get "$wid")" .state pending || return 1
+  hits=$(grep -Fc "$wid" "$CLOSE_LOG" 2>/dev/null || true)
+  assert_eq 0 "${hits:-0}" || {
+    echo "    close fired on live-pane pending across restart ticks"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  watch_arm --pane "$pane" --watch-id "$wid" --start-seq 21 >/dev/null \
+    || { echo "    watch_arm failed after restart-style ticks"; return 1; }
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || return 1
+  assert_json_field "$rec" .start_seq 21 || return 1
+  unset EVENTSD_NOW_MS
+}
+run_test "restart_with_live_pending_below_hard_cap_keeps_watch_pending" \
+  test_restart_with_live_pending_below_hard_cap_keeps_watch_pending
+
+test_restart_with_dead_pane_pending_closes_pane_closed_not_pending_timeout() {
+  # Restart recovery contract (steez-z6ti): a dead pane at restart
+  # must close the watch via pane_close, not as pending_timeout. Same
+  # authority the live-path uses applies to restart-time — "restart
+  # does not invent a new pending resolution rule."
+  _install_deliver_mock
+  _install_close_log
+  # No pane registered — dead at restart.
+  local wid pane="%z6ti-restart-dead" file mtime_sec
+  wid=$(_mk_pending "$pane") || return 1
+  file=$(_eventsd_watch_file "$wid")
+  mtime_sec=$(stat -f %m "$file" 2>/dev/null || stat -c %Y "$file")
+  export EVENTSD_NOW_MS=$(( mtime_sec * 1000 + 2000 ))
+  _eventsd_service_iterate || return 1
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  grep -Fq "$wid $pane pane_closed" "$CLOSE_LOG" || {
+    echo "    dead-pane restart did not close as pane_closed; log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  if grep -Fq "$wid $pane pending_timeout" "$CLOSE_LOG"; then
+    echo "    restart invented a pending_timeout close for a dead pane"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  fi
+  unset EVENTSD_NOW_MS
+}
+run_test "restart_with_dead_pane_pending_closes_pane_closed_not_pending_timeout" \
+  test_restart_with_dead_pane_pending_closes_pane_closed_not_pending_timeout
+
+test_concurrent_close_vs_arm_cannot_resurrect_watch_via_lock() {
+  # Lock-protected race (steez-z6ti). The primary synchronization
+  # primitive is a real per-watch advisory lock, not a CAS-like
+  # existence check on the atomic rename. The test drives two
+  # processes through the lock:
+  #
+  #   1. A background subshell acquires the per-watch lock,
+  #      signals the foreground via a sync fifo, then blocks in
+  #      the lock on a second fifo read. That simulates an
+  #      in-flight pane_close / pending_timeout mid-critical-section.
+  #   2. The foreground races with a watch_arm call in yet another
+  #      subshell, which must block on the per-watch lock until the
+  #      background releases.
+  #   3. The background writes "release", then closes the record via
+  #      _eventsd_close and releases the lock.
+  #   4. The foreground's watch_arm then acquires the lock, re-reads
+  #      state, sees the record is gone, and fails.
+  #
+  # End-state invariants: the record must be gone (close won), the
+  # pane's live slot must be empty, and watch_arm must have exited
+  # non-zero. If any of those are false, a stale arm resurrected a
+  # closed watch.
+  _install_deliver_mock
+  _register_live_pane "%z6ti-race"
+  local pane="%z6ti-race" wid
+  wid=$(_mk_pending "$pane") || return 1
+
+  local sync_fifo="$TEST_TMP/z6ti-race.sync"
+  local release_fifo="$TEST_TMP/z6ti-race.release"
+  local arm_rc_file="$TEST_TMP/z6ti-race.arm"
+  local holder_rc_file="$TEST_TMP/z6ti-race.holder"
+  rm -f "$sync_fifo" "$release_fifo" "$arm_rc_file" "$holder_rc_file"
+  mkfifo "$sync_fifo"
+  mkfifo "$release_fifo"
+
+  # Helper: take the lock, signal "locked", wait for "release", then
+  # close the record. Runs inside the locked critical section, so a
+  # concurrent watch_arm attempt on the same wid must block on the
+  # lock rather than racing us.
+  _z6ti_race_holder() {
+    local wid="$1" pane="$2" sync="$3" release="$4"
+    _eventsd_with_watch_lock "$wid" \
+      _z6ti_race_holder_body "$wid" "$pane" "$sync" "$release"
+  }
+  _z6ti_race_holder_body() {
+    local wid="$1" pane="$2" sync="$3" release="$4"
+    printf 'locked\n' > "$sync"
+    local _msg
+    read -r _msg < "$release"
+    _eventsd_close "$wid" "$pane" "pane_closed" >/dev/null 2>&1 || true
+  }
+
+  (
+    _z6ti_race_holder "$wid" "$pane" "$sync_fifo" "$release_fifo"
+    printf '%s' "$?" > "$holder_rc_file"
+  ) &
+  local holder_pid=$!
+
+  local msg=""
+  read -r msg < "$sync_fifo"
+  [[ "$msg" == "locked" ]] || {
+    echo "    background holder failed to take the lock (msg='$msg')"
+    kill -KILL "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    return 1
+  }
+
+  (
+    watch_arm --pane "$pane" --watch-id "$wid" --start-seq 99 >/dev/null 2>&1
+    printf '%s' "$?" > "$arm_rc_file"
+  ) &
+  local arm_pid=$!
+
+  # Give the arm subshell time to enter _eventsd_with_watch_lock and
+  # block. If the lock were not serializing us, arm would complete
+  # first and arm_rc_file would show up.
+  local i
+  for i in $(seq 1 20); do
+    [[ -f "$arm_rc_file" ]] && break
+    /bin/sleep 0.05 2>/dev/null || sleep 1
+  done
+  [[ ! -f "$arm_rc_file" ]] || {
+    echo "    watch_arm completed while background holder held the lock"
+    printf 'release\n' > "$release_fifo"
+    wait "$holder_pid" 2>/dev/null || true
+    wait "$arm_pid" 2>/dev/null || true
+    return 1
+  }
+
+  # Release the holder: it will close the record, release the lock,
+  # then the blocked arm wakes, re-reads, and fails.
+  printf 'release\n' > "$release_fifo"
+  wait "$holder_pid" 2>/dev/null || true
+  wait "$arm_pid" 2>/dev/null || true
+
+  local arm_rc holder_rc
+  arm_rc=$(cat "$arm_rc_file" 2>/dev/null || echo "missing")
+  holder_rc=$(cat "$holder_rc_file" 2>/dev/null || echo "missing")
+  [[ "$arm_rc" != "0" ]] || {
+    echo "    watch_arm returned rc=0 after the record was closed (arm_rc=$arm_rc)"
+    printf '    record=%s\n' "$(watch_get "$wid")"
+    return 1
+  }
+  [[ "$holder_rc" == "0" ]] || {
+    echo "    background holder exited non-zero (holder_rc=$holder_rc)"
+    return 1
+  }
+  [[ -z "$(watch_get "$wid")" ]] || {
+    echo "    stale arm resurrected a closed watch"
+    printf '    record=%s\n' "$(watch_get "$wid")"
+    return 1
+  }
+  assert_eq "" "$(watch_get_live "$pane")" || return 1
+  [[ ! -e "$(_eventsd_buffer_file "$wid")" ]] || {
+    echo "    pre-arm buffer lingered after race"
+    return 1
+  }
+}
+run_test "concurrent_close_vs_arm_cannot_resurrect_watch_via_lock" \
+  test_concurrent_close_vs_arm_cannot_resurrect_watch_via_lock
+
+test_concurrent_arm_vs_close_when_arm_wins_leaves_watch_armed() {
+  # Symmetric case: when the arm wins the lock first, the armed
+  # record lands, the live slot stays populated, and a following
+  # same-wid close attempt no-ops (armed is not pending — the
+  # locked body re-reads state and bails). This proves the lock
+  # plus in-lock state-check is a true bidirectional serializer,
+  # not a one-sided guard.
+  _install_deliver_mock
+  _register_live_pane "%z6ti-race-arm"
+  local pane="%z6ti-race-arm" wid
+  wid=$(_mk_pending "$pane") || return 1
+
+  local sync_fifo="$TEST_TMP/z6ti-race-arm.sync"
+  local release_fifo="$TEST_TMP/z6ti-race-arm.release"
+  local close_rc_file="$TEST_TMP/z6ti-race-arm.close"
+  rm -f "$sync_fifo" "$release_fifo" "$close_rc_file"
+  mkfifo "$sync_fifo"
+  mkfifo "$release_fifo"
+
+  _z6ti_race_arm_holder() {
+    local wid="$1" pane="$2" sync="$3" release="$4" start_seq="$5"
+    _eventsd_with_watch_lock "$wid" \
+      _z6ti_race_arm_holder_body "$wid" "$pane" "$sync" "$release" "$start_seq"
+  }
+  _z6ti_race_arm_holder_body() {
+    local wid="$1" pane="$2" sync="$3" release="$4" start_seq="$5"
+    # Inline the locked body — we already hold the lock and want to
+    # hold it through the sync point before writing. This mirrors
+    # what _eventsd_watch_arm_locked does but with the fifo rendez-vous
+    # between state-read and state-write.
+    printf 'locked\n' > "$sync"
+    local _msg
+    read -r _msg < "$release"
+    _eventsd_watch_arm_locked "$pane" "$wid" "$start_seq"
+  }
+
+  (
+    _z6ti_race_arm_holder "$wid" "$pane" "$sync_fifo" "$release_fifo" 42
+  ) &
+  local arm_pid=$!
+
+  local msg=""
+  read -r msg < "$sync_fifo"
+  [[ "$msg" == "locked" ]] || {
+    echo "    arm holder failed to take the lock (msg='$msg')"
+    kill -KILL "$arm_pid" 2>/dev/null || true
+    wait "$arm_pid" 2>/dev/null || true
+    return 1
+  }
+
+  (
+    watch_pending_timeout "$wid" >/dev/null 2>&1
+    printf '%s' "$?" > "$close_rc_file"
+  ) &
+  local close_pid=$!
+
+  # Confirm the close is blocked.
+  local i
+  for i in $(seq 1 20); do
+    [[ -f "$close_rc_file" ]] && break
+    /bin/sleep 0.05 2>/dev/null || sleep 1
+  done
+  [[ ! -f "$close_rc_file" ]] || {
+    echo "    watch_pending_timeout ran while arm holder held the lock"
+    printf 'release\n' > "$release_fifo"
+    wait "$arm_pid" 2>/dev/null || true
+    wait "$close_pid" 2>/dev/null || true
+    return 1
+  }
+
+  printf 'release\n' > "$release_fifo"
+  wait "$arm_pid" 2>/dev/null || true
+  wait "$close_pid" 2>/dev/null || true
+
+  local close_rc rec
+  close_rc=$(cat "$close_rc_file" 2>/dev/null || echo "missing")
+  [[ "$close_rc" != "0" ]] || {
+    echo "    watch_pending_timeout succeeded on an already-armed watch"
+    return 1
+  }
+  rec=$(watch_get "$wid")
+  assert_json_field "$rec" .state armed || {
+    echo "    arm holder lost the race — record is not armed: $rec"
+    return 1
+  }
+  assert_json_field "$rec" .start_seq 42 || return 1
+  # Live slot must still point at this armed watch.
+  local live_wid
+  live_wid=$(printf '%s' "$(watch_get_live "$pane")" | jq -r .watch_id)
+  assert_eq "$wid" "$live_wid" || return 1
+}
+run_test "concurrent_arm_vs_close_when_arm_wins_leaves_watch_armed" \
+  test_concurrent_arm_vs_close_when_arm_wins_leaves_watch_armed
+
+# ----- watch-lock hardening (steez-es21) -----
+#
+# The per-watch lock used by steez-z6ti needs four things proven:
+#   1. Holder identity is durable from the moment the lock is held —
+#      there is no observable state where "someone has the lock" but
+#      "no one owns it", which is what pre-es21 shell-level check-rm
+#      schemes could reach if a holder crashed mid-pid-write or if a
+#      waiter TOCTOU-rm'd a freshly-acquired valid entry. The lock is
+#      kernel-arbitrated via flock(2): the OFD's existence IS the
+#      holder identity, atomic with acquisition and bound to the
+#      acquirer's process lifetime.
+#   2. The lock identity is per-subshell, not per-parent-shell $$.
+#      The subshell-$$ ambiguity the verifier called out in the z6ti
+#      tests is gone because the OFD is per-process; every bash
+#      context that acquires gets its own kernel-tracked identity.
+#      The test proves this functionally: a holder subshell killed
+#      mid-critical-section must release the lock to the next caller,
+#      which only works when identity dies with the acquirer.
+#   3. A stale lock file left behind from an earlier run (file exists,
+#      no one currently flock-holds it) is reclaimable immediately.
+#      Under the pre-es21 mkdir+pid-file scheme, a leftover bare
+#      lockdir trapped waiters for the full deadline.
+#   4. Pending hard-cap decisions are anchored at ms precision (the
+#      `pending_at_ms` field on the record, sampled from the daemon
+#      clock at creation), not `stat %m * 1000` second truncation.
+#   5. Concurrent `watch_create_pending` on the same pane is serialized
+#      so two callers cannot both write a pending record and leave one
+#      record orphaned from the pane's live slot.
+
+suite "watch-lock hardening (steez-es21)"
+
+# _es21_epoch_ms — wall-clock ms for deadline budgeting in tests.
+# perl(1) is already an agent-eventsd dep (service flock supervisor).
+_es21_epoch_ms() {
+  perl -MTime::HiRes=time -e 'printf "%d", int(time() * 1000)'
+}
+
+test_lock_acquires_immediately_over_stale_pre_es21_artifact() {
+  # Red against the pre-es21 impl: a lock entry left behind from an
+  # earlier invocation (bare directory at the lockdir path, no live
+  # holder) trapped waiters until EVENTSD_WATCH_LOCK_TIMEOUT_MS. The
+  # pre-pid-write crash window in the mkdir + pid-file scheme could
+  # publish exactly this state — `cat $lockdir/pid` returned empty,
+  # `[[ -n "$owner" ]]` was false, the stale branch was skipped, and
+  # the loop stalled for the full deadline.
+  #
+  # Green contract: a leftover artifact at the lock path is cleaned
+  # up on first acquire and the lock is granted well inside a short
+  # deadline. The flock-backed impl acquires on an unheld lock file
+  # instantly; the only legacy cleanup required is dropping any
+  # pre-es21 symlink/dir at the un-suffixed path.
+  local wid="es21-stale-$BASHPID-$RANDOM"
+  local legacy_path="$_EVENTSD_STATE_DIR/locks/w-$wid"
+  mkdir -p "$_EVENTSD_STATE_DIR/locks"
+  mkdir "$legacy_path" || return 1
+
+  local t0 t1 elapsed_ms rc=0
+  t0=$(_es21_epoch_ms)
+  EVENTSD_WATCH_LOCK_TIMEOUT_MS=500 \
+    _eventsd_with_watch_lock "$wid" true || rc=$?
+  t1=$(_es21_epoch_ms)
+  elapsed_ms=$(( t1 - t0 ))
+  [[ "$rc" -eq 0 ]] || {
+    echo "    _eventsd_with_watch_lock could not acquire over a stale artifact (rc=$rc, elapsed=${elapsed_ms}ms)"
+    return 1
+  }
+  (( elapsed_ms < 400 )) || {
+    echo "    acquisition took ${elapsed_ms}ms, expected well under the 500ms deadline"
+    return 1
+  }
+  [[ ! -e "$legacy_path" ]] || {
+    echo "    legacy artifact lingered at $legacy_path after acquire/release"
+    return 1
+  }
+}
+run_test "lock_acquires_immediately_over_stale_pre_es21_artifact" \
+  test_lock_acquires_immediately_over_stale_pre_es21_artifact
+
+test_lock_serializes_concurrent_callers_with_kernel_arbitration() {
+  # Caveat 1 and 2 combined: while a holder subshell is alive, no
+  # other caller can acquire. Unlike the pre-es21 check-then-rm
+  # scheme — where a waiter's `readlink → kill -0 → rm` cycle could
+  # TOCTOU-wipe a freshly-acquired valid lock and let two callers
+  # both think they hold it — flock(2) acquisition is atomic under
+  # the kernel's OFD table. Two callers cannot simultaneously hold
+  # the same flock lock; the second blocks until the first releases.
+  # No string "holder identity" is inspected by the waiter, so the
+  # subshell-$$ ambiguity is structurally eliminated.
+  local wid="es21-serialize-$BASHPID-$RANDOM"
+  local sync_fifo="$TEST_TMP/es21-serialize-$BASHPID.sync"
+  local release_fifo="$TEST_TMP/es21-serialize-$BASHPID.release"
+  mkdir -p "$_EVENTSD_STATE_DIR/locks"
+  rm -f "$sync_fifo" "$release_fifo"
+  mkfifo "$sync_fifo"
+  mkfifo "$release_fifo"
+
+  (
+    _eventsd_with_watch_lock "$wid" _es21_signal_and_wait "$sync_fifo" "$release_fifo"
+  ) &
+  local holder_pid=$!
+
+  local msg=""
+  read -r msg < "$sync_fifo"
+  [[ "$msg" == "locked" ]] || {
+    echo "    holder never signalled locked"
+    kill -KILL "$holder_pid" 2>/dev/null || true
+    wait "$holder_pid" 2>/dev/null || true
+    return 1
+  }
+
+  # Concurrent acquire must block until the short deadline.
+  local t0 t1 elapsed_ms rc=0
+  t0=$(_es21_epoch_ms)
+  EVENTSD_WATCH_LOCK_TIMEOUT_MS=200 \
+    _eventsd_with_watch_lock "$wid" true || rc=$?
+  t1=$(_es21_epoch_ms)
+  elapsed_ms=$(( t1 - t0 ))
+  [[ "$rc" -ne 0 ]] || {
+    echo "    concurrent acquire succeeded while holder was alive — lock did not serialize"
+    printf 'release\n' > "$release_fifo"
+    wait "$holder_pid" 2>/dev/null || true
+    return 1
+  }
+  (( elapsed_ms >= 150 )) || {
+    echo "    concurrent acquire returned in ${elapsed_ms}ms — expected to block through the 200ms deadline"
+    printf 'release\n' > "$release_fifo"
+    wait "$holder_pid" 2>/dev/null || true
+    return 1
+  }
+
+  # Release holder; next acquire must succeed quickly.
+  printf 'release\n' > "$release_fifo"
+  wait "$holder_pid" 2>/dev/null || true
+
+  t0=$(_es21_epoch_ms)
+  EVENTSD_WATCH_LOCK_TIMEOUT_MS=500 \
+    _eventsd_with_watch_lock "$wid" true || {
+      echo "    acquire after normal release failed"
+      return 1
+    }
+  t1=$(_es21_epoch_ms)
+  elapsed_ms=$(( t1 - t0 ))
+  (( elapsed_ms < 200 )) || {
+    echo "    post-release acquire took ${elapsed_ms}ms — expected instant acquisition"
+    return 1
+  }
+}
+# Signal "locked" to the sync fifo, block on the release fifo. Called
+# under the lock so the sync point happens after acquisition.
+_es21_signal_and_wait() {
+  local sync="$1" release="$2"
+  printf 'locked\n' > "$sync"
+  local _msg
+  read -r _msg < "$release"
+}
+run_test "lock_serializes_concurrent_callers_with_kernel_arbitration" \
+  test_lock_serializes_concurrent_callers_with_kernel_arbitration
+
+test_lock_holder_killed_mid_section_is_reclaimed_by_new_caller() {
+  # Caveat 2 from the acquirer side: a holder that dies mid-critical-
+  # section must release the lock to the next caller. Under flock(2)
+  # this is automatic — the kernel drops the OFD refcount when the
+  # last referencing process exits, which releases the lock. Under
+  # the pre-es21 impl, the lock stored $$ (the parent shell's PID)
+  # and the parent stayed alive, so `kill -0 $$` succeeded on every
+  # waiter's stale check and the next caller stalled for the full
+  # deadline.
+  #
+  # Scenic-regression trap 1: helpers.sh installs a mocked `sleep` on
+  # $PATH that exits instantly. A previous revision held the lock via
+  # `exec sleep 30`, which picked up the mock, exited on its own, and
+  # released the lock through normal OFD close — not SIGKILL. Fix:
+  # `_es21_hold_exec_sleep` invokes `/bin/sleep 30` by absolute path.
+  #
+  # Scenic-regression trap 2: the PID of the lock-holding process is
+  # NOT $! of the outer `(...) &` wrapper. `_eventsd_with_watch_lock`
+  # opens fd 9 inside its own inner subshell; when that inner subshell
+  # execs `/bin/sleep`, sleep inherits fd 9 and becomes the OFD holder,
+  # and its PID is the inner subshell's BASHPID — which the outer
+  # wrapper never sees. Killing only the outer wrapper leaves sleep
+  # alive and the lock held. Fix: the holder prints its BASHPID over
+  # the sync fifo before it execs; the test targets that PID for
+  # SIGKILL. A pre-SIGKILL sanity probe then proves the holder really
+  # was holding the lock; a post-SIGKILL sanity probe proves sleep is
+  # actually dead (kills were delivered to the right PID).
+  local wid="es21-kill-$BASHPID-$RANDOM"
+  local sync_fifo="$TEST_TMP/es21-kill-$BASHPID.sync"
+  mkdir -p "$_EVENTSD_STATE_DIR/locks"
+  rm -f "$sync_fifo"
+  mkfifo "$sync_fifo"
+
+  (
+    _eventsd_with_watch_lock "$wid" _es21_hold_exec_sleep "$sync_fifo"
+  ) &
+  local wrapper_pid=$!
+
+  local msg="" reported_pid=""
+  read -r msg reported_pid < "$sync_fifo" || true
+  [[ "$msg" == "locked" ]] || {
+    echo "    holder never signalled locked (msg='$msg')"
+    kill -KILL "$wrapper_pid" 2>/dev/null || true
+    wait "$wrapper_pid" 2>/dev/null || true
+    return 1
+  }
+  [[ "$reported_pid" =~ ^[0-9]+$ ]] || {
+    echo "    holder did not report a numeric BASHPID over the fifo: '$reported_pid'"
+    kill -KILL "$wrapper_pid" 2>/dev/null || true
+    wait "$wrapper_pid" 2>/dev/null || true
+    return 1
+  }
+  local holder_pid="$reported_pid"
+
+  # Sanity probe: the holder must truly be holding the lock. A short
+  # deadline must expire without acquisition. If this probe succeeds,
+  # the blocker exited normally (e.g. PATH-mocked `sleep`) and any
+  # subsequent SIGKILL result is meaningless.
+  local probe_t0 probe_t1 probe_elapsed_ms probe_rc=0
+  probe_t0=$(_es21_epoch_ms)
+  EVENTSD_WATCH_LOCK_TIMEOUT_MS=200 \
+    _eventsd_with_watch_lock "$wid" true 2>/dev/null || probe_rc=$?
+  probe_t1=$(_es21_epoch_ms)
+  probe_elapsed_ms=$(( probe_t1 - probe_t0 ))
+  [[ "$probe_rc" -ne 0 ]] || {
+    echo "    pre-SIGKILL probe acquired lock in ${probe_elapsed_ms}ms — holder never actually blocked."
+    echo "    the SIGKILL reclamation claim is scenic; the blocker in _es21_hold_exec_sleep"
+    echo "    must be a non-mocked blocking primitive (e.g. /bin/sleep)."
+    kill -KILL "$holder_pid" "$wrapper_pid" 2>/dev/null || true
+    wait "$wrapper_pid" 2>/dev/null || true
+    return 1
+  }
+  (( probe_elapsed_ms >= 150 )) || {
+    echo "    pre-SIGKILL probe returned rc=$probe_rc in ${probe_elapsed_ms}ms — expected to block through the 200ms deadline"
+    kill -KILL "$holder_pid" "$wrapper_pid" 2>/dev/null || true
+    wait "$wrapper_pid" 2>/dev/null || true
+    return 1
+  }
+
+  # Confirm the holder we targeted is actually `/bin/sleep` (not the
+  # outer `(...)&` wrapper whose $! the test might have mistakenly
+  # targeted). If this check is wrong, SIGKILL below may leave sleep
+  # running and the lock held — and the scenic win would look like a
+  # green test again.
+  local holder_cmd
+  holder_cmd=$(ps -p "$holder_pid" -o comm= 2>/dev/null | tr -d ' ')
+  [[ "$holder_cmd" == *sleep* ]] || {
+    echo "    holder pid $holder_pid is not sleep (comm='$holder_cmd') — kill target drifted"
+    kill -KILL "$holder_pid" "$wrapper_pid" 2>/dev/null || true
+    wait "$wrapper_pid" 2>/dev/null || true
+    return 1
+  }
+
+  # SIGKILL the sleep process (the OFD holder). The kernel drops the
+  # last fd reference to the flock OFD, and the lock releases — no
+  # shell-level release path runs. The outer `(...)&` wrapper noticed
+  # its child exit status and returns too; wait on it to reap.
+  kill -KILL "$holder_pid" 2>/dev/null || true
+  wait "$wrapper_pid" 2>/dev/null || true
+
+  # Prove sleep is dead — otherwise a subsequent acquire success could
+  # be a false positive from a different release path.
+  kill -0 "$holder_pid" 2>/dev/null && {
+    echo "    holder pid $holder_pid still alive after SIGKILL+wait"
+    kill -KILL "$holder_pid" 2>/dev/null || true
+    return 1
+  }
+
+  local t0 t1 elapsed_ms rc=0
+  t0=$(_es21_epoch_ms)
+  EVENTSD_WATCH_LOCK_TIMEOUT_MS=500 \
+    _eventsd_with_watch_lock "$wid" true || rc=$?
+  t1=$(_es21_epoch_ms)
+  elapsed_ms=$(( t1 - t0 ))
+  [[ "$rc" -eq 0 ]] || {
+    echo "    lock not released after holder SIGKILL (rc=$rc, elapsed=${elapsed_ms}ms)"
+    return 1
+  }
+  (( elapsed_ms < 400 )) || {
+    echo "    lock release after holder SIGKILL took ${elapsed_ms}ms — expected instant release from OFD close"
+    return 1
+  }
+}
+# Report BASHPID (this function's calling shell — i.e. `_eventsd_with_
+# watch_lock`'s inner subshell that opened fd 9) over the sync fifo,
+# then exec /bin/sleep. /bin/sleep (absolute path) bypasses the PATH
+# sleep mock installed by helpers.sh. After exec, sleep owns that
+# subshell's PID AND inherits fd 9 — so sleep is the real OFD holder
+# of the flock, and SIGKILL on the BASHPID reported here is the only
+# path that drops the last OFD reference.
+_es21_hold_exec_sleep() {
+  local sync="$1"
+  printf 'locked %s\n' "$BASHPID" > "$sync"
+  exec /bin/sleep 30
+}
+run_test "lock_holder_killed_mid_section_is_reclaimed_by_new_caller" \
+  test_lock_holder_killed_mid_section_is_reclaimed_by_new_caller
+
+# ----- pending hard-cap ms precision (steez-es21) -----
+
+suite "pending hard-cap ms precision (steez-es21)"
+
+test_eventsd_now_ms_real_clock_is_millisecond_grade() {
+  # Production `_eventsd_now_ms` must return a millisecond-grade wall
+  # clock when EVENTSD_NOW_MS is unset. A prior impl returned
+  # `$(date +%s) * 1000`, which is second-quantized — every reading
+  # ends in `000`. The spec declares the pending_at_ms anchor must be
+  # ms-grade; a second-quantized clock silently narrows that contract.
+  #
+  # Probe: 40 rapid reads with a ~2ms perl sleep between. If the impl
+  # is second-quantized, every reading's `mod 1000` is 0. Even one
+  # non-zero mod proves ms precision.
+  unset EVENTSD_NOW_MS
+  local i reading suffix seen_nonzero_suffix=0
+  for i in $(seq 1 40); do
+    reading=$(_eventsd_now_ms)
+    [[ "$reading" =~ ^[0-9]+$ ]] || {
+      echo "    _eventsd_now_ms did not return an integer: '$reading'"
+      return 1
+    }
+    suffix=$(( reading % 1000 ))
+    if (( suffix != 0 )); then
+      seen_nonzero_suffix=1
+      break
+    fi
+    perl -MTime::HiRes=sleep -e 'sleep(0.002)' 2>/dev/null || true
+  done
+  (( seen_nonzero_suffix == 1 )) || {
+    echo "    _eventsd_now_ms produced only second-quantized readings over 40 probes"
+    echo "    impl is not ms-grade — pending_at_ms spec claim is drifted"
+    return 1
+  }
+}
+run_test "eventsd_now_ms real-clock path is millisecond-grade" \
+  test_eventsd_now_ms_real_clock_is_millisecond_grade
+
+test_create_pending_records_sub_second_pending_at_ms_from_clock() {
+  # The pending reaper needs a millisecond-grade age anchor. The old
+  # anchor was `stat %m * 1000` on the record file — seconds-only,
+  # which made a sub-second boundary test impossible to distinguish
+  # from noise. The es21 impl stamps `pending_at_ms` on the record at
+  # creation time, sourced from `_eventsd_now_ms` (which honors the
+  # `EVENTSD_NOW_MS` test override). This test asserts the field
+  # captures the sub-second digits from the override exactly.
+  local sentinel_ms=1234567890123
+  local wid rec stored_ms
+  export EVENTSD_NOW_MS="$sentinel_ms"
+  wid=$(_mk_pending "%es21-hardcap-anchor") || return 1
+  unset EVENTSD_NOW_MS
+  rec=$(watch_get "$wid")
+  [[ -n "$rec" ]] || { echo "    pending record missing"; return 1; }
+  stored_ms=$(printf '%s' "$rec" | jq -r '.pending_at_ms // empty')
+  [[ "$stored_ms" == "$sentinel_ms" ]] || {
+    echo "    pending_at_ms was $stored_ms, expected $sentinel_ms (sub-second digits must round-trip)"
+    return 1
+  }
+}
+run_test "create_pending_records_sub_second_pending_at_ms_from_clock" \
+  test_create_pending_records_sub_second_pending_at_ms_from_clock
+
+test_service_iterate_hard_cap_boundary_at_single_ms_precision() {
+  # Proves the hard cap fires at ms precision by pinning the pending
+  # record's creation clock to a sub-second-odd value, then advancing
+  # EVENTSD_NOW_MS by (cap-1) and cap ms. The 60000 - 1 ms offset
+  # is literally unrepresentable with a `stat %m * 1000` anchor, so
+  # this test red-fails the pre-es21 impl no matter which direction
+  # truncation drifts.
+  _install_deliver_mock
+  _install_close_log
+  # Register the pane as live so the liveness authority does not
+  # short-circuit on dead_pane / agent_gone. The hard cap is the only
+  # path we care about here.
+  _register_live_pane "%es21-hardcap-boundary"
+  local wid pane="%es21-hardcap-boundary" stored_ms hits
+  export EVENTSD_NOW_MS=1700000000999
+  wid=$(_mk_pending "$pane") || return 1
+  stored_ms=$(watch_get "$wid" | jq -r '.pending_at_ms // empty')
+  [[ "$stored_ms" == "1700000000999" ]] || {
+    echo "    pending_at_ms did not capture sub-second ms anchor: $stored_ms"
+    return 1
+  }
+
+  # 1ms under hard cap — watch stays pending, no close log entry.
+  export EVENTSD_NOW_MS=$(( 1700000000999 + 60000 - 1 ))
+  _eventsd_service_iterate || return 1
+  assert_json_field "$(watch_get "$wid")" .state pending || {
+    echo "    watch closed 1ms below the hard cap — sub-ms anchor not honored"
+    return 1
+  }
+  hits=$(grep -Fc "$wid" "$CLOSE_LOG" 2>/dev/null || true)
+  assert_eq 0 "${hits:-0}" || return 1
+
+  # Exactly at cap — watch closes with pending_timeout.
+  export EVENTSD_NOW_MS=$(( 1700000000999 + 60000 ))
+  _eventsd_service_iterate || return 1
+  assert_eq "" "$(watch_get "$wid")" || return 1
+  grep -Fq "$wid $pane pending_timeout" "$CLOSE_LOG" || {
+    echo "    expected pending_timeout at exact ms cap; close log:"
+    sed 's/^/      /' "$CLOSE_LOG"
+    return 1
+  }
+  unset EVENTSD_NOW_MS
+}
+run_test "service_iterate_hard_cap_boundary_at_single_ms_precision" \
+  test_service_iterate_hard_cap_boundary_at_single_ms_precision
+
+# ----- concurrent prearm serialization (steez-es21) -----
+
+suite "concurrent prearm serialization (steez-es21)"
+
+test_concurrent_watch_create_pending_on_same_pane_leaves_one_live_no_orphans() {
+  # Two concurrent watch_create_pending calls on the same pane must not
+  # orphan a record. Under the pre-es21 impl, both callers read the
+  # empty live_file before either wrote it, both skipped the supersede
+  # close, both wrote their record, and both wrote to live_file (last
+  # writer wins). That left one pending record not reachable from the
+  # pane's live slot — the orphan.
+  #
+  # The es21 impl serializes the supersede-read + record-write + live-
+  # file-write critical section under a per-pane lock, so whichever
+  # caller wins the lock runs its full prearm before the next one
+  # enters. The next caller sees the winner's live slot and supersedes
+  # it normally — no orphan.
+  _install_deliver_mock
+  local pane="%es21-prearm-race"
+  local N=10
+  local release="$TEST_TMP/es21-prearm.release"
+  local out_dir="$TEST_TMP/es21-prearm-out"
+  rm -rf "$release" "$out_dir"
+  mkdir -p "$out_dir"
+
+  local i
+  local pids=()
+  for i in $(seq 1 "$N"); do
+    (
+      # Spin-wait with a short sleep so the workers all release near-
+      # simultaneously. Each iteration of the wait is ~5ms, which
+      # compresses the race window to within a few ms of each other.
+      while [[ ! -e "$release" ]]; do
+        /bin/sleep 0.005 2>/dev/null || sleep 1
+      done
+      watch_create_pending \
+        --pane "$pane" \
+        --spawner "%0" \
+        --label codex \
+        --baseline-state working \
+        --prearm-screen-hash "hash-$i" \
+        --prearm-transcript-cursor "$i" \
+        --prearm-seq "$i" > "$out_dir/$i.wid" 2>&1
+    ) &
+    pids+=($!)
+  done
+  # Release all workers at once.
+  : > "$release"
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" || true
+  done
+
+  # Invariant 1: at most one pending record survives on this pane.
+  local pending_count
+  pending_count=$(find "$_EVENTSD_STATE_DIR/watches" -name '*.json' -print 2>/dev/null \
+    | while read -r f; do cat "$f"; done \
+    | jq -r --arg p "$pane" 'select(.pane_id == $p and .state == "pending") | .watch_id' \
+    | wc -l | tr -d ' ')
+  [[ "$pending_count" -le 1 ]] || {
+    echo "    $pending_count pending records on $pane after $N concurrent prearms — prearm orphaned records"
+    find "$_EVENTSD_STATE_DIR/watches" -name '*.json' -print 2>/dev/null \
+      | while read -r f; do
+        printf '    %s\n' "$f"
+        cat "$f" | jq -c '.' 2>/dev/null | sed 's/^/      /' || true
+      done
+    return 1
+  }
+
+  # Invariant 2: the pane's live slot points at the surviving pending
+  # record — no orphan detached from live.
+  local live_wid live_rec live_state
+  live_wid=$(cat "$(_eventsd_live_file "$pane")" 2>/dev/null || true)
+  [[ -n "$live_wid" ]] || {
+    echo "    pane live slot empty after $N concurrent prearms"
+    return 1
+  }
+  live_rec=$(watch_get "$live_wid")
+  [[ -n "$live_rec" ]] || {
+    echo "    pane live_file points at $live_wid but no record exists"
+    return 1
+  }
+  live_state=$(printf '%s' "$live_rec" | jq -r '.state // empty')
+  [[ "$live_state" == "pending" ]] || {
+    echo "    live slot points at non-pending record (state=$live_state)"
+    return 1
+  }
+
+  # Invariant 3: every other wid that the workers produced must be
+  # terminally disposed (closed via supersede, unlinked by steez-u7o7.1).
+  # Any wid that is still on disk that is not the live one is an
+  # orphan.
+  local wid_file produced
+  for wid_file in "$out_dir"/*.wid; do
+    [[ -s "$wid_file" ]] || continue
+    produced=$(cat "$wid_file" | tr -d '[:space:]')
+    [[ -n "$produced" ]] || continue
+    [[ "$produced" == "$live_wid" ]] && continue
+    if [[ -f "$(_eventsd_watch_file "$produced")" ]]; then
+      echo "    wid $produced still on disk but detached from live slot ($live_wid) — orphan"
+      cat "$(_eventsd_watch_file "$produced")" | sed 's/^/      /'
+      return 1
+    fi
+  done
+}
+run_test "concurrent_watch_create_pending_on_same_pane_leaves_one_live_no_orphans" \
+  test_concurrent_watch_create_pending_on_same_pane_leaves_one_live_no_orphans
 
 # ----- recent attention evidence (S3) -----
 
